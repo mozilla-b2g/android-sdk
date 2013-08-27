@@ -16,11 +16,13 @@
 
 package com.android.ide.eclipse.adt.internal.build;
 
+import com.android.SdkConstants;
+import com.android.annotations.NonNull;
 import com.android.ide.eclipse.adt.internal.build.builders.BaseBuilder;
 import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper;
 import com.android.ide.eclipse.adt.internal.project.ProjectHelper;
+import com.android.sdklib.BuildToolInfo;
 import com.android.sdklib.IAndroidTarget;
-import com.android.sdklib.SdkConstants;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFolder;
@@ -33,10 +35,12 @@ import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.jdt.core.IJavaProject;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -57,6 +61,7 @@ public abstract class SourceProcessor {
     private final Map<IFile, SourceFileData> mFiles = new HashMap<IFile, SourceFileData>();
 
     private final IJavaProject mJavaProject;
+    private BuildToolInfo mBuildToolInfo;
     private final IFolder mGenFolder;
     private final SourceChangeHandler mDeltaVisitor;
 
@@ -81,9 +86,11 @@ public abstract class SourceProcessor {
         return path;
     }
 
-    protected SourceProcessor(IJavaProject javaProject, IFolder genFolder,
-            SourceChangeHandler deltaVisitor) {
+    protected SourceProcessor(@NonNull IJavaProject javaProject,
+            @NonNull BuildToolInfo buildToolInfo, @NonNull IFolder genFolder,
+            @NonNull SourceChangeHandler deltaVisitor) {
         mJavaProject = javaProject;
+        mBuildToolInfo = buildToolInfo;
         mGenFolder = genFolder;
         mDeltaVisitor = deltaVisitor;
 
@@ -107,8 +114,13 @@ public abstract class SourceProcessor {
         }
     }
 
-    protected SourceProcessor(IJavaProject javaProject, IFolder genFolder) {
-        this(javaProject, genFolder, new SourceChangeHandler());
+    protected SourceProcessor(@NonNull IJavaProject javaProject,
+            @NonNull BuildToolInfo buildToolInfo, @NonNull IFolder genFolder) {
+        this(javaProject, buildToolInfo, genFolder, new SourceChangeHandler());
+    }
+
+    public void setBuildToolInfo(BuildToolInfo buildToolInfo) {
+        mBuildToolInfo = buildToolInfo;
     }
 
 
@@ -166,6 +178,10 @@ public abstract class SourceProcessor {
         return mJavaProject;
     }
 
+    final BuildToolInfo getBuildToolInfo() {
+        return mBuildToolInfo;
+    }
+
     final IFolder getGenFolder() {
         return mGenFolder;
     }
@@ -209,7 +225,7 @@ public abstract class SourceProcessor {
      * Returns the extension of the source files handled by this processor.
      * @return
      */
-    protected abstract String getExtension();
+    protected abstract Set<String> getExtensions();
 
     protected abstract String getSavePropertyName();
 
@@ -218,8 +234,9 @@ public abstract class SourceProcessor {
      *
      */
     public final int compileFiles(BaseBuilder builder,
-            IProject project, IAndroidTarget projectTarget, int minSdkVersion,
-            List<IPath> sourceFolders, IProgressMonitor monitor) throws CoreException {
+            IProject project, IAndroidTarget projectTarget,
+            List<IPath> sourceFolders, List<File> libraryProjectsOut, IProgressMonitor monitor)
+            throws CoreException {
 
         mLastCompilationStatus = COMPILE_STATUS_NONE;
 
@@ -239,8 +256,8 @@ public abstract class SourceProcessor {
         // list of files that have failed compilation.
         List<IFile> stillNeedCompilation = new ArrayList<IFile>();
 
-        doCompileFiles(mToCompile, builder, project, projectTarget, minSdkVersion, sourceFolders,
-                stillNeedCompilation, monitor);
+        doCompileFiles(mToCompile, builder, project, projectTarget, sourceFolders,
+                stillNeedCompilation, libraryProjectsOut, monitor);
 
         mToCompile.clear();
         mToCompile.addAll(stillNeedCompilation);
@@ -271,9 +288,9 @@ public abstract class SourceProcessor {
 
     protected abstract void doCompileFiles(
             List<IFile> filesToCompile, BaseBuilder builder,
-            IProject project, IAndroidTarget projectTarget, int targetApi,
-            List<IPath> sourceFolders, List<IFile> notCompiledOut, IProgressMonitor monitor)
-            throws CoreException;
+            IProject project, IAndroidTarget projectTarget,
+            List<IPath> sourceFolders, List<IFile> notCompiledOut,
+            List<File> libraryProjectsOut, IProgressMonitor monitor) throws CoreException;
 
     /**
      * Adds a compilation status. It can be any of (in combination too):
@@ -363,14 +380,16 @@ public abstract class SourceProcessor {
             for (IResource r : members) {
                 // get the type of the resource
                switch (r.getType()) {
-                   case IResource.FILE:
+                   case IResource.FILE: {
                        // if this a file, check that the file actually exist
                        // and that it's the type of of file that's used in this processor
-                       if (r.exists() &&
-                               getExtension().equalsIgnoreCase(r.getFileExtension())) {
+                       String extension = r.exists() ? r.getFileExtension() : null;
+                       if (extension != null &&
+                               getExtensions().contains(extension.toLowerCase(Locale.US))) {
                            mFiles.put((IFile) r, new SourceFileData((IFile) r));
                        }
                        break;
+                   }
                    case IResource.FOLDER:
                        // recursively go through children
                        scanFolderForSourceFiles(sourceFolder, (IFolder)r);

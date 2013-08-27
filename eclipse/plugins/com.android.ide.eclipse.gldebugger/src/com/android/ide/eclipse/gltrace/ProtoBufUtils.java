@@ -30,6 +30,10 @@ public class ProtoBufUtils {
         int width = glMsg.getFb().getWidth();
         int height = glMsg.getFb().getHeight();
 
+        if (width * height == 0) {
+            return null;
+        }
+
         byte[] compressed = glMsg.getFb().getContents(0).toByteArray();
         byte[] uncompressed = new byte[width * height * 4];
 
@@ -48,8 +52,13 @@ public class ProtoBufUtils {
                 palette,
                 1,          // scan line padding
                 uncompressed);
-        imageData = imageData.scaledTo(imageData.width, -imageData.height);
+        byte[] alpha = new byte[width*height];
+        for (int i = 0; i < width * height; i++) {
+            alpha[i] = uncompressed[i * 4 + 3];
+        }
+        imageData.alphaData = alpha;
 
+        imageData = imageData.scaledTo(imageData.width, -imageData.height);
         return imageData;
     }
 
@@ -59,19 +68,19 @@ public class ProtoBufUtils {
             return null;
         }
 
-        return new Image(display, getImageData(glMsg));
-    }
-
-    /**
-     * Obtains the image stored in provided protocol buffer message scaled to the
-     * provided dimensions.
-     */
-    public static Image getScaledImage(Display display, GLMessage glMsg, int width, int height) {
-        if (!glMsg.hasFb()) {
+        ImageData imageData = null;
+        try {
+            imageData = getImageData(glMsg);
+        } catch (Exception e) {
+            GlTracePlugin.getDefault().logMessage(
+                    "Unexpected error while retrieving framebuffer image: " + e);
             return null;
         }
 
-        ImageData imageData = getImageData(glMsg);
-        return new Image(display, imageData.scaledTo(width, height));
+        if (imageData == null) {
+            return null;
+        }
+
+        return new Image(display, imageData);
     }
 }

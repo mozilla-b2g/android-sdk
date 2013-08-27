@@ -16,7 +16,7 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
-import com.android.util.Pair;
+import com.android.utils.Pair;
 
 import org.eclipse.swt.events.KeyEvent;
 
@@ -96,8 +96,8 @@ public abstract class Gesture {
      *            otherwise 0.
      */
     public void begin(ControlPoint pos, int startMask) {
-        this.mStart = pos;
-        this.mStartMask = startMask;
+        mStart = pos;
+        mStartMask = startMask;
     }
 
     /**

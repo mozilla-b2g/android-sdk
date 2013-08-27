@@ -17,25 +17,26 @@
 
 package com.android.ide.eclipse.adt.internal.editors;
 
-import static com.android.AndroidConstants.FD_RES_ANIM;
-import static com.android.AndroidConstants.FD_RES_ANIMATOR;
-import static com.android.AndroidConstants.FD_RES_COLOR;
-import static com.android.AndroidConstants.FD_RES_DRAWABLE;
-import static com.android.sdklib.SdkConstants.FD_RES;
+import static com.android.SdkConstants.FD_RES;
+import static com.android.SdkConstants.FD_RES_ANIM;
+import static com.android.SdkConstants.FD_RES_ANIMATOR;
+import static com.android.SdkConstants.FD_RES_COLOR;
+import static com.android.SdkConstants.FD_RES_DRAWABLE;
 
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.editors.animator.AnimationContentAssist;
-import com.android.ide.eclipse.adt.internal.editors.animator.AnimationEditor;
 import com.android.ide.eclipse.adt.internal.editors.color.ColorContentAssist;
-import com.android.ide.eclipse.adt.internal.editors.color.ColorEditor;
+import com.android.ide.eclipse.adt.internal.editors.common.CommonXmlEditor;
+import com.android.ide.eclipse.adt.internal.editors.descriptors.AttributeDescriptor;
+import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.drawable.DrawableContentAssist;
-import com.android.ide.eclipse.adt.internal.editors.drawable.DrawableEditor;
 import com.android.ide.eclipse.adt.internal.editors.layout.LayoutContentAssist;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.ViewElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.layout.refactoring.AdtProjectTest;
 import com.android.ide.eclipse.adt.internal.editors.manifest.ManifestContentAssist;
 import com.android.ide.eclipse.adt.internal.editors.manifest.ManifestEditor;
-import com.android.ide.eclipse.adt.internal.editors.resources.ResourcesContentAssist;
+import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
+import com.android.ide.eclipse.adt.internal.editors.values.ValuesContentAssist;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.jface.text.Document;
@@ -48,6 +49,7 @@ import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.ide.IDE;
 
+@SuppressWarnings("javadoc")
 public class AndroidContentAssistTest extends AdtProjectTest {
     private static final String CARET = "^"; //$NON-NLS-1$
 
@@ -466,9 +468,62 @@ public class AndroidContentAssistTest extends AdtProjectTest {
         checkManifestCompletion("manifest.xml", "<uses-sdk android:minSdkVersion=\"^11\" />");
     }
 
+    public void testCompletion70() throws Exception {
+        checkResourceCompletion("completionvalues2.xml",
+                "<item name=\"main_layout4\" type=\"layout\">^</item>");
+    }
+
+    public void testCompletion71() throws Exception {
+        checkResourceCompletion("completionvalues2.xml",
+                "<item name=\"main_layout5\" type=\"string\">@string/^app_name</item>");
+    }
+
+    public void testCompletion72() throws Exception {
+        // Test completion of theme attributes
+        checkLayoutCompletion("completion11.xml", "?^android:attr/Textapp");
+    }
+
+    public void testCompletion73() throws Exception {
+        checkLayoutCompletion("completion11.xml", "?android:attr/Textapp^");
+    }
+
+    public void testCompletion74() throws Exception {
+        checkLayoutCompletion("completion11.xml", "?and^roid:attr/Textapp");
+    }
+
+    public void testCompletion75() throws Exception {
+        // Test <include> attributes
+        checkLayoutCompletion("completion12.xml", "<include ^/>");
+    }
+
+    public void testComplation76() throws Exception {
+        // Test theme completion with implicit attr
+        checkLayoutCompletion("navigation1.xml", "?android:a^ttr/alertDialogStyle");
+    }
+
+    public void testComplation77() throws Exception {
+        // Test <fragment class="^" completion
+        checkLayoutCompletion("fragmentlayout.xml", "android:name=\"^com");
+    }
+
+    public void testComplation78() throws Exception {
+        // Test <fragment android:name="^" completion
+        checkLayoutCompletion("fragmentlayout.xml", "class=\"^com");
+    }
+
+    public void testComplation79() throws Exception {
+        // Test tools context completion
+        checkLayoutCompletion("completion11.xml", "tools:context=\"^.MainActivity\"");
+    }
+
+    public void testComplation80() throws Exception {
+        // Test manifest class completion
+        checkManifestCompletion("manifest.xml", "<activity android:name=\"^.");
+    }
+
+    // TODO: Test <view completion!
+
     // ---- Test *applying* code completion ----
-
-
 
     // The following tests check -applying- a specific code completion
     // match - this verifies that the document is updated correctly, the
@@ -753,38 +808,54 @@ public class AndroidContentAssistTest extends AdtProjectTest {
         checkApplyResourceCompletion("completionvalues1.xml", "[^false]", "true");
     }
 
+    public void testApplyCompletion45() throws Exception {
+        checkApplyResourceCompletion("completionvalues2.xml",
+                "@string/^app_name", "@string/hello");
+    }
+
+    public void testApplyCompletion46() throws Exception {
+        checkApplyLayoutCompletion("completion11.xml",
+                "?android:attr/Textapp^", "?android:attr/textAppearanceLargeInverse");
+    }
+
+    public void testApplyCompletion47() throws Exception {
+        // Test applying <fragment android:name="^" completion
+        checkApplyLayoutCompletion("fragmentlayout.xml", "class=\"^com",
+                "android.app.ListFragment");
+    }
+
     // --- Code Completion test infrastructure ----
 
     private void checkLayoutCompletion(String name, String caretLocation) throws Exception {
         IFile file = getLayoutFile(getProject(), name);
-        IDE.setDefaultEditor(file, LayoutEditor.ID);
+        IDE.setDefaultEditor(file, CommonXmlEditor.ID);
         checkCompletion(name, file, caretLocation,
                 new LayoutContentAssist());
     }
 
     private void checkColorCompletion(String name, String caretLocation) throws Exception {
         IFile file = getTestDataFile(getProject(), name, FD_RES + "/" + FD_RES_COLOR + "/" + name);
-        IDE.setDefaultEditor(file, ColorEditor.ID);
+        IDE.setDefaultEditor(file, CommonXmlEditor.ID);
         checkCompletion(name, file, caretLocation, new ColorContentAssist());
     }
 
     private void checkAnimCompletion(String name, String caretLocation) throws Exception {
         IFile file = getTestDataFile(getProject(), name, FD_RES + "/" + FD_RES_ANIM + "/" + name);
-        IDE.setDefaultEditor(file, AnimationEditor.ID);
+        IDE.setDefaultEditor(file, CommonXmlEditor.ID);
         checkCompletion(name, file, caretLocation, new AnimationContentAssist());
     }
 
     private void checkAnimatorCompletion(String name, String caretLocation) throws Exception {
         IFile file = getTestDataFile(getProject(), name, FD_RES + "/" + FD_RES_ANIMATOR + "/"
                 + name);
-        IDE.setDefaultEditor(file, AnimationEditor.ID);
+        IDE.setDefaultEditor(file, CommonXmlEditor.ID);
         checkCompletion(name, file, caretLocation, new AnimationContentAssist());
     }
 
     private void checkDrawableCompletion(String name, String caretLocation) throws Exception {
         IFile file = getTestDataFile(getProject(), name, FD_RES + "/" + FD_RES_DRAWABLE + "/"
                 + name);
-        IDE.setDefaultEditor(file, DrawableEditor.ID);
+        IDE.setDefaultEditor(file, CommonXmlEditor.ID);
         checkCompletion(name, file, caretLocation, new DrawableContentAssist());
     }
 
@@ -806,13 +877,13 @@ public class AndroidContentAssistTest extends AdtProjectTest {
 
     private void checkResourceCompletion(String name, String caretLocation) throws Exception {
         checkCompletion(name, getValueFile(getProject(), name), caretLocation,
-                new ResourcesContentAssist());
+                new ValuesContentAssist());
     }
 
     private void checkApplyResourceCompletion(String name, String caretLocation,
             String match) throws Exception {
         checkApplyCompletion(name, getValueFile(getProject(), name), caretLocation,
-                new ResourcesContentAssist(), match);
+                new ValuesContentAssist(), match);
     }
 
     private ICompletionProposal[] complete(IFile file, String caretLocation,
@@ -823,8 +894,17 @@ public class AndroidContentAssistTest extends AdtProjectTest {
         assertNotNull(page);
         IEditorPart editor = IDE.openEditor(page, file);
         assertTrue(editor instanceof AndroidXmlEditor);
-        AndroidXmlEditor layoutEditor = (AndroidXmlEditor) editor;
-        ISourceViewer viewer = layoutEditor.getStructuredSourceViewer();
+        AndroidXmlEditor xmlEditor = (AndroidXmlEditor) editor;
+
+        UiElementNode root = xmlEditor.getUiRootNode();
+        ElementDescriptor descriptor = root.getDescriptor();
+        if (descriptor instanceof ViewElementDescriptor) {
+            ViewElementDescriptor vd = (ViewElementDescriptor) descriptor;
+            AttributeDescriptor[] attributes = vd.getAttributes();
+            assertTrue(Integer.toString(attributes.length), attributes.length > 0);
+        }
+
+        ISourceViewer viewer = xmlEditor.getStructuredSourceViewer();
 
         // Determine the offset, and possibly make text range selections as well
         int offset = updateCaret(viewer, caretLocation);
@@ -834,6 +914,8 @@ public class AndroidContentAssistTest extends AdtProjectTest {
         if (proposals == null) {
             proposals = new ICompletionProposal[0];
         }
+
+        editor.getEditorSite().getPage().closeAllEditors(false);
 
         return proposals;
     }
@@ -890,11 +972,16 @@ public class AndroidContentAssistTest extends AdtProjectTest {
         sb.append("Code completion in " + basename + " for " + caretLocation + ":\n");
         for (ICompletionProposal proposal : proposals) {
             // TODO: assertNotNull(proposal.getImage());
+            int length = sb.length();
             sb.append(proposal.getDisplayString().trim());
             String help = proposal.getAdditionalProposalInfo();
             if (help != null && help.trim().length() > 0) {
                 sb.append(" : ");
                 sb.append(help.replace('\n', ' ').trim());
+                if (sb.length() > length + 300) {
+                    sb.setLength(length + 300 - "...".length());
+                    sb.append("...");
+                }
             }
             sb.append('\n');
         }

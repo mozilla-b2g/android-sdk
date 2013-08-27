@@ -15,7 +15,8 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.animator;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_NS_NAME;
+import static com.android.SdkConstants.ANDROID_NS_NAME;
+import static com.android.SdkConstants.ANDROID_URI;
 
 import com.android.ide.common.resources.platform.DeclareStyleableInfo;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.AttributeDescriptor;
@@ -23,7 +24,6 @@ import com.android.ide.eclipse.adt.internal.editors.descriptors.DescriptorsUtils
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.IDescriptorProvider;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor;
-import com.android.sdklib.SdkConstants;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -41,6 +41,7 @@ public class AnimatorDescriptors implements IDescriptorProvider {
     private Map<String, ElementDescriptor> nameToDescriptor;
 
     /** @return the root descriptor. */
+    @Override
     public ElementDescriptor getDescriptor() {
         if (mDescriptor == null) {
             mDescriptor = new ElementDescriptor("", getRootElementDescriptors()); //$NON-NLS-1$
@@ -49,11 +50,12 @@ public class AnimatorDescriptors implements IDescriptorProvider {
         return mDescriptor;
     }
 
+    @Override
     public ElementDescriptor[] getRootElementDescriptors() {
         return mRootDescriptors;
     }
 
-    public ElementDescriptor getElementDescriptor(String mRootTag) {
+    ElementDescriptor getElementDescriptor(String rootTag) {
         if (nameToDescriptor == null) {
             nameToDescriptor = new HashMap<String, ElementDescriptor>();
             for (ElementDescriptor descriptor : getRootElementDescriptors()) {
@@ -61,7 +63,7 @@ public class AnimatorDescriptors implements IDescriptorProvider {
             }
         }
 
-        ElementDescriptor descriptor = nameToDescriptor.get(mRootTag);
+        ElementDescriptor descriptor = nameToDescriptor.get(rootTag);
         if (descriptor == null) {
             descriptor = getDescriptor();
         }
@@ -74,7 +76,7 @@ public class AnimatorDescriptors implements IDescriptorProvider {
         }
 
         XmlnsAttributeDescriptor xmlns = new XmlnsAttributeDescriptor(ANDROID_NS_NAME,
-                SdkConstants.NS_RESOURCES);
+                ANDROID_URI);
 
         List<ElementDescriptor> descriptors = new ArrayList<ElementDescriptor>();
 
@@ -150,7 +152,7 @@ public class AnimatorDescriptors implements IDescriptorProvider {
 
         DescriptorsUtils.appendAttributes(descs,
                 null,   // elementName
-                SdkConstants.NS_RESOURCES,
+                ANDROID_URI,
                 style.getAttributes(),
                 null,   // requiredAttributes
                 null);  // overrides
@@ -161,7 +163,7 @@ public class AnimatorDescriptors implements IDescriptorProvider {
             if (style != null) {
                 DescriptorsUtils.appendAttributes(descs,
                         null,   // elementName
-                        SdkConstants.NS_RESOURCES,
+                        ANDROID_URI,
                         style.getAttributes(),
                         null,   // requiredAttributes
                         null);  // overrides

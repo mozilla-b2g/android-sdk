@@ -35,22 +35,27 @@ import org.eclipse.ui.IWorkbenchWindowActionDelegate;
  */
 public class AvdManagerAction implements IWorkbenchWindowActionDelegate, IObjectActionDelegate {
 
+    @Override
     public void dispose() {
         // nothing to dispose.
     }
 
+    @Override
     public void init(IWorkbenchWindow window) {
         // no init
     }
 
+    @Override
     public void run(IAction action) {
         final Sdk sdk = Sdk.getCurrent();
         if (sdk != null) {
+            // Although orthogonal to the avd manager action, this is a good time
+            // to check whether the SDK has changed on disk.
+            AdtPlugin.getDefault().refreshSdk();
 
             // Runs the updater window, directing all logs to the ADT console.
-
             AvdManagerWindow window = new AvdManagerWindow(
-                    AdtPlugin.getDisplay().getActiveShell(),
+                    AdtPlugin.getShell(),
                     new AdtConsoleSdkLog(),
                     sdk.getSdkLocation(),
                     AvdInvocationContext.IDE);
@@ -61,10 +66,12 @@ public class AvdManagerAction implements IWorkbenchWindowActionDelegate, IObject
         }
     }
 
+    @Override
     public void selectionChanged(IAction action, ISelection selection) {
         // nothing related to the current selection.
     }
 
+    @Override
     public void setActivePart(IAction action, IWorkbenchPart targetPart) {
         // nothing to do.
     }

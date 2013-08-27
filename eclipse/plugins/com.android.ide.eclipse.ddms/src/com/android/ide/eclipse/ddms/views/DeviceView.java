@@ -17,41 +17,59 @@
 package com.android.ide.eclipse.ddms.views;
 
 import com.android.ddmlib.AndroidDebugBridge;
+import com.android.ddmlib.AndroidDebugBridge.IClientChangeListener;
 import com.android.ddmlib.Client;
 import com.android.ddmlib.ClientData;
+import com.android.ddmlib.ClientData.IHprofDumpHandler;
+import com.android.ddmlib.ClientData.MethodProfilingStatus;
+import com.android.ddmlib.CollectingOutputReceiver;
 import com.android.ddmlib.DdmPreferences;
 import com.android.ddmlib.IDevice;
 import com.android.ddmlib.SyncException;
 import com.android.ddmlib.SyncService;
-import com.android.ddmlib.TimeoutException;
-import com.android.ddmlib.AndroidDebugBridge.IClientChangeListener;
-import com.android.ddmlib.ClientData.IHprofDumpHandler;
-import com.android.ddmlib.ClientData.MethodProfilingStatus;
 import com.android.ddmlib.SyncService.ISyncProgressMonitor;
+import com.android.ddmlib.TimeoutException;
 import com.android.ddmuilib.DevicePanel;
+import com.android.ddmuilib.DevicePanel.IUiSelectionListener;
 import com.android.ddmuilib.ImageLoader;
 import com.android.ddmuilib.ScreenShotDialog;
 import com.android.ddmuilib.SyncProgressHelper;
-import com.android.ddmuilib.DevicePanel.IUiSelectionListener;
 import com.android.ddmuilib.SyncProgressHelper.SyncRunnable;
 import com.android.ddmuilib.handler.BaseFileHandler;
 import com.android.ddmuilib.handler.MethodProfilingHandler;
 import com.android.ide.eclipse.ddms.DdmsPlugin;
+import com.android.ide.eclipse.ddms.IClientAction;
 import com.android.ide.eclipse.ddms.IDebuggerConnector;
+import com.android.ide.eclipse.ddms.editors.UiAutomatorViewer;
 import com.android.ide.eclipse.ddms.i18n.Messages;
 import com.android.ide.eclipse.ddms.preferences.PreferenceInitializer;
+import com.android.ide.eclipse.ddms.systrace.ISystraceOptions;
+import com.android.ide.eclipse.ddms.systrace.ISystraceOptionsDialog;
+import com.android.ide.eclipse.ddms.systrace.SystraceOptionsDialogV1;
+import com.android.ide.eclipse.ddms.systrace.SystraceOutputParser;
+import com.android.ide.eclipse.ddms.systrace.SystraceTask;
+import com.android.ide.eclipse.ddms.systrace.SystraceVersionDetector;
+import com.android.uiautomator.UiAutomatorHelper;
+import com.android.uiautomator.UiAutomatorHelper.UiAutomatorException;
+import com.android.uiautomator.UiAutomatorHelper.UiAutomatorResult;
+import com.google.common.io.Files;
 
 import org.eclipse.core.filesystem.EFS;
 import org.eclipse.core.filesystem.IFileStore;
-import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.IAdaptable;
+import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Path;
+import org.eclipse.core.runtime.Status;
 import org.eclipse.jface.action.Action;
 import org.eclipse.jface.action.IAction;
 import org.eclipse.jface.action.IMenuManager;
 import org.eclipse.jface.action.IToolBarManager;
 import org.eclipse.jface.action.Separator;
+import org.eclipse.jface.dialogs.ErrorDialog;
 import org.eclipse.jface.dialogs.MessageDialog;
+import org.eclipse.jface.dialogs.ProgressMonitorDialog;
+import org.eclipse.jface.operation.IRunnableWithProgress;
 import org.eclipse.jface.preference.IPreferenceStore;
 import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.swt.widgets.Composite;
@@ -70,6 +88,9 @@ import org.eclipse.ui.part.ViewPart;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public class DeviceView extends ViewPart implements IUiSelectionListener, IClientChangeListener {
 
@@ -84,6 +105,8 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
 
     private Action mResetAdbAction;
     private Action mCaptureAction;
+    private Action mViewUiAutomatorHierarchyAction;
+    private Action mSystraceAction;
     private Action mUpdateThreadAction;
     private Action mUpdateHeapAction;
     private Action mGcAction;
@@ -110,8 +133,10 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
             return Messages.DeviceView_HPROF_Error;
         }
 
+        @Override
         public void onEndFailure(final Client client, final String message) {
             mParentShell.getDisplay().asyncExec(new Runnable() {
+                @Override
                 public void run() {
                     try {
                         displayErrorFromUiThread(
@@ -129,8 +154,10 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
             });
         }
 
+        @Override
         public void onSuccess(final String remoteFilePath, final Client client) {
             mParentShell.getDisplay().asyncExec(new Runnable() {
+                @Override
                 public void run() {
                     final IDevice device = client.getDevice();
                     try {
@@ -146,12 +173,14 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
                                 final String tempPath = temp.getAbsolutePath();
                                 SyncProgressHelper.run(new SyncRunnable() {
 
+                                    @Override
                                     public void run(ISyncProgressMonitor monitor)
                                                 throws SyncException, IOException,
                                                 TimeoutException {
                                         sync.pullFile(remoteFilePath, tempPath, monitor);
                                     }
 
+                                    @Override
                                     public void close() {
                                         sync.close();
                                     }
@@ -195,8 +224,10 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
             });
         }
 
+        @Override
         public void onSuccess(final byte[] data, final Client client) {
             mParentShell.getDisplay().asyncExec(new Runnable() {
+                @Override
                 public void run() {
                     // get from the preference what action to take
                     IPreferenceStore store = DdmsPlugin.getDefault().getPreferenceStore();
@@ -247,12 +278,13 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
                 IWorkbench workbench = PlatformUI.getWorkbench();
                 IWorkbenchWindow window = workbench.getActiveWorkbenchWindow();
                 IWorkbenchPage page = window.getActivePage();
+                if (page == null) {
+                    return;
+                }
+
                 if (page.isEditorAreaVisible() == false) {
                     IAdaptable input;
-                    if (page != null)
-                        input = page.getInput();
-                    else
-                        input = ResourcesPlugin.getWorkspace().getRoot();
+                    input = page.getInput();
                     try {
                         workbench.showPerspective("org.eclipse.debug.ui.DebugPerspective", //$NON-NLS-1$
                                 window, input);
@@ -300,6 +332,29 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
         mCaptureAction.setToolTipText(Messages.DeviceView_Screen_Capture_Tooltip);
         mCaptureAction.setImageDescriptor(loader.loadDescriptor("capture.png")); //$NON-NLS-1$
 
+        mViewUiAutomatorHierarchyAction = new Action("Dump View Hierarchy for UI Automator") {
+            @Override
+            public void run() {
+                takeUiAutomatorSnapshot(mDeviceList.getSelectedDevice(),
+                        DdmsPlugin.getDisplay().getActiveShell());
+            }
+        };
+        mViewUiAutomatorHierarchyAction.setToolTipText("Dump View Hierarchy for UI Automator");
+        mViewUiAutomatorHierarchyAction.setImageDescriptor(
+                DdmsPlugin.getImageDescriptor("icons/uiautomator.png")); //$NON-NLS-1$
+
+        mSystraceAction = new Action("Capture System Wide Trace") {
+            @Override
+            public void run() {
+                launchSystrace(mDeviceList.getSelectedDevice(),
+                        DdmsPlugin.getDisplay().getActiveShell());
+            }
+        };
+        mSystraceAction.setToolTipText("Capture system wide trace using Android systrace");
+        mSystraceAction.setImageDescriptor(
+                DdmsPlugin.getImageDescriptor("icons/systrace.png")); //$NON-NLS-1$
+        mSystraceAction.setEnabled(true);
+
         mResetAdbAction = new Action(Messages.DeviceView_Reset_ADB) {
             @Override
             public void run() {
@@ -311,6 +366,7 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
 
                         // dialog box only run in ui thread..
                         display.asyncExec(new Runnable() {
+                            @Override
                             public void run() {
                                 Shell shell = display.getActiveShell();
                                 MessageDialog.openError(shell, Messages.DeviceView_ADB_Error,
@@ -462,6 +518,9 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
 
         placeActions();
 
+        // disabling all action buttons
+        selectionChanged(null, null);
+
         ClientData.setHprofDumpHandler(new HProfHandler(mParentShell));
         AndroidDebugBridge.addClientChangeListener(this);
         ClientData.setMethodProfilingHandler(new MethodProfilingHandler(mParentShell) {
@@ -474,6 +533,146 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
         });
     }
 
+    private void takeUiAutomatorSnapshot(final IDevice device, final Shell shell) {
+        ProgressMonitorDialog dialog = new ProgressMonitorDialog(shell);
+        try {
+            dialog.run(true, false, new IRunnableWithProgress() {
+                @Override
+                public void run(IProgressMonitor monitor) throws InvocationTargetException,
+                                                                        InterruptedException {
+                    UiAutomatorResult result = null;
+                    try {
+                        result = UiAutomatorHelper.takeSnapshot(device, monitor);
+                    } catch (UiAutomatorException e) {
+                        throw new InvocationTargetException(e);
+                    } finally {
+                        monitor.done();
+                    }
+
+                    UiAutomatorViewer.openEditor(result);
+                }
+            });
+        } catch (Exception e) {
+            Throwable t = e;
+            if (e instanceof InvocationTargetException) {
+                t = ((InvocationTargetException) e).getTargetException();
+            }
+            Status s = new Status(IStatus.ERROR, DdmsPlugin.PLUGIN_ID,
+                                            "Error obtaining UI hierarchy", t);
+            ErrorDialog.openError(shell, "UI Automator",
+                    "Unexpected error while obtaining UI hierarchy", s);
+        }
+    };
+
+    private void launchSystrace(final IDevice device, final Shell parentShell) {
+        SystraceVersionDetector detector = new SystraceVersionDetector(device);
+        try {
+            new ProgressMonitorDialog(parentShell).run(true, false, detector);
+        } catch (InvocationTargetException e) {
+            MessageDialog.openError(parentShell,
+                    "Systrace",
+                    "Unexpected error while detecting atrace version: " + e);
+            return;
+        } catch (InterruptedException e) {
+            return;
+        }
+
+        final ISystraceOptionsDialog dlg =
+                (detector.getVersion() == SystraceVersionDetector.SYSTRACE_V1) ?
+                        new SystraceOptionsDialogV1(parentShell) :
+                            new SystraceOptionsDialogV2(parentShell, detector.getTags());
+
+        if (dlg.open() != SystraceOptionsDialogV1.OK) {
+            return;
+        }
+
+        final ISystraceOptions options = dlg.getSystraceOptions();
+
+        // set trace tag if necessary:
+        //      adb shell setprop debug.atrace.tags.enableflags <tag>
+        String tag = options.getTags();
+        if (tag != null) {
+            CountDownLatch setTagLatch = new CountDownLatch(1);
+            CollectingOutputReceiver receiver = new CollectingOutputReceiver(setTagLatch);
+            try {
+                String cmd = "setprop debug.atrace.tags.enableflags " + tag;
+                device.executeShellCommand(cmd, receiver);
+                setTagLatch.await(5, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                MessageDialog.openError(parentShell,
+                        "Systrace",
+                        "Unexpected error while setting trace tags: " + e);
+                return;
+            }
+
+            String shellOutput = receiver.getOutput();
+            if (shellOutput.contains("Error type")) {                   //$NON-NLS-1$
+                throw new RuntimeException(receiver.getOutput());
+            }
+        }
+
+        // obtain the output of "adb shell atrace <trace-options>" and generate the html file
+        ProgressMonitorDialog d = new ProgressMonitorDialog(parentShell);
+        try {
+            d.run(true, true, new IRunnableWithProgress() {
+                @Override
+                public void run(IProgressMonitor monitor) throws InvocationTargetException,
+                        InterruptedException {
+                    boolean COMPRESS_DATA = true;
+
+                    monitor.setTaskName("Collecting Trace Information");
+                    final String atraceOptions = options.getOptions()
+                                                + (COMPRESS_DATA ? " -z" : "");
+                    SystraceTask task = new SystraceTask(device, atraceOptions);
+                    Thread t = new Thread(task, "Systrace Output Receiver");
+                    t.start();
+
+                    // check if the user has cancelled tracing every so often
+                    while (true) {
+                        t.join(1000);
+
+                        if (t.isAlive()) {
+                            if (monitor.isCanceled()) {
+                                task.cancel();
+                                return;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if (task.getError() != null) {
+                        throw new RuntimeException(task.getError());
+                    }
+
+                    monitor.setTaskName("Saving trace information");
+                    File systraceAssets = new File(DdmsPlugin.getToolsFolder(), "systrace"); //$NON-NLS-1$
+                    SystraceOutputParser parser = new SystraceOutputParser(
+                            COMPRESS_DATA,
+                            SystraceOutputParser.getJs(systraceAssets),
+                            SystraceOutputParser.getCss(systraceAssets));
+
+                    parser.parse(task.getAtraceOutput());
+
+                    String html = parser.getSystraceHtml();
+                    try {
+                        Files.write(html.getBytes(), new File(dlg.getTraceFilePath()));
+                    } catch (IOException e) {
+                        throw new InvocationTargetException(e);
+                    }
+                }
+            });
+        } catch (InvocationTargetException e) {
+            ErrorDialog.openError(parentShell, "Systrace",
+                    "Unable to collect system trace.",
+                    new Status(Status.ERROR,
+                            DdmsPlugin.PLUGIN_ID,
+                            "Unexpected error while collecting system trace.",
+                            e.getCause()));
+        } catch (InterruptedException ignore) {
+        }
+    }
+
     @Override
     public void setFocus() {
         mDeviceList.setFocus();
@@ -481,12 +680,13 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
 
     /**
      * Sent when a new {@link IDevice} and {@link Client} are selected.
-     * 
+     *
      * @param selectedDevice the selected device. If null, no devices are
      *            selected.
      * @param selectedClient The selected client. If null, no clients are
      *            selected.
      */
+    @Override
     public void selectionChanged(IDevice selectedDevice, Client selectedClient) {
         // update the buttons
         doSelectionChanged(selectedClient);
@@ -568,10 +768,18 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
             mTracingAction.setToolTipText(Messages.DeviceView_Start_Method_Profiling_Tooltip);
             mTracingAction.setText(Messages.DeviceView_Start_Method_Profiling);
         }
+
+        for (IClientAction a : DdmsPlugin.getDefault().getClientSpecificActions()) {
+            a.selectedClientChanged(selectedClient);
+        }
     }
 
     private void doSelectionChanged(IDevice selectedDevice) {
-        mCaptureAction.setEnabled(selectedDevice != null);
+        boolean validDevice = selectedDevice != null;
+
+        mCaptureAction.setEnabled(validDevice);
+        mViewUiAutomatorHierarchyAction.setEnabled(validDevice);
+        mSystraceAction.setEnabled(validDevice);
     }
 
     /**
@@ -596,7 +804,14 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
         menuManager.add(new Separator());
         menuManager.add(mCaptureAction);
         menuManager.add(new Separator());
+        menuManager.add(mViewUiAutomatorHierarchyAction);
+        menuManager.add(new Separator());
+        menuManager.add(mSystraceAction);
+        menuManager.add(new Separator());
         menuManager.add(mResetAdbAction);
+        for (IClientAction a : DdmsPlugin.getDefault().getClientSpecificActions()) {
+            menuManager.add(a.getAction());
+        }
 
         // and then in the toolbar
         IToolBarManager toolBarManager = actionBars.getToolBarManager();
@@ -613,12 +828,21 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
         toolBarManager.add(mKillAppAction);
         toolBarManager.add(new Separator());
         toolBarManager.add(mCaptureAction);
+        toolBarManager.add(new Separator());
+        toolBarManager.add(mViewUiAutomatorHierarchyAction);
+        toolBarManager.add(new Separator());
+        toolBarManager.add(mSystraceAction);
+        for (IClientAction a : DdmsPlugin.getDefault().getClientSpecificActions()) {
+            toolBarManager.add(a.getAction());
+        }
     }
 
+    @Override
     public void clientChanged(final Client client, int changeMask) {
         if ((changeMask & Client.CHANGE_METHOD_PROFILING_STATUS) == Client.CHANGE_METHOD_PROFILING_STATUS) {
             if (mDeviceList.getSelectedClient() == client) {
                 mParentShell.getDisplay().asyncExec(new Runnable() {
+                    @Override
                     public void run() {
                         // force refresh of the button enabled state.
                         doSelectionChanged(client);

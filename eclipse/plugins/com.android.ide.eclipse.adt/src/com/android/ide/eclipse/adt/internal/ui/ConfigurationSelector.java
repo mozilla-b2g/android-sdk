@@ -16,12 +16,13 @@
 
 package com.android.ide.eclipse.adt.internal.ui;
 
-import com.android.AndroidConstants;
+import com.android.SdkConstants;
 import com.android.ide.common.resources.configuration.CountryCodeQualifier;
 import com.android.ide.common.resources.configuration.DensityQualifier;
 import com.android.ide.common.resources.configuration.FolderConfiguration;
 import com.android.ide.common.resources.configuration.KeyboardStateQualifier;
 import com.android.ide.common.resources.configuration.LanguageQualifier;
+import com.android.ide.common.resources.configuration.LayoutDirectionQualifier;
 import com.android.ide.common.resources.configuration.NavigationMethodQualifier;
 import com.android.ide.common.resources.configuration.NavigationStateQualifier;
 import com.android.ide.common.resources.configuration.NetworkCodeQualifier;
@@ -39,10 +40,12 @@ import com.android.ide.common.resources.configuration.TextInputMethodQualifier;
 import com.android.ide.common.resources.configuration.TouchScreenQualifier;
 import com.android.ide.common.resources.configuration.UiModeQualifier;
 import com.android.ide.common.resources.configuration.VersionQualifier;
+import com.android.ide.eclipse.adt.internal.editors.layout.configuration.LocaleManager;
 import com.android.ide.eclipse.adt.internal.resources.ResourceHelper;
 import com.android.resources.Density;
 import com.android.resources.Keyboard;
 import com.android.resources.KeyboardState;
+import com.android.resources.LayoutDirection;
 import com.android.resources.Navigation;
 import com.android.resources.NavigationState;
 import com.android.resources.NightMode;
@@ -89,7 +92,10 @@ import org.eclipse.swt.widgets.TableColumn;
 import org.eclipse.swt.widgets.Text;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * Custom UI widget to let user build a Folder configuration.
@@ -128,6 +134,7 @@ public class ConfigurationSelector extends Composite {
      * Basic of {@link VerifyListener} to only accept digits.
      */
     private static class DigitVerifier implements VerifyListener {
+        @Override
         public void verifyText(VerifyEvent e) {
             // check for digit only.
             for (int i = 0 ; i < e.text.length(); i++) {
@@ -163,6 +170,7 @@ public class ConfigurationSelector extends Composite {
      * Implementation of {@link VerifyListener} for the Language and Region qualifiers.
      */
     public static class LanguageRegionVerifier implements VerifyListener {
+        @Override
         public void verifyText(VerifyEvent e) {
             // check for length
             if (e.text.length() - e.end + e.start + ((Combo)e.getSource()).getText().length() > 2) {
@@ -274,6 +282,7 @@ public class ConfigurationSelector extends Composite {
                 mMode == SelectorMode.CONFIG_ONLY));
         mFullTableViewer.setInput(mBaseConfiguration);
         mFullTableViewer.addSelectionChangedListener(new ISelectionChangedListener() {
+            @Override
             public void selectionChanged(SelectionChangedEvent event) {
                 ISelection selection = event.getSelection();
                 if (selection instanceof IStructuredSelection) {
@@ -372,6 +381,7 @@ public class ConfigurationSelector extends Composite {
                 true /* showQualifierValue */));
         mSelectionTableViewer.setInput(mSelectedConfiguration);
         mSelectionTableViewer.addSelectionChangedListener(new ISelectionChangedListener() {
+            @Override
             public void selectionChanged(SelectionChangedEvent event) {
                 // ignore selection changes during resfreshes in some cases.
                 if (mOnRefresh) {
@@ -425,6 +435,8 @@ public class ConfigurationSelector extends Composite {
             mUiMap.put(NetworkCodeQualifier.class, new MNCEdit(mQualifierEditParent));
             mUiMap.put(LanguageQualifier.class, new LanguageEdit(mQualifierEditParent));
             mUiMap.put(RegionQualifier.class, new RegionEdit(mQualifierEditParent));
+            mUiMap.put(LayoutDirectionQualifier.class,
+                    new LayoutDirectionEdit(mQualifierEditParent));
             mUiMap.put(SmallestScreenWidthQualifier.class,
                     new SmallestScreenWidthEdit(mQualifierEditParent));
             mUiMap.put(ScreenWidthQualifier.class, new ScreenWidthEdit(mQualifierEditParent));
@@ -517,7 +529,7 @@ public class ConfigurationSelector extends Composite {
      */
     public boolean setConfiguration(String folderName) {
         // split the name of the folder in segments.
-        String[] folderSegments = folderName.split(AndroidConstants.RES_QUALIFIER_SEP);
+        String[] folderSegments = folderName.split(SdkConstants.RES_QUALIFIER_SEP);
 
         return setConfiguration(folderSegments);
     }
@@ -602,10 +614,12 @@ public class ConfigurationSelector extends Composite {
         public QualifierContentProvider() {
         }
 
+        @Override
         public void dispose() {
             // pass
         }
 
+        @Override
         public Object[] getElements(Object inputElement) {
             // default easy case
             if (mQualifierFilter == null) {
@@ -623,6 +637,7 @@ public class ConfigurationSelector extends Composite {
             return list.toArray();
         }
 
+        @Override
         public void inputChanged(Viewer viewer, Object oldInput, Object newInput) {
             mInput = null;
             if (newInput instanceof FolderConfiguration) {
@@ -642,6 +657,7 @@ public class ConfigurationSelector extends Composite {
             mShowQualifierValue = showQualifierValue;
         }
 
+        @Override
         public String getColumnText(Object element, int columnIndex) {
             // only one column, so we can ignore columnIndex
             if (element instanceof ResourceQualifier) {
@@ -662,6 +678,7 @@ public class ConfigurationSelector extends Composite {
             return null;
         }
 
+        @Override
         public Image getColumnImage(Object element, int columnIndex) {
             // only one column, so we can ignore columnIndex
             if (element instanceof ResourceQualifier) {
@@ -671,19 +688,23 @@ public class ConfigurationSelector extends Composite {
             return null;
         }
 
+        @Override
         public void addListener(ILabelProviderListener listener) {
             // pass
         }
 
+        @Override
         public void dispose() {
             // pass
         }
 
+        @Override
         public boolean isLabelProperty(Object element, String property) {
             // pass
             return false;
         }
 
+        @Override
         public void removeListener(ILabelProviderListener listener) {
             // pass
         }
@@ -718,6 +739,7 @@ public class ConfigurationSelector extends Composite {
             mText.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             mText.addVerifyListener(new MobileCodeVerifier());
             mText.addModifyListener(new ModifyListener() {
+                @Override
                 public void modifyText(ModifyEvent e) {
                     onTextChange();
                 }
@@ -784,6 +806,7 @@ public class ConfigurationSelector extends Composite {
             mText.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             mText.addVerifyListener(new MobileCodeVerifier());
             mText.addModifyListener(new ModifyListener() {
+                @Override
                 public void modifyText(ModifyEvent e) {
                     onTextChange();
                 }
@@ -841,33 +864,55 @@ public class ConfigurationSelector extends Composite {
      */
     private class LanguageEdit extends QualifierEditBase {
         private Combo mLanguage;
+        private Label mName;
 
         public LanguageEdit(Composite parent) {
             super(parent, LanguageQualifier.NAME);
 
             mLanguage = new Combo(this, SWT.DROP_DOWN);
+            Set<String> codes = LocaleManager.getLanguageCodes();
+            String[] items = codes.toArray(new String[codes.size()]);
+            Arrays.sort(items);
+            mLanguage.setItems(items);
+
             mLanguage.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             mLanguage.addVerifyListener(new LanguageRegionVerifier());
             mLanguage.addSelectionListener(new SelectionListener() {
+                @Override
                 public void widgetDefaultSelected(SelectionEvent e) {
                     onLanguageChange();
                 }
+                @Override
                 public void widgetSelected(SelectionEvent e) {
                     onLanguageChange();
                 }
             });
             mLanguage.addModifyListener(new ModifyListener() {
+                @Override
                 public void modifyText(ModifyEvent e) {
                     onLanguageChange();
                 }
             });
 
             new Label(this, SWT.NONE).setText("(2 letter code)");
+
+            mName = new Label(this, SWT.NONE);
+            mName.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
+
         }
 
         private void onLanguageChange() {
             // update the current config
             String value = mLanguage.getText();
+
+            String newName = "";
+            if (value.length() == 2) {
+                String name = LocaleManager.getLanguageName(value.toLowerCase(Locale.US));
+                if (name != null) {
+                    newName = name;
+                }
+            }
+            mName.setText(newName);
 
             if (value.length() == 0) {
                 // empty string, means no qualifier.
@@ -917,14 +962,17 @@ public class ConfigurationSelector extends Composite {
             mRegion.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             mRegion.addVerifyListener(new LanguageRegionVerifier());
             mRegion.addSelectionListener(new SelectionListener() {
+                @Override
                 public void widgetDefaultSelected(SelectionEvent e) {
                     onRegionChange();
                 }
+                @Override
                 public void widgetSelected(SelectionEvent e) {
                     onRegionChange();
                 }
             });
             mRegion.addModifyListener(new ModifyListener() {
+                @Override
                 public void modifyText(ModifyEvent e) {
                     onRegionChange();
                 }
@@ -973,6 +1021,65 @@ public class ConfigurationSelector extends Composite {
     }
 
     /**
+     * Edit widget for {@link LayoutDirectionQualifier}.
+     */
+    private class LayoutDirectionEdit extends QualifierEditBase {
+
+        private Combo mDirection;
+
+        public LayoutDirectionEdit(Composite parent) {
+            super(parent, LayoutDirectionQualifier.NAME);
+
+            mDirection = new Combo(this, SWT.DROP_DOWN | SWT.READ_ONLY);
+            fillCombo(mDirection, LayoutDirection.values());
+
+            mDirection.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
+            mDirection.addSelectionListener(new SelectionListener() {
+                @Override
+                public void widgetDefaultSelected(SelectionEvent e) {
+                    onDirectionChange();
+                }
+                @Override
+                public void widgetSelected(SelectionEvent e) {
+                    onDirectionChange();
+                }
+            });
+        }
+
+        protected void onDirectionChange() {
+            // update the current config
+            int index = mDirection.getSelectionIndex();
+
+            if (index != -1) {
+                mSelectedConfiguration.setLayoutDirectionQualifier(new LayoutDirectionQualifier(
+                        LayoutDirection.getByIndex(index)));
+            } else {
+                // empty selection, means no qualifier.
+                // Since the qualifier classes are immutable, and we don't want to
+                // remove the qualifier from the configuration, we create a new default one.
+                mSelectedConfiguration.setLayoutDirectionQualifier(
+                        new LayoutDirectionQualifier());
+            }
+
+            // notify of change
+            onChange(true /* keepSelection */);
+        }
+
+        @Override
+        public void setQualifier(ResourceQualifier qualifier) {
+            LayoutDirectionQualifier q = (LayoutDirectionQualifier)qualifier;
+
+            LayoutDirection value = q.getValue();
+            if (value == null) {
+                mDirection.clearSelection();
+            } else {
+                mDirection.select(LayoutDirection.getIndex(value));
+            }
+        }
+    }
+
+
+    /**
      * Edit widget for {@link SmallestScreenWidthQualifier}.
      */
     private class SmallestScreenWidthEdit extends QualifierEditBase {
@@ -983,6 +1090,7 @@ public class ConfigurationSelector extends Composite {
             super(parent, SmallestScreenWidthQualifier.NAME);
 
             ModifyListener modifyListener = new ModifyListener() {
+                @Override
                 public void modifyText(ModifyEvent e) {
                     onSizeChange();
                 }
@@ -1050,6 +1158,7 @@ public class ConfigurationSelector extends Composite {
             super(parent, ScreenWidthQualifier.NAME);
 
             ModifyListener modifyListener = new ModifyListener() {
+                @Override
                 public void modifyText(ModifyEvent e) {
                     onSizeChange();
                 }
@@ -1115,6 +1224,7 @@ public class ConfigurationSelector extends Composite {
             super(parent, ScreenHeightQualifier.NAME);
 
             ModifyListener modifyListener = new ModifyListener() {
+                @Override
                 public void modifyText(ModifyEvent e) {
                     onSizeChange();
                 }
@@ -1185,9 +1295,11 @@ public class ConfigurationSelector extends Composite {
 
             mSize.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             mSize.addSelectionListener(new SelectionListener() {
+                @Override
                 public void widgetDefaultSelected(SelectionEvent e) {
                     onScreenSizeChange();
                 }
+                @Override
                 public void widgetSelected(SelectionEvent e) {
                     onScreenSizeChange();
                 }
@@ -1241,9 +1353,11 @@ public class ConfigurationSelector extends Composite {
 
             mRatio.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             mRatio.addSelectionListener(new SelectionListener() {
+                @Override
                 public void widgetDefaultSelected(SelectionEvent e) {
                     onScreenRatioChange();
                 }
+                @Override
                 public void widgetSelected(SelectionEvent e) {
                     onScreenRatioChange();
                 }
@@ -1297,9 +1411,11 @@ public class ConfigurationSelector extends Composite {
 
             mOrientation.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             mOrientation.addSelectionListener(new SelectionListener() {
+                @Override
                 public void widgetDefaultSelected(SelectionEvent e) {
                     onOrientationChange();
                 }
+                @Override
                 public void widgetSelected(SelectionEvent e) {
                     onOrientationChange();
                 }
@@ -1353,9 +1469,11 @@ public class ConfigurationSelector extends Composite {
 
             mUiMode.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             mUiMode.addSelectionListener(new SelectionListener() {
+                @Override
                 public void widgetDefaultSelected(SelectionEvent e) {
                     onDockModeChange();
                 }
+                @Override
                 public void widgetSelected(SelectionEvent e) {
                     onDockModeChange();
                 }
@@ -1408,9 +1526,11 @@ public class ConfigurationSelector extends Composite {
 
             mNightMode.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             mNightMode.addSelectionListener(new SelectionListener() {
+                @Override
                 public void widgetDefaultSelected(SelectionEvent e) {
                     onNightModeChange();
                 }
+                @Override
                 public void widgetSelected(SelectionEvent e) {
                     onNightModeChange();
                 }
@@ -1463,9 +1583,11 @@ public class ConfigurationSelector extends Composite {
 
             mDensity.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             mDensity.addSelectionListener(new SelectionListener() {
+                @Override
                 public void widgetDefaultSelected(SelectionEvent e) {
                     onDensityChange();
                 }
+                @Override
                 public void widgetSelected(SelectionEvent e) {
                     onDensityChange();
                 }
@@ -1519,9 +1641,11 @@ public class ConfigurationSelector extends Composite {
 
             mTouchScreen.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             mTouchScreen.addSelectionListener(new SelectionListener() {
+                @Override
                 public void widgetDefaultSelected(SelectionEvent e) {
                     onTouchChange();
                 }
+                @Override
                 public void widgetSelected(SelectionEvent e) {
                     onTouchChange();
                 }
@@ -1574,9 +1698,11 @@ public class ConfigurationSelector extends Composite {
 
             mKeyboardState.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             mKeyboardState.addSelectionListener(new SelectionListener() {
+                @Override
                 public void widgetDefaultSelected(SelectionEvent e) {
                     onKeyboardChange();
                 }
+                @Override
                 public void widgetSelected(SelectionEvent e) {
                     onKeyboardChange();
                 }
@@ -1630,9 +1756,11 @@ public class ConfigurationSelector extends Composite {
 
             mTextInput.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             mTextInput.addSelectionListener(new SelectionListener() {
+                @Override
                 public void widgetDefaultSelected(SelectionEvent e) {
                     onTextInputChange();
                 }
+                @Override
                 public void widgetSelected(SelectionEvent e) {
                     onTextInputChange();
                 }
@@ -1686,9 +1814,11 @@ public class ConfigurationSelector extends Composite {
 
             mNavigationState.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             mNavigationState.addSelectionListener(new SelectionListener() {
+                @Override
                 public void widgetDefaultSelected(SelectionEvent e) {
                     onNavigationChange();
                 }
+                @Override
                 public void widgetSelected(SelectionEvent e) {
                     onNavigationChange();
                 }
@@ -1742,9 +1872,11 @@ public class ConfigurationSelector extends Composite {
 
             mNavigation.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             mNavigation.addSelectionListener(new SelectionListener() {
+                @Override
                 public void widgetDefaultSelected(SelectionEvent e) {
                     onNavigationChange();
                 }
+                @Override
                 public void widgetSelected(SelectionEvent e) {
                     onNavigationChange();
                 }
@@ -1795,6 +1927,7 @@ public class ConfigurationSelector extends Composite {
             super(parent, ScreenDimensionQualifier.NAME);
 
             ModifyListener modifyListener = new ModifyListener() {
+                @Override
                 public void modifyText(ModifyEvent e) {
                     onSizeChange();
                 }
@@ -1871,6 +2004,7 @@ public class ConfigurationSelector extends Composite {
             mText.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             mText.addVerifyListener(new MobileCodeVerifier());
             mText.addModifyListener(new ModifyListener() {
+                @Override
                 public void modifyText(ModifyEvent e) {
                     onVersionChange();
                 }

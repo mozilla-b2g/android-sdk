@@ -16,7 +16,7 @@
 
 package com.android.ide.eclipse.adt.internal.editors.ui;
 
-import com.android.sdklib.SdkConstants;
+import com.android.SdkConstants;
 
 import org.eclipse.core.runtime.Assert;
 import org.eclipse.jface.viewers.DialogCellEditor;
@@ -102,6 +102,7 @@ public abstract class EditableDialogCellEditor extends DialogCellEditor {
             }
         });
         text.addTraverseListener(new TraverseListener() {
+            @Override
             public void keyTraversed(TraverseEvent e) {
                 if (e.detail == SWT.TRAVERSE_ESCAPE
                         || e.detail == SWT.TRAVERSE_RETURN) {
@@ -245,6 +246,7 @@ public abstract class EditableDialogCellEditor extends DialogCellEditor {
     private ModifyListener getModifyListener() {
         if (modifyListener == null) {
             modifyListener = new ModifyListener() {
+                @Override
                 public void modifyText(ModifyEvent e) {
                     editOccured(e);
                 }

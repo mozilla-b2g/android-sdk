@@ -16,9 +16,9 @@
 
 package com.android.ide.eclipse.hierarchyviewer;
 
-import com.android.ddmlib.IDevice;
 import com.android.hierarchyviewerlib.HierarchyViewerDirector;
-import com.android.hierarchyviewerlib.device.Window;
+import com.android.hierarchyviewerlib.device.IHvDevice;
+import com.android.hierarchyviewerlib.models.Window;
 import com.android.ide.eclipse.hierarchyviewer.views.PixelPerfectTreeView;
 import com.android.ide.eclipse.hierarchyviewer.views.PropertyView;
 
@@ -53,10 +53,12 @@ public class HierarchyViewerPluginDirector extends HierarchyViewerDirector {
     }
 
     private ISchedulingRule mSchedulingRule = new ISchedulingRule() {
+        @Override
         public boolean contains(ISchedulingRule rule) {
             return rule == this;
         }
 
+        @Override
         public boolean isConflicting(ISchedulingRule rule) {
             return rule == this;
         }
@@ -95,7 +97,7 @@ public class HierarchyViewerPluginDirector extends HierarchyViewerDirector {
     }
 
     @Override
-    public void loadPixelPerfectData(IDevice device) {
+    public void loadPixelPerfectData(IHvDevice device) {
         super.loadPixelPerfectData(device);
 
         // The windows tab hides the tree tab, so let's bring the tree tab

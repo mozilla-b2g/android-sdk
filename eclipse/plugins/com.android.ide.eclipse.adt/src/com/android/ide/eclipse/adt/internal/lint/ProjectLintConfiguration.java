@@ -15,6 +15,7 @@
  */
 package com.android.ide.eclipse.adt.internal.lint;
 
+import com.android.annotations.NonNull;
 import com.android.annotations.VisibleForTesting;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.AdtUtils;
@@ -48,8 +49,8 @@ class ProjectLintConfiguration extends DefaultConfiguration {
     private static ProjectLintConfiguration create(LintClient client, IProject project,
             Configuration parent, boolean fatalOnly) {
         File dir = AdtUtils.getAbsolutePath(project).toFile();
-        Project lingProject = new Project(client, dir, dir);
-        return new ProjectLintConfiguration(client, lingProject, parent, fatalOnly);
+        Project lintProject = client.getProject(dir, dir);
+        return new ProjectLintConfiguration(client, lintProject, parent, fatalOnly);
     }
 
     public static ProjectLintConfiguration get(LintClient client, IProject project,
@@ -79,9 +80,9 @@ class ProjectLintConfiguration extends DefaultConfiguration {
     }
 
     @Override
-    public Severity getSeverity(Issue issue) {
+    public @NonNull Severity getSeverity(@NonNull Issue issue) {
         Severity severity = super.getSeverity(issue);
-        if (mFatalOnly && severity != Severity.ERROR) {
+        if (mFatalOnly && severity != Severity.FATAL) {
             return Severity.IGNORE;
         }
         return severity;

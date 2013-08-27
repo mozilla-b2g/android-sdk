@@ -26,33 +26,35 @@ import static com.android.ide.common.api.SegmentType.LEFT;
 import static com.android.ide.common.api.SegmentType.RIGHT;
 import static com.android.ide.common.api.SegmentType.TOP;
 import static com.android.ide.common.layout.BaseLayoutRule.getMaxMatchDistance;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ABOVE;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_BASELINE;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_BOTTOM;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_LEFT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_PARENT_BOTTOM;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_PARENT_LEFT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_PARENT_RIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_PARENT_TOP;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_RIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_TOP;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_BELOW;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_CENTER_HORIZONTAL;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_CENTER_IN_PARENT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_CENTER_VERTICAL;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_MARGIN_BOTTOM;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_MARGIN_LEFT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_MARGIN_RIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_MARGIN_TOP;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_TO_LEFT_OF;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_TO_RIGHT_OF;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_N_DP;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_TRUE;
+import static com.android.SdkConstants.ATTR_ID;
+import static com.android.SdkConstants.ATTR_LAYOUT_ABOVE;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_BASELINE;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_BOTTOM;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_LEFT;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_PARENT_BOTTOM;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_PARENT_LEFT;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_PARENT_RIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_PARENT_TOP;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_RIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_TOP;
+import static com.android.SdkConstants.ATTR_LAYOUT_BELOW;
+import static com.android.SdkConstants.ATTR_LAYOUT_CENTER_HORIZONTAL;
+import static com.android.SdkConstants.ATTR_LAYOUT_CENTER_IN_PARENT;
+import static com.android.SdkConstants.ATTR_LAYOUT_CENTER_VERTICAL;
+import static com.android.SdkConstants.ATTR_LAYOUT_MARGIN_BOTTOM;
+import static com.android.SdkConstants.ATTR_LAYOUT_MARGIN_LEFT;
+import static com.android.SdkConstants.ATTR_LAYOUT_MARGIN_RIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_MARGIN_TOP;
+import static com.android.SdkConstants.ATTR_LAYOUT_TO_LEFT_OF;
+import static com.android.SdkConstants.ATTR_LAYOUT_TO_RIGHT_OF;
+import static com.android.SdkConstants.VALUE_N_DP;
+import static com.android.SdkConstants.VALUE_TRUE;
 import static com.android.ide.common.layout.relative.ConstraintType.ALIGN_BASELINE;
+
 import static java.lang.Math.abs;
 
+import com.android.SdkConstants;
+import static com.android.SdkConstants.ANDROID_URI;
 import com.android.ide.common.api.DropFeedback;
 import com.android.ide.common.api.IClientRulesEngine;
 import com.android.ide.common.api.INode;
@@ -291,6 +293,11 @@ public class GuidelineHandler {
         return false;
     }
 
+    /**
+     * Checks for any cycles in the dependencies
+     *
+     * @param feedback the drop feedback state
+     */
     public void checkCycles(DropFeedback feedback) {
         // Deliberate short circuit evaluation -- only list the first cycle
         feedback.errorMessage = null;
@@ -657,6 +664,7 @@ public class GuidelineHandler {
         }
     }
 
+    /** Breaks any cycles detected by the handler */
     public void removeCycles() {
         if (mHorizontalCycle != null) {
             removeCycles(mHorizontalDeps);
@@ -727,6 +735,7 @@ public class GuidelineHandler {
      * </ul>
      */
     private final class MatchComparator implements Comparator<Match> {
+        @Override
         public int compare(Match m1, Match m2) {
             // Always prefer matching parent bounds
             int parent1 = m1.edge.node == layout ? -1 : 1;

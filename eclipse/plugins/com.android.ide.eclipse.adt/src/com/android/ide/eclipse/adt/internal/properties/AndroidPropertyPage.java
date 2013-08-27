@@ -16,11 +16,11 @@
 
 package com.android.ide.eclipse.adt.internal.properties;
 
+import com.android.SdkConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.sdk.ProjectState;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.sdklib.IAndroidTarget;
-import com.android.sdklib.SdkConstants;
 import com.android.sdklib.internal.project.ProjectProperties;
 import com.android.sdklib.internal.project.ProjectPropertiesWorkingCopy;
 import com.android.sdkuilib.internal.widgets.SdkTargetSelector;
@@ -92,17 +92,6 @@ public class AndroidPropertyPage extends PropertyPage {
 
         mLibraryDependencies = new LibraryProperties(libraryGroup);
 
-        /*
-         * APK-SPLIT: This is not yet supported, so we hide the UI
-        Group g = new Group(top, SWT.NONE);
-        g.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
-        g.setLayout(new GridLayout(1, false));
-        g.setText("APK Generation");
-
-        mSplitByDensity = new Button(g, SWT.CHECK);
-        mSplitByDensity.setText("One APK per density");
-
-*/
         // fill the ui
         fillUi();
 
@@ -154,7 +143,9 @@ public class AndroidPropertyPage extends PropertyPage {
                     mPropertiesWorkingCopy.save();
 
                     IResource projectProp = mProject.findMember(SdkConstants.FN_PROJECT_PROPERTIES);
-                    projectProp.refreshLocal(IResource.DEPTH_ZERO, new NullProgressMonitor());
+                    if (projectProp != null) {
+                        projectProp.refreshLocal(IResource.DEPTH_ZERO, new NullProgressMonitor());
+                    }
                 } catch (Exception e) {
                     String msg = String.format(
                             "Failed to save %1$s for project %2$s",
@@ -188,13 +179,6 @@ public class AndroidPropertyPage extends PropertyPage {
 
             mIsLibrary.setSelection(state.isLibrary());
             mLibraryDependencies.setContent(state, mPropertiesWorkingCopy);
-
-            /*
-             * APK-SPLIT: This is not yet supported, so we hide the UI
-            // get the project settings
-            ApkSettings settings = currentSdk.getApkSettings(mProject);
-            mSplitByDensity.setSelection(settings.isSplitByDpi());
-            */
         }
 
     }

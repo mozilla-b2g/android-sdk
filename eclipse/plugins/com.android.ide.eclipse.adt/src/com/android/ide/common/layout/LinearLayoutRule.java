@@ -16,21 +16,24 @@
 
 package com.android.ide.common.layout;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_BASELINE_ALIGNED;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_GRAVITY;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_HEIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_WEIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_WIDTH;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ORIENTATION;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_WEIGHT_SUM;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_1;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_HORIZONTAL;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_VERTICAL;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_WRAP_CONTENT;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_ZERO_DP;
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ATTR_BASELINE_ALIGNED;
+import static com.android.SdkConstants.ATTR_LAYOUT_GRAVITY;
+import static com.android.SdkConstants.ATTR_LAYOUT_HEIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_WEIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_WIDTH;
+import static com.android.SdkConstants.ATTR_ORIENTATION;
+import static com.android.SdkConstants.ATTR_WEIGHT_SUM;
+import static com.android.SdkConstants.VALUE_1;
+import static com.android.SdkConstants.VALUE_HORIZONTAL;
+import static com.android.SdkConstants.VALUE_VERTICAL;
+import static com.android.SdkConstants.VALUE_WRAP_CONTENT;
+import static com.android.SdkConstants.VALUE_ZERO_DP;
+import static com.android.ide.eclipse.adt.AdtUtils.formatFloatAttribute;
 
-import com.android.annotations.VisibleForTesting;
+import com.android.SdkConstants;
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.api.DrawingStyle;
 import com.android.ide.common.api.DropFeedback;
 import com.android.ide.common.api.IClientRulesEngine;
@@ -50,14 +53,12 @@ import com.android.ide.common.api.RuleAction;
 import com.android.ide.common.api.RuleAction.Choices;
 import com.android.ide.common.api.SegmentType;
 import com.android.ide.eclipse.adt.AdtPlugin;
-import com.android.sdklib.SdkConstants;
 
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -123,8 +124,10 @@ public class LinearLayoutRule extends BaseLayoutRule {
     }
 
     @Override
-    public void addLayoutActions(List<RuleAction> actions, final INode parentNode,
-            final List<? extends INode> children) {
+    public void addLayoutActions(
+            @NonNull List<RuleAction> actions,
+            final @NonNull INode parentNode,
+            final @NonNull List<? extends INode> children) {
         super.addLayoutActions(actions, parentNode, children);
         if (supportsOrientation()) {
             Choices action = RuleAction.createChoices(
@@ -146,7 +149,7 @@ public class LinearLayoutRule extends BaseLayoutRule {
         if (!isVertical(parentNode)) {
             String current = parentNode.getStringAttr(ANDROID_URI, ATTR_BASELINE_ALIGNED);
             boolean isAligned =  current == null || Boolean.valueOf(current);
-            actions.add(RuleAction.createToggle(null, "Toggle Baseline Alignment",
+            actions.add(RuleAction.createToggle(ACTION_BASELINE, "Toggle Baseline Alignment",
                     isAligned,
                     new PropertyCallback(Collections.singletonList(parentNode),
                             "Change Baseline Alignment",
@@ -166,10 +169,15 @@ public class LinearLayoutRule extends BaseLayoutRule {
 
             // Weights
             IMenuCallback actionCallback = new IMenuCallback() {
-                public void action(final RuleAction action, List<? extends INode> selectedNodes,
-                        final String valueId, final Boolean newValue) {
+                @Override
+                public void action(
+                        final @NonNull RuleAction action,
+                        @NonNull List<? extends INode> selectedNodes,
+                        final @Nullable String valueId,
+                        final @Nullable Boolean newValue) {
                     parentNode.editXml("Change Weight", new INodeHandler() {
-                        public void handle(INode n) {
+                        @Override
+                        public void handle(@NonNull INode n) {
                             String id = action.getId();
                             if (id.equals(ACTION_WEIGHT)) {
                                 String weight =
@@ -180,6 +188,9 @@ public class LinearLayoutRule extends BaseLayoutRule {
                                 weight = mRulesEngine.displayInput("Enter Weight Value:", weight,
                                         null);
                                 if (weight != null) {
+                                    if (weight.isEmpty()) {
+                                        weight = null; // remove attribute
+                                    }
                                     for (INode child : children) {
                                         child.setAttribute(ANDROID_URI,
                                                 ATTR_LAYOUT_WEIGHT, weight);
@@ -264,8 +275,8 @@ public class LinearLayoutRule extends BaseLayoutRule {
     // ==== Drag'n'drop support ====
 
     @Override
-    public DropFeedback onDropEnter(final INode targetNode, Object targetView,
-            final IDragElement[] elements) {
+    public DropFeedback onDropEnter(final @NonNull INode targetNode, @Nullable Object targetView,
+            final @Nullable IDragElement[] elements) {
 
         if (elements.length == 0) {
             return null;
@@ -295,8 +306,9 @@ public class LinearLayoutRule extends BaseLayoutRule {
                 for (IDragElement element : elements) {
                     // This tries to determine if an INode corresponds to an
                     // IDragElement, by comparing their bounds.
-                    if (bc.equals(element.getBounds())) {
+                    if (element.isSame(it)) {
                         isDragged = true;
+                        break;
                     }
                 }
 
@@ -342,7 +354,9 @@ public class LinearLayoutRule extends BaseLayoutRule {
         return new DropFeedback(new LinearDropData(indexes, posCount, isVertical, selfPos),
                 new IFeedbackPainter() {
 
-                    public void paint(IGraphics gc, INode node, DropFeedback feedback) {
+                    @Override
+                    public void paint(@NonNull IGraphics gc, @NonNull INode node,
+                            @NonNull DropFeedback feedback) {
                         // Paint callback for the LinearLayout. This is called
                         // by the canvas when a draw is needed.
                         drawFeedback(gc, node, elements, feedback);
@@ -463,8 +477,8 @@ public class LinearLayoutRule extends BaseLayoutRule {
     }
 
     @Override
-    public DropFeedback onDropMove(INode targetNode, IDragElement[] elements,
-            DropFeedback feedback, Point p) {
+    public DropFeedback onDropMove(@NonNull INode targetNode, @NonNull IDragElement[] elements,
+            @Nullable DropFeedback feedback, @NonNull Point p) {
         Rect b = targetNode.getBounds();
         if (!b.isValid()) {
             return feedback;
@@ -529,13 +543,14 @@ public class LinearLayoutRule extends BaseLayoutRule {
     }
 
     @Override
-    public void onDropLeave(INode targetNode, IDragElement[] elements, DropFeedback feedback) {
+    public void onDropLeave(@NonNull INode targetNode, @NonNull IDragElement[] elements,
+            @Nullable DropFeedback feedback) {
         // ignore
     }
 
     @Override
-    public void onDropped(final INode targetNode, final IDragElement[] elements,
-            final DropFeedback feedback, final Point p) {
+    public void onDropped(final @NonNull INode targetNode, final @NonNull IDragElement[] elements,
+            final @Nullable DropFeedback feedback, final @NonNull Point p) {
 
         LinearDropData data = (LinearDropData) feedback.userData;
         final int initialInsertPos = data.getInsertPos();
@@ -543,7 +558,8 @@ public class LinearLayoutRule extends BaseLayoutRule {
     }
 
     @Override
-    public void onChildInserted(INode node, INode parent, InsertType insertType) {
+    public void onChildInserted(@NonNull INode node, @NonNull INode parent,
+            @NonNull InsertType insertType) {
         if (insertType == InsertType.MOVE_WITHIN) {
             // Don't adjust widths/heights/weights when just moving within a single
             // LinearLayout
@@ -618,8 +634,8 @@ public class LinearLayoutRule extends BaseLayoutRule {
         private int mPosition;
 
         public MatchPos(int distance, int position) {
-            this.mDistance = distance;
-            this.mPosition = position;
+            mDistance = distance;
+            mPosition = position;
         }
 
         @Override
@@ -669,10 +685,10 @@ public class LinearLayoutRule extends BaseLayoutRule {
 
         public LinearDropData(List<MatchPos> indexes, int numPositions,
                 boolean isVertical, int selfPos) {
-            this.mIndexes = indexes;
-            this.mNumPositions = numPositions;
-            this.mVertical = isVertical;
-            this.mSelfPos = selfPos;
+            mIndexes = indexes;
+            mNumPositions = numPositions;
+            mVertical = isVertical;
+            mSelfPos = selfPos;
         }
 
         @Override
@@ -693,7 +709,7 @@ public class LinearLayoutRule extends BaseLayoutRule {
         }
 
         private void setCurrX(Integer currX) {
-            this.mCurrX = currX;
+            mCurrX = currX;
         }
 
         private Integer getCurrX() {
@@ -701,7 +717,7 @@ public class LinearLayoutRule extends BaseLayoutRule {
         }
 
         private void setCurrY(Integer currY) {
-            this.mCurrY = currY;
+            mCurrY = currY;
         }
 
         private Integer getCurrY() {
@@ -713,7 +729,7 @@ public class LinearLayoutRule extends BaseLayoutRule {
         }
 
         private void setInsertPos(int insertPos) {
-            this.mInsertPos = insertPos;
+            mInsertPos = insertPos;
         }
 
         private int getInsertPos() {
@@ -725,7 +741,7 @@ public class LinearLayoutRule extends BaseLayoutRule {
         }
 
         private void setWidth(Integer width) {
-            this.mWidth = width;
+            mWidth = width;
         }
 
         private Integer getWidth() {
@@ -733,7 +749,7 @@ public class LinearLayoutRule extends BaseLayoutRule {
         }
 
         private void setHeight(Integer height) {
-            this.mHeight = height;
+            mHeight = height;
         }
 
         private Integer getHeight() {
@@ -771,7 +787,9 @@ public class LinearLayoutRule extends BaseLayoutRule {
 
             unweightedSizes = mRulesEngine.measureChildren(layout,
                     new IClientRulesEngine.AttributeFilter() {
-                        public String getAttribute(INode n, String namespace, String localName) {
+                        @Override
+                        public String getAttribute(@NonNull INode n, @Nullable String namespace,
+                                @NonNull String localName) {
                             // Clear out layout weights; we need to measure the unweighted sizes
                             // of the children
                             if (ATTR_LAYOUT_WEIGHT.equals(localName)
@@ -1070,16 +1088,5 @@ public class LinearLayoutRule extends BaseLayoutRule {
         }
 
         return sum;
-    }
-
-    @VisibleForTesting
-    static String formatFloatAttribute(float value) {
-        if (value != (int) value) {
-            // Run String.format without a locale, because we don't want locale-specific
-            // conversions here like separating the decimal part with a comma instead of a dot!
-            return String.format((Locale) null, "%.2f", value); //$NON-NLS-1$
-        } else {
-            return Integer.toString((int) value);
-        }
     }
 }

@@ -17,11 +17,10 @@ package com.android.ide.eclipse.adt.internal.assetstudio;
 
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.ide.eclipse.adt.AdtUtils;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
 import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper;
-import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper.IProjectFilter;
-import com.android.ide.eclipse.adt.internal.wizards.newxmlfile.NewXmlFileWizard;
-import com.android.util.Pair;
+import com.android.utils.Pair;
 
 import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
@@ -71,6 +70,7 @@ public class CreateAssetSetWizard extends Wizard implements INewWizard {
     private ConfigureAssetSetPage mConfigureAssetPage;
     private IProject mInitialProject;
     private List<IResource> mCreatedFiles;
+    private CreateAssetSetWizardState mValues = new CreateAssetSetWizardState();
 
     /** Creates a new asset set wizard */
     public CreateAssetSetWizard() {
@@ -79,24 +79,21 @@ public class CreateAssetSetWizard extends Wizard implements INewWizard {
 
     @Override
     public void addPages() {
-        mChooseAssetPage = new ChooseAssetTypePage();
-        mChooseAssetPage.setProject(mInitialProject);
-        mConfigureAssetPage = new ConfigureAssetSetPage();
+        mValues.project = mInitialProject;
+
+        mChooseAssetPage = new ChooseAssetTypePage(mValues);
+        mConfigureAssetPage = new ConfigureAssetSetPage(mValues);
 
         addPage(mChooseAssetPage);
         addPage(mConfigureAssetPage);
     }
 
-    String getBaseName() {
-        return mChooseAssetPage.getOutputName();
-    }
-
     @Override
     public boolean performFinish() {
         Map<String, Map<String, BufferedImage>> categories =
-                mConfigureAssetPage.generateImages(false);
+                ConfigureAssetSetPage.generateImages(mValues, false, null);
 
-        IProject project = getProject();
+        IProject project = mValues.project;
 
         // Write out the images into the project
         boolean yesToAll = false;
@@ -144,7 +141,7 @@ public class CreateAssetSetWizard extends Wizard implements INewWizard {
                     }
                 }
 
-                NewXmlFileWizard.createWsParentDirectory(file.getParent());
+                AdtUtils.createWsParentDirectory(file.getParent());
                 BufferedImage image = entry.getValue();
 
                 ByteArrayOutputStream stream = new ByteArrayOutputStream();
@@ -236,37 +233,18 @@ public class CreateAssetSetWizard extends Wizard implements INewWizard {
         }
     }
 
-    /**
-     * Returns the project to be used by the wizard (which may differ from the
-     * project initialized by {@link #init(IWorkbench, IStructuredSelection)} or
-     * set by {@link #setProject(IProject)} if the user changes the project
-     * in the first page of the wizard.
-     */
-    IProject getProject() {
-        if (mChooseAssetPage != null) {
-            return mChooseAssetPage.getProject();
-        } else {
-            return mInitialProject;
-        }
-    }
-
     /** Sets the initial project to be used by the wizard */
     void setProject(IProject project) {
         mInitialProject = project;
+        mValues.project = project;
     }
 
-    /** Returns the {@link AssetType} to create */
-    AssetType getAssetType() {
-        return mChooseAssetPage.getAssetType();
-    }
-
+    @Override
     public void init(IWorkbench workbench, IStructuredSelection selection) {
         setHelpAvailable(false);
 
         mInitialProject = guessProject(selection);
-        if (mChooseAssetPage != null) {
-            mChooseAssetPage.setProject(mInitialProject);
-        }
+        mValues.project = mInitialProject;
     }
 
     private IProject guessProject(IStructuredSelection selection) {
@@ -314,12 +292,7 @@ public class CreateAssetSetWizard extends Wizard implements INewWizard {
             }
         }
 
-        IJavaProject[] projects = BaseProjectHelper.getAndroidProjects(new IProjectFilter() {
-            public boolean accept(IProject project) {
-                return project.isAccessible();
-            }
-        });
-
+        IJavaProject[] projects = AdtUtils.getOpenAndroidProjects();
         if (projects != null && projects.length == 1) {
             return projects[0].getProject();
         }

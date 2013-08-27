@@ -16,6 +16,8 @@
 
 package com.android.ide.common.layout;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.api.IMenuCallback;
 import com.android.ide.common.api.INode;
 import com.android.ide.common.api.INodeHandler;
@@ -53,8 +55,9 @@ public class PropertyCallback implements IMenuCallback {
     }
 
     // ---- Implements IMenuCallback ----
-    public void action(RuleAction action, List<? extends INode> selectedNodes,
-            final String valueId, final Boolean newValue) {
+    @Override
+    public void action(@NonNull RuleAction action, @NonNull List<? extends INode> selectedNodes,
+            final @Nullable String valueId, final @Nullable Boolean newValue) {
         if (mTargetNodes != null && mTargetNodes.size() > 0) {
             selectedNodes = mTargetNodes;
         }
@@ -63,7 +66,8 @@ public class PropertyCallback implements IMenuCallback {
         }
         final List<? extends INode> nodes = selectedNodes;
         selectedNodes.get(0).editXml(mUndoLabel, new INodeHandler() {
-            public void handle(INode n) {
+            @Override
+            public void handle(@NonNull INode n) {
                 for (INode targetNode : nodes) {
                     if (valueId != null) {
                         targetNode.setAttribute(mUri, mAttribute, valueId);

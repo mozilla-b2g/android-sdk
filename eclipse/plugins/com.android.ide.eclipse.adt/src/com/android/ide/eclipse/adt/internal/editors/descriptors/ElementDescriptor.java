@@ -16,12 +16,12 @@
 
 package com.android.ide.eclipse.adt.internal.editors.descriptors;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_NS_NAME_PREFIX;
+import static com.android.SdkConstants.ANDROID_NS_NAME_PREFIX;
+import static com.android.SdkConstants.ANDROID_URI;
 
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.editors.IconFactory;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
-import com.android.sdklib.SdkConstants;
 
 import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.swt.graphics.Image;
@@ -213,7 +213,7 @@ public class ElementDescriptor implements Comparable<ElementDescriptor> {
     public final String getNamespace() {
         // For now we hard-code the prefix as being "android"
         if (mXmlName.startsWith(ANDROID_NS_NAME_PREFIX)) {
-            return SdkConstants.NS_RESOURCES;
+            return ANDROID_URI;
         }
 
         return ""; //$NON-NLs-1$
@@ -465,7 +465,21 @@ public class ElementDescriptor implements Comparable<ElementDescriptor> {
     }
 
     // Implements Comparable<ElementDescriptor>:
+    @Override
     public int compareTo(ElementDescriptor o) {
         return mUiName.compareToIgnoreCase(o.mUiName);
+    }
+
+    /**
+     * Ensures that this view descriptor's attribute list is up to date. This is
+     * always the case for all the builtin descriptors, but for example for a
+     * custom view, it could be changing dynamically so caches may have to be
+     * recomputed. This method will return true if nothing changed, and false if
+     * it recomputed its info.
+     *
+     * @return true if the attributes are already up to date and nothing changed
+     */
+    public boolean syncAttributes() {
+        return true;
     }
 }

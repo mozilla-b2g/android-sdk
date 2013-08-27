@@ -14,19 +14,19 @@
  * limitations under the License.
  */
 
-
 package com.android.ide.eclipse.adt.internal.wizards.newxmlfile;
 
-import static com.android.AndroidConstants.RES_QUALIFIER_SEP;
-import static com.android.ide.common.layout.LayoutConstants.HORIZONTAL_SCROLL_VIEW;
-import static com.android.ide.common.layout.LayoutConstants.LINEAR_LAYOUT;
-import static com.android.ide.common.layout.LayoutConstants.SCROLL_VIEW;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_FILL_PARENT;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_MATCH_PARENT;
-import static com.android.ide.eclipse.adt.AdtConstants.DOT_XML;
+import static com.android.SdkConstants.DOT_XML;
+import static com.android.SdkConstants.HORIZONTAL_SCROLL_VIEW;
+import static com.android.SdkConstants.LINEAR_LAYOUT;
+import static com.android.SdkConstants.RES_QUALIFIER_SEP;
+import static com.android.SdkConstants.SCROLL_VIEW;
+import static com.android.SdkConstants.VALUE_FILL_PARENT;
+import static com.android.SdkConstants.VALUE_MATCH_PARENT;
 import static com.android.ide.eclipse.adt.AdtConstants.WS_SEP_CHAR;
 import static com.android.ide.eclipse.adt.internal.wizards.newxmlfile.ChooseConfigurationPage.RES_FOLDER_ABS;
 
+import com.android.SdkConstants;
 import com.android.ide.common.resources.configuration.FolderConfiguration;
 import com.android.ide.common.resources.configuration.ResourceQualifier;
 import com.android.ide.eclipse.adt.AdtConstants;
@@ -37,10 +37,6 @@ import com.android.ide.eclipse.adt.internal.editors.IconFactory;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.DocumentDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.IDescriptorProvider;
-import com.android.ide.eclipse.adt.internal.editors.menu.descriptors.MenuDescriptors;
-import com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors;
-import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper;
-import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper.IProjectFilter;
 import com.android.ide.eclipse.adt.internal.project.ProjectChooserHelper;
 import com.android.ide.eclipse.adt.internal.project.ProjectChooserHelper.ProjectCombo;
 import com.android.ide.eclipse.adt.internal.resources.ResourceNameValidator;
@@ -49,8 +45,8 @@ import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk.TargetChangeListener;
 import com.android.resources.ResourceFolderType;
 import com.android.sdklib.IAndroidTarget;
-import com.android.sdklib.SdkConstants;
-import com.android.util.Pair;
+import com.android.utils.Pair;
+import com.android.utils.SdkUtils;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
@@ -308,6 +304,7 @@ class NewXmlFileCreationPage extends WizardPage {
                     if (SCROLL_VIEW.equals(root) || HORIZONTAL_SCROLL_VIEW.equals(root)) {
                         return "    <LinearLayout "         //$NON-NLS-1$
                             + getDefaultAttrs(project, root).replace('\n', ' ')
+                            + " android:orientation=\"vertical\"" //$NON-NLS-1$
                             + "></LinearLayout>\n";         //$NON-NLS-1$
                     }
                     return null;
@@ -316,7 +313,7 @@ class NewXmlFileCreationPage extends WizardPage {
         new TypeInfo("Values",                                              // UI name
                 "An XML file with simple values: colors, strings, dimensions, etc.", // tooltip
                 ResourceFolderType.VALUES,                                  // folder type
-                ResourcesDescriptors.ROOT_ELEMENT,                          // root seed
+                SdkConstants.TAG_RESOURCES,                                 // root seed
                 null,                                                       // default root
                 null,                                                       // xmlns
                 null,                                                       // default attributes
@@ -334,7 +331,7 @@ class NewXmlFileCreationPage extends WizardPage {
         new TypeInfo("Menu",                                                // UI name
                 "An XML file that describes an menu.",                      // tooltip
                 ResourceFolderType.MENU,                                    // folder type
-                MenuDescriptors.MENU_ROOT_ELEMENT,                          // root seed
+                SdkConstants.TAG_MENU,                                      // root seed
                 null,                                                       // default root
                 SdkConstants.NS_RESOURCES,                                  // xmlns
                 null,                                                       // default attributes
@@ -437,6 +434,7 @@ class NewXmlFileCreationPage extends WizardPage {
      *
      * @see org.eclipse.jface.dialogs.IDialogPage#createControl(org.eclipse.swt.widgets.Composite)
      */
+    @Override
     @SuppressWarnings("unused") // SWT constructors have side effects, they aren't unused
     public void createControl(Composite parent) {
         // This UI is maintained with WindowBuilder.
@@ -503,6 +501,7 @@ class NewXmlFileCreationPage extends WizardPage {
         mFileNameTextField.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
         mFileNameTextField.setToolTipText(tooltip);
         mFileNameTextField.addModifyListener(new ModifyListener() {
+            @Override
             public void modifyText(ModifyEvent e) {
                 mValues.name = mFileNameTextField.getText();
                 validatePage();
@@ -651,7 +650,7 @@ class NewXmlFileCreationPage extends WizardPage {
                 if (res.getType() == IResource.FOLDER) {
                     wsFolderPath = res.getProjectRelativePath();
                 } else if (res.getType() == IResource.FILE) {
-                    if (AdtUtils.endsWithIgnoreCase(res.getName(), DOT_XML)) {
+                    if (SdkUtils.endsWithIgnoreCase(res.getName(), DOT_XML)) {
                         fileName = res.getName();
                     }
                     wsFolderPath = res.getParent().getProjectRelativePath();
@@ -712,13 +711,7 @@ class NewXmlFileCreationPage extends WizardPage {
             // If we didn't find a default project based on the selection, check how many
             // open Android projects we can find in the current workspace. If there's only
             // one, we'll just select it by default.
-
-            IJavaProject[] projects = BaseProjectHelper.getAndroidProjects(new IProjectFilter() {
-                public boolean accept(IProject project) {
-                    return project.isAccessible();
-                }
-            });
-
+            IJavaProject[] projects = AdtUtils.getOpenAndroidProjects();
             if (projects != null && projects.length == 1) {
                 targetScore = 1;
                 targetProject = projects[0].getProject();
@@ -741,6 +734,7 @@ class NewXmlFileCreationPage extends WizardPage {
                 }
                 String[] folderSegments = targetWsFolderPath.split(RES_QUALIFIER_SEP);
                 if (folderSegments.length > 0) {
+                    mValues.configuration = FolderConfiguration.getConfig(folderSegments);
                     String folderName = folderSegments[0];
                     selectTypeFromFolder(folderName);
                 }

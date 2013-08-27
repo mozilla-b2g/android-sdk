@@ -15,12 +15,15 @@
  */
 package com.android.ide.common.layout;
 
+import com.android.annotations.NonNull;
 import com.android.ide.common.api.IAttributeInfo;
+
+import java.util.EnumSet;
 
 /** Test/mock implementation of {@link IAttributeInfo} */
 public class TestAttributeInfo implements IAttributeInfo {
     private final String mName;
-    private final Format[] mFormats;
+    private final EnumSet<Format> mFormats;
     private final String mDefinedBy;
     private final String[] mEnumValues;
     private final String[] mFlagValues;
@@ -30,7 +33,7 @@ public class TestAttributeInfo implements IAttributeInfo {
         this(name, null, null, null, null, null);
     }
 
-    public TestAttributeInfo(String name, Format[] formats, String definedBy,
+    public TestAttributeInfo(String name, EnumSet<Format> formats, String definedBy,
             String[] enumValues, String[] flagValues, String javadoc) {
         super();
         this.mName = name;
@@ -41,31 +44,38 @@ public class TestAttributeInfo implements IAttributeInfo {
         this.mJavadoc = javadoc;
     }
 
+    @Override
     public String getDeprecatedDoc() {
         return null;
     }
 
+    @Override
     public String[] getEnumValues() {
         return mEnumValues;
     }
 
+    @Override
     public String[] getFlagValues() {
         return mFlagValues;
     }
 
-    public Format[] getFormats() {
+    @Override
+    public @NonNull EnumSet<Format> getFormats() {
         return mFormats;
     }
 
-    public String getJavaDoc() {
+    @Override
+    public @NonNull String getJavaDoc() {
         return mJavadoc;
     }
 
-    public String getName() {
+    @Override
+    public @NonNull String getName() {
         return mName;
     }
 
-    public String getDefinedBy() {
+    @Override
+    public @NonNull String getDefinedBy() {
         return mDefinedBy;
     }
 }

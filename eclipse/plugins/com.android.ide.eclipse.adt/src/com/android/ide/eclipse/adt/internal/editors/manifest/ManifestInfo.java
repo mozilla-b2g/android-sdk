@@ -16,19 +16,22 @@
 
 package com.android.ide.eclipse.adt.internal.editors.manifest;
 
-import static com.android.ide.common.resources.ResourceResolver.PREFIX_ANDROID_STYLE;
-import static com.android.sdklib.SdkConstants.NS_RESOURCES;
-import static com.android.sdklib.xml.AndroidManifest.ATTRIBUTE_ICON;
-import static com.android.sdklib.xml.AndroidManifest.ATTRIBUTE_LABEL;
-import static com.android.sdklib.xml.AndroidManifest.ATTRIBUTE_MIN_SDK_VERSION;
-import static com.android.sdklib.xml.AndroidManifest.ATTRIBUTE_NAME;
-import static com.android.sdklib.xml.AndroidManifest.ATTRIBUTE_PACKAGE;
-import static com.android.sdklib.xml.AndroidManifest.ATTRIBUTE_TARGET_SDK_VERSION;
-import static com.android.sdklib.xml.AndroidManifest.ATTRIBUTE_THEME;
-import static com.android.sdklib.xml.AndroidManifest.NODE_ACTIVITY;
-import static com.android.sdklib.xml.AndroidManifest.NODE_USES_SDK;
+import static com.android.SdkConstants.ANDROID_STYLE_RESOURCE_PREFIX;
+import static com.android.SdkConstants.CLASS_ACTIVITY;
+import static com.android.SdkConstants.NS_RESOURCES;
+import static com.android.xml.AndroidManifest.ATTRIBUTE_ICON;
+import static com.android.xml.AndroidManifest.ATTRIBUTE_LABEL;
+import static com.android.xml.AndroidManifest.ATTRIBUTE_MIN_SDK_VERSION;
+import static com.android.xml.AndroidManifest.ATTRIBUTE_NAME;
+import static com.android.xml.AndroidManifest.ATTRIBUTE_PACKAGE;
+import static com.android.xml.AndroidManifest.ATTRIBUTE_TARGET_SDK_VERSION;
+import static com.android.xml.AndroidManifest.ATTRIBUTE_THEME;
+import static com.android.xml.AndroidManifest.NODE_ACTIVITY;
+import static com.android.xml.AndroidManifest.NODE_USES_SDK;
 import static org.eclipse.jdt.core.search.IJavaSearchConstants.REFERENCES;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
@@ -37,9 +40,8 @@ import com.android.io.IAbstractFile;
 import com.android.io.StreamException;
 import com.android.resources.ScreenSize;
 import com.android.sdklib.IAndroidTarget;
-import com.android.sdklib.SdkConstants;
-import com.android.sdklib.xml.AndroidManifest;
-import com.android.util.Pair;
+import com.android.utils.Pair;
+import com.android.xml.AndroidManifest;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
@@ -49,6 +51,7 @@ import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.NullProgressMonitor;
+import org.eclipse.core.runtime.OperationCanceledException;
 import org.eclipse.core.runtime.QualifiedName;
 import org.eclipse.jdt.core.IField;
 import org.eclipse.jdt.core.IJavaElement;
@@ -57,12 +60,14 @@ import org.eclipse.jdt.core.IMethod;
 import org.eclipse.jdt.core.IPackageFragment;
 import org.eclipse.jdt.core.IPackageFragmentRoot;
 import org.eclipse.jdt.core.IType;
+import org.eclipse.jdt.core.ITypeHierarchy;
 import org.eclipse.jdt.core.search.IJavaSearchScope;
 import org.eclipse.jdt.core.search.SearchEngine;
 import org.eclipse.jdt.core.search.SearchMatch;
 import org.eclipse.jdt.core.search.SearchParticipant;
 import org.eclipse.jdt.core.search.SearchPattern;
 import org.eclipse.jdt.core.search.SearchRequestor;
+import org.eclipse.jdt.internal.core.BinaryType;
 import org.eclipse.jface.text.IDocument;
 import org.eclipse.ui.editors.text.TextFileDocumentProvider;
 import org.eclipse.ui.texteditor.IDocumentProvider;
@@ -72,10 +77,12 @@ import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -103,6 +110,9 @@ public class ManifestInfo {
     private Map<String, String> mActivityThemes;
     private IAbstractFile mManifestFile;
     private long mLastModified;
+    private long mLastChecked;
+    private String mMinSdkName;
+    private int mMinSdk;
     private int mTargetSdk;
     private String mApplicationIcon;
     private String mApplicationLabel;
@@ -125,11 +135,20 @@ public class ManifestInfo {
     }
 
     /**
+     * Clears the cached manifest information. The next get call on one of the
+     * properties will cause the information to be refreshed.
+     */
+    public void clear() {
+        mLastChecked = 0;
+    }
+
+    /**
      * Returns the {@link ManifestInfo} for the given project
      *
      * @param project the project the finder is associated with
      * @return a {@ManifestInfo} for the given project, never null
      */
+    @NonNull
     public static ManifestInfo get(IProject project) {
         ManifestInfo finder = null;
         try {
@@ -155,6 +174,14 @@ public class ManifestInfo {
      * with respect to the manifest file
      */
     private void sync() {
+        // Since each of the accessors call sync(), allow a bunch of immediate
+        // accessors to all bypass the file stat() below
+        long now = System.currentTimeMillis();
+        if (now - mLastChecked < 50 && mManifestFile != null) {
+            return;
+        }
+        mLastChecked = now;
+
         if (mManifestFile == null) {
             IFolderWrapper projectFolder = new IFolderWrapper(mProject);
             mManifestFile = AndroidManifest.getManifest(projectFolder);
@@ -174,6 +201,8 @@ public class ManifestInfo {
         mActivityThemes = new HashMap<String, String>();
         mManifestTheme = null;
         mTargetSdk = 1; // Default when not specified
+        mMinSdk = 1; // Default when not specified
+        mMinSdkName = "1"; // Default when not specified
         mPackage = ""; //$NON-NLS-1$
         mApplicationIcon = null;
         mApplicationLabel = null;
@@ -196,16 +225,15 @@ public class ManifestInfo {
                 String theme = activity.getAttributeNS(NS_RESOURCES, ATTRIBUTE_THEME);
                 if (theme != null && theme.length() > 0) {
                     String name = activity.getAttributeNS(NS_RESOURCES, ATTRIBUTE_NAME);
-                    if (name.startsWith(".")  //$NON-NLS-1$
-                            && mPackage != null && mPackage.length() > 0) {
-                        name = mPackage + name;
+                    int index = name.indexOf('.');
+                    if (index <= 0 && mPackage != null && !mPackage.isEmpty()) {
+                      name =  mPackage + (index == -1 ? "." : "") + name;
                     }
                     mActivityThemes.put(name, theme);
                 }
             }
 
             NodeList applications = root.getElementsByTagName(AndroidManifest.NODE_APPLICATION);
-            String defaultTheme = null;
             if (applications.getLength() > 0) {
                 assert applications.getLength() == 1;
                 Element application = (Element) applications.item(0);
@@ -216,47 +244,22 @@ public class ManifestInfo {
                     mApplicationLabel = application.getAttributeNS(NS_RESOURCES, ATTRIBUTE_LABEL);
                 }
 
-                defaultTheme = application.getAttributeNS(NS_RESOURCES, ATTRIBUTE_THEME);
+                String defaultTheme = application.getAttributeNS(NS_RESOURCES, ATTRIBUTE_THEME);
+                if (defaultTheme != null && !defaultTheme.isEmpty()) {
+                    // From manifest theme documentation:
+                    // "If that attribute is also not set, the default system theme is used."
+                    mManifestTheme = defaultTheme;
+                }
             }
 
             // Look up target SDK
-            if (defaultTheme == null || defaultTheme.length() == 0) {
-                // From manifest theme documentation:
-                // "If that attribute is also not set, the default system theme is used."
-
-                NodeList usesSdks = root.getElementsByTagName(NODE_USES_SDK);
-                if (usesSdks.getLength() > 0) {
-                    Element usesSdk = (Element) usesSdks.item(0);
-                    String targetSdk = null;
-                    if (usesSdk.hasAttributeNS(NS_RESOURCES, ATTRIBUTE_TARGET_SDK_VERSION)) {
-                        targetSdk = usesSdk.getAttributeNS(NS_RESOURCES,
-                                ATTRIBUTE_TARGET_SDK_VERSION);
-                    } else if (usesSdk.hasAttributeNS(NS_RESOURCES, ATTRIBUTE_MIN_SDK_VERSION)) {
-                        targetSdk = usesSdk.getAttributeNS(NS_RESOURCES,
-                                ATTRIBUTE_MIN_SDK_VERSION);
-                    }
-                    if (targetSdk != null) {
-                        int apiLevel = -1;
-                        try {
-                            apiLevel = Integer.valueOf(targetSdk);
-                        } catch (NumberFormatException e) {
-                            // Handle codename
-                            if (Sdk.getCurrent() != null) {
-                                IAndroidTarget target = Sdk.getCurrent().getTargetFromHashString(
-                                        "android-" + targetSdk); //$NON-NLS-1$
-                                if (target != null) {
-                                    // codename future API level is current api + 1
-                                    apiLevel = target.getVersion().getApiLevel() + 1;
-                                }
-                            }
-                        }
-
-                        mTargetSdk = apiLevel;
-                    }
-                }
-            } else {
-                mManifestTheme = defaultTheme;
+            NodeList usesSdks = root.getElementsByTagName(NODE_USES_SDK);
+            if (usesSdks.getLength() > 0) {
+                Element usesSdk = (Element) usesSdks.item(0);
+                mMinSdk = getApiVersion(usesSdk, ATTRIBUTE_MIN_SDK_VERSION, 1);
+                mTargetSdk = getApiVersion(usesSdk, ATTRIBUTE_TARGET_SDK_VERSION, mMinSdk);
             }
+
         } catch (SAXException e) {
             AdtPlugin.log(e, "Malformed manifest");
         } catch (Exception e) {
@@ -264,11 +267,43 @@ public class ManifestInfo {
         }
     }
 
+    private int getApiVersion(Element usesSdk, String attribute, int defaultApiLevel) {
+        String valueString = null;
+        if (usesSdk.hasAttributeNS(NS_RESOURCES, attribute)) {
+            valueString = usesSdk.getAttributeNS(NS_RESOURCES, attribute);
+            if (attribute.equals(ATTRIBUTE_MIN_SDK_VERSION)) {
+                mMinSdkName = valueString;
+            }
+        }
+
+        if (valueString != null) {
+            int apiLevel = -1;
+            try {
+                apiLevel = Integer.valueOf(valueString);
+            } catch (NumberFormatException e) {
+                // Handle codename
+                if (Sdk.getCurrent() != null) {
+                    IAndroidTarget target = Sdk.getCurrent().getTargetFromHashString(
+                            "android-" + valueString); //$NON-NLS-1$
+                    if (target != null) {
+                        // codename future API level is current api + 1
+                        apiLevel = target.getVersion().getApiLevel() + 1;
+                    }
+                }
+            }
+
+            return apiLevel;
+        }
+
+        return defaultApiLevel;
+    }
+
     /**
      * Returns the default package registered in the Android manifest
      *
      * @return the default package registered in the manifest
      */
+    @NonNull
     public String getPackage() {
         sync();
         return mPackage;
@@ -280,9 +315,21 @@ public class ManifestInfo {
      *
      * @return a map from activity fqcn to theme style
      */
+    @NonNull
     public Map<String, String> getActivityThemes() {
         sync();
         return mActivityThemes;
+    }
+
+    /**
+     * Returns the manifest theme registered on the application, if any
+     *
+     * @return a manifest theme, or null if none was registered
+     */
+    @Nullable
+    public String getManifestTheme() {
+        sync();
+        return mManifestTheme;
     }
 
     /**
@@ -293,6 +340,7 @@ public class ManifestInfo {
      * @param screenSize the screen size to obtain a default theme for, or null if unknown
      * @return the theme to use for this project, never null
      */
+    @NonNull
     public String getDefaultTheme(IAndroidTarget renderingTarget, ScreenSize screenSize) {
         sync();
 
@@ -309,9 +357,9 @@ public class ManifestInfo {
         // For now this theme works only on XLARGE screens. When it works for all sizes,
         // add that new apiLevel to this check.
         if (apiLevel >= 11 && screenSize == ScreenSize.XLARGE || apiLevel >= 14) {
-            return PREFIX_ANDROID_STYLE + "Theme.Holo"; //$NON-NLS-1$
+            return ANDROID_STYLE_RESOURCE_PREFIX + "Theme.Holo"; //$NON-NLS-1$
         } else {
-            return PREFIX_ANDROID_STYLE + "Theme"; //$NON-NLS-1$
+            return ANDROID_STYLE_RESOURCE_PREFIX + "Theme"; //$NON-NLS-1$
         }
     }
 
@@ -320,6 +368,7 @@ public class ManifestInfo {
      *
      * @return the application icon, or null
      */
+    @Nullable
     public String getApplicationIcon() {
         sync();
         return mApplicationIcon;
@@ -330,9 +379,63 @@ public class ManifestInfo {
      *
      * @return the application label, or null
      */
+    @Nullable
     public String getApplicationLabel() {
         sync();
         return mApplicationLabel;
+    }
+
+    /**
+     * Returns the target SDK version
+     *
+     * @return the target SDK version
+     */
+    public int getTargetSdkVersion() {
+        sync();
+        return mTargetSdk;
+    }
+
+    /**
+     * Returns the minimum SDK version
+     *
+     * @return the minimum SDK version
+     */
+    public int getMinSdkVersion() {
+        sync();
+        return mMinSdk;
+    }
+
+    /**
+     * Returns the minimum SDK version name (which may not be a numeric string, e.g.
+     * it could be a codename). It will never be null or empty; if no min sdk version
+     * was specified in the manifest, the return value will be "1". Use
+     * {@link #getMinSdkCodeName()} instead if you want to look up whether there is a code name.
+     *
+     * @return the minimum SDK version
+     */
+    @NonNull
+    public String getMinSdkName() {
+        sync();
+        if (mMinSdkName == null || mMinSdkName.isEmpty()) {
+            mMinSdkName = "1"; //$NON-NLS-1$
+        }
+
+        return mMinSdkName;
+    }
+
+    /**
+     * Returns the code name used for the minimum SDK version, if any.
+     *
+     * @return the minSdkVersion codename or null
+     */
+    @Nullable
+    public String getMinSdkCodeName() {
+        String minSdkName = getMinSdkName();
+        if (!Character.isDigit(minSdkName.charAt(0))) {
+            return minSdkName;
+        }
+
+        return null;
     }
 
     /**
@@ -340,6 +443,7 @@ public class ManifestInfo {
      *
      * @return the {@link IPackageFragment} for the package registered in the manifest
      */
+    @Nullable
     public IPackageFragment getPackageFragment() {
         sync();
         try {
@@ -367,8 +471,29 @@ public class ManifestInfo {
      * @param pkg the package containing activities
      * @return the activity name
      */
+    @Nullable
     public static String guessActivity(IProject project, String layoutName, String pkg) {
-        final AtomicReference<String> activity = new AtomicReference<String>();
+        List<String> activities = guessActivities(project, layoutName, pkg);
+        if (activities.size() > 0) {
+            return activities.get(0);
+        } else {
+            return null;
+        }
+    }
+
+    /**
+     * Returns the activities associated with the given layout file. Makes an educated guess
+     * by peeking at the usages of the R.layout.name field corresponding to the layout and
+     * if it finds a usage.
+     *
+     * @param project the project containing the layout
+     * @param layoutName the layout whose activity we want to look up
+     * @param pkg the package containing activities
+     * @return the activity name
+     */
+    @NonNull
+    public static List<String> guessActivities(IProject project, String layoutName, String pkg) {
+        final LinkedList<String> activities = new LinkedList<String>();
         SearchRequestor requestor = new SearchRequestor() {
             @Override
             public void acceptSearchMatch(SearchMatch match) throws CoreException {
@@ -377,11 +502,13 @@ public class ManifestInfo {
                     IMethod method = (IMethod) element;
                     IType declaringType = method.getDeclaringType();
                     String fqcn = declaringType.getFullyQualifiedName();
-                    if (activity.get() == null
-                            || (declaringType.getSuperclassName() != null &&
-                                    declaringType.getSuperclassName().endsWith("Activity")) //$NON-NLS-1$
-                            || method.getElementName().equals("onCreate")) { //$NON-NLS-1$
-                        activity.set(fqcn);
+
+                    if ((declaringType.getSuperclassName() != null &&
+                            declaringType.getSuperclassName().endsWith("Activity")) //$NON-NLS-1$
+                        || method.getElementName().equals("onCreate")) { //$NON-NLS-1$
+                        activities.addFirst(fqcn);
+                    } else {
+                        activities.addLast(fqcn);
                     }
                 }
             }
@@ -389,7 +516,7 @@ public class ManifestInfo {
         try {
             IJavaProject javaProject = BaseProjectHelper.getJavaProject(project);
             if (javaProject == null) {
-                return null;
+                return Collections.emptyList();
             }
             // TODO - look around a bit more and see if we can figure out whether the
             // call if from within a setContentView call!
@@ -405,15 +532,56 @@ public class ManifestInfo {
                 IField field = type.getField(layoutName);
                 if (field.exists()) {
                     SearchPattern pattern = SearchPattern.createPattern(field, REFERENCES);
-                    search(requestor, javaProject, pattern);
+                    try {
+                        search(requestor, javaProject, pattern);
+                    } catch (OperationCanceledException canceled) {
+                        // pass
+                    }
                 }
             }
         } catch (CoreException e) {
             AdtPlugin.log(e, null);
         }
 
-        return activity.get();
+        return activities;
     }
+
+    /**
+     * Returns all activities found in the given project (including those in libraries,
+     * except for android.jar itself)
+     *
+     * @param project the project
+     * @return a list of activity classes as fully qualified class names
+     */
+    @SuppressWarnings("restriction") // BinaryType
+    @NonNull
+    public static List<String> getProjectActivities(IProject project) {
+        final List<String> activities = new ArrayList<String>();
+        try {
+            final IJavaProject javaProject = BaseProjectHelper.getJavaProject(project);
+            if (javaProject != null) {
+                IType[] activityTypes = new IType[0];
+                IType activityType = javaProject.findType(CLASS_ACTIVITY);
+                if (activityType != null) {
+                    ITypeHierarchy hierarchy =
+                        activityType.newTypeHierarchy(javaProject, new NullProgressMonitor());
+                    activityTypes = hierarchy.getAllSubtypes(activityType);
+                    for (IType type : activityTypes) {
+                        if (type instanceof BinaryType && (type.getClassFile() == null
+                                    || type.getClassFile().getResource() == null)) {
+                            continue;
+                        }
+                        activities.add(type.getFullyQualifiedName());
+                    }
+                }
+            }
+        } catch (CoreException e) {
+            AdtPlugin.log(e, null);
+        }
+
+        return activities;
+    }
+
 
     /**
      * Returns the activity associated with the given layout file.
@@ -446,6 +614,7 @@ public class ManifestInfo {
      * @return the activity name
      */
     @SuppressWarnings("all")
+    @Nullable
     public String guessActivityBySetContentView(String layoutName) {
         if (false) {
             // These should be fields
@@ -499,7 +668,7 @@ public class ManifestInfo {
                         typeFqcn = mPackage + '.' + typeFqcn;
                     }
 
-                    IType activityType = javaProject.findType(SdkConstants.CLASS_ACTIVITY);
+                    IType activityType = javaProject.findType(CLASS_ACTIVITY);
                     if (activityType != null) {
                         IMethod method = activityType.getMethod(
                                 "setContentView", new String[] {"I"}); //$NON-NLS-1$ //$NON-NLS-2$
@@ -568,7 +737,13 @@ public class ManifestInfo {
         return scope;
     }
 
-    /** Returns the first package root for the given java project */
+    /**
+     * Returns the first package root for the given java project
+     *
+     * @param javaProject the project to search in
+     * @return the first package root, or null
+     */
+    @Nullable
     public static IPackageFragmentRoot getSourcePackageRoot(IJavaProject javaProject) {
         IPackageFragmentRoot packageRoot = null;
         List<IPath> sources = BaseProjectHelper.getSourceClasspaths(javaProject);
@@ -589,8 +764,10 @@ public class ManifestInfo {
     /**
      * Computes the minimum SDK and target SDK versions for the project
      *
+     * @param project the project to look up the versions for
      * @return a pair of (minimum SDK, target SDK) versions, never null
      */
+    @NonNull
     public static Pair<Integer, Integer> computeSdkVersions(IProject project) {
         int mMinSdkVersion = 1;
         int mTargetSdkVersion = 1;

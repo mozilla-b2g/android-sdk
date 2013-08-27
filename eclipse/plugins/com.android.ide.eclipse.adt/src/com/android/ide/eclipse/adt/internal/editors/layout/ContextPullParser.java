@@ -16,25 +16,32 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout;
 
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_HEIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_WIDTH;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_FILL_PARENT;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_MATCH_PARENT;
-import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.ATTR_LAYOUT;
-import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.VIEW_FRAGMENT;
-import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.VIEW_INCLUDE;
+import static com.android.SdkConstants.ATTR_IGNORE;
+import static com.android.SdkConstants.ATTR_LAYOUT;
+import static com.android.SdkConstants.ATTR_LAYOUT_HEIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_WIDTH;
+import static com.android.SdkConstants.EXPANDABLE_LIST_VIEW;
+import static com.android.SdkConstants.GRID_VIEW;
+import static com.android.SdkConstants.LIST_VIEW;
+import static com.android.SdkConstants.SPINNER;
+import static com.android.SdkConstants.TOOLS_URI;
+import static com.android.SdkConstants.VALUE_FILL_PARENT;
+import static com.android.SdkConstants.VALUE_MATCH_PARENT;
+import static com.android.SdkConstants.VIEW_FRAGMENT;
+import static com.android.SdkConstants.VIEW_INCLUDE;
 import static com.android.ide.eclipse.adt.internal.editors.layout.gle2.LayoutMetadata.KEY_FRAGMENT_LAYOUT;
 
+import com.android.SdkConstants;
 import com.android.ide.common.rendering.api.ILayoutPullParser;
 import com.android.ide.common.rendering.api.IProjectCallback;
-import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.ide.common.res2.ValueXmlHelper;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.LayoutMetadata;
-import com.android.sdklib.SdkConstants;
+import com.google.common.collect.Maps;
 
 import org.kxml2.io.KXmlParser;
-import org.xmlpull.v1.XmlPullParserException;
 
 import java.io.File;
+import java.util.Map;
 
 /**
  * Modified {@link KXmlParser} that adds the methods of {@link ILayoutPullParser}, and
@@ -55,6 +62,12 @@ public class ContextPullParser extends KXmlParser implements ILayoutPullParser {
     /** The layout to be shown for the current {@code <fragment>} tag. Usually null. */
     private String mFragmentLayout = null;
 
+    /**
+     * Creates a new {@link ContextPullParser}
+     *
+     * @param projectCallback the associated callback
+     * @param file the file to be parsed
+     */
     public ContextPullParser(IProjectCallback projectCallback, File file) {
         super();
         mProjectCallback = projectCallback;
@@ -63,6 +76,7 @@ public class ContextPullParser extends KXmlParser implements ILayoutPullParser {
 
     // --- Layout lib API methods
 
+    @Override
     /**
      * this is deprecated but must still be implemented for older layout libraries.
      * @deprecated use {@link IProjectCallback#getParser(String)}.
@@ -72,8 +86,39 @@ public class ContextPullParser extends KXmlParser implements ILayoutPullParser {
         return mProjectCallback.getParser(layoutName);
     }
 
+    @Override
     public Object getViewCookie() {
-        return null; // never any key to return
+        String name = super.getName();
+        if (name == null) {
+            return null;
+        }
+
+        // Store tools attributes if this looks like a layout we'll need adapter view
+        // bindings for in the ProjectCallback.
+        if (LIST_VIEW.equals(name)
+                || EXPANDABLE_LIST_VIEW.equals(name)
+                || GRID_VIEW.equals(name)
+                || SPINNER.equals(name)) {
+            Map<String, String> map = null;
+            int count = getAttributeCount();
+            for (int i = 0; i < count; i++) {
+                String namespace = getAttributeNamespace(i);
+                if (namespace != null && namespace.equals(TOOLS_URI)) {
+                    String attribute = getAttributeName(i);
+                    if (attribute.equals(ATTR_IGNORE)) {
+                        continue;
+                    }
+                    if (map == null) {
+                        map = Maps.newHashMapWithExpectedSize(4);
+                    }
+                    map.put(attribute, getAttributeValue(i));
+                }
+            }
+
+            return map;
+        }
+
+        return null;
     }
 
     // --- KXMLParser override
@@ -84,7 +129,7 @@ public class ContextPullParser extends KXmlParser implements ILayoutPullParser {
 
         // At designtime, replace fragments with includes.
         if (name.equals(VIEW_FRAGMENT)) {
-            mFragmentLayout = findFragmentLayout();
+            mFragmentLayout = LayoutMetadata.getProperty(this, KEY_FRAGMENT_LAYOUT);
             if (mFragmentLayout != null) {
                 return VIEW_INCLUDE;
             }
@@ -92,12 +137,13 @@ public class ContextPullParser extends KXmlParser implements ILayoutPullParser {
             mFragmentLayout = null;
         }
 
+
         return name;
     }
 
     @Override
     public String getAttributeValue(String namespace, String localName) {
-        if (localName.equals(ATTR_LAYOUT) && mFragmentLayout != null) {
+        if (ATTR_LAYOUT.equals(localName) && mFragmentLayout != null) {
             return mFragmentLayout;
         }
 
@@ -112,60 +158,9 @@ public class ContextPullParser extends KXmlParser implements ILayoutPullParser {
             return VALUE_FILL_PARENT;
         }
 
+        // Handle unicode escapes etc
+        value = ValueXmlHelper.unescapeResourceString(value, false, false);
+
         return value;
-    }
-
-    /**
-     * This method determines whether the {@code <fragment>} tag in the current parsing
-     * context has been configured with a layout to render at designtime. If so,
-     * it returns the resource name of the layout, and if not, returns null.
-     */
-    private String findFragmentLayout() {
-        try {
-            if (!isEmptyElementTag()) {
-                // We need to look inside the <fragment> tag to see
-                // if it contains a comment which indicates a fragment
-                // to be rendered.
-                String file = AdtPlugin.readFile(mFile);
-
-                int line = getLineNumber() - 1;
-                int column = getColumnNumber() - 1;
-                int offset = 0;
-                int currentLine = 0;
-                int length = file.length();
-                while (currentLine < line && offset < length) {
-                    int next = file.indexOf('\n', offset);
-                    if (next == -1) {
-                        break;
-                    }
-
-                    currentLine++;
-                    offset = next + 1;
-                }
-                if (currentLine == line) {
-                    offset += column;
-                    if (offset < length) {
-                        offset = file.indexOf('<', offset);
-                        if (offset != -1 && file.startsWith(COMMENT_PREFIX, offset)) {
-                            // The fragment tag contains a comment
-                            int end = file.indexOf(COMMENT_SUFFIX, offset);
-                            if (end != -1) {
-                                String commentText = file.substring(
-                                        offset + COMMENT_PREFIX.length(), end);
-                                String l = LayoutMetadata.getProperty(KEY_FRAGMENT_LAYOUT,
-                                        commentText);
-                                if (l != null) {
-                                    return l;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } catch (XmlPullParserException e) {
-            AdtPlugin.log(e, null);
-        }
-
-        return null;
     }
 }

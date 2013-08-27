@@ -19,7 +19,11 @@ package com.android.ide.eclipse.adt.internal.resources;
 import com.android.resources.ResourceFolderType;
 import com.android.resources.ResourceType;
 
+import org.eclipse.core.resources.IProject;
+
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 
 import junit.framework.TestCase;
 
@@ -32,16 +36,20 @@ public class ResourceNameValidatorTest extends TestCase {
         assertTrue(validator.isValid("foo") == null);
         assertTrue(validator.isValid("foo.xml") == null);
         assertTrue(validator.isValid("Foo123_$") == null);
+        assertTrue(validator.isValid("foo.xm") == null); // For non-file types, . => _
 
         // Invalid
         assertTrue(validator.isValid("") != null);
         assertTrue(validator.isValid(" ") != null);
-        assertTrue(validator.isValid("foo.xm") != null);
         assertTrue(validator.isValid("foo bar") != null);
         assertTrue(validator.isValid("1foo") != null);
         assertTrue(validator.isValid("foo%bar") != null);
         assertTrue(ResourceNameValidator.create(true, Collections.singleton("foo"),
                 ResourceType.STRING).isValid("foo") != null);
+        assertTrue(ResourceNameValidator.create(true,
+                ResourceFolderType.DRAWABLE).isValid("foo.xm") != null);
+        assertTrue(ResourceNameValidator.create(false,
+                ResourceFolderType.DRAWABLE).isValid("foo.xm") != null);
 
         // Only lowercase chars allowed in file-based resource names
         assertTrue(ResourceNameValidator.create(true, ResourceFolderType.LAYOUT)
@@ -56,5 +64,38 @@ public class ResourceNameValidatorTest extends TestCase {
                 .isValid("_foo") != null);
         assertTrue(ResourceNameValidator.create(true, ResourceFolderType.DRAWABLE)
                 .isValid("_foo") != null);
+    }
+
+    public void testIds() throws Exception {
+        ResourceNameValidator validator = ResourceNameValidator.create(false, (IProject) null,
+                ResourceType.ID);
+        assertTrue(validator.isValid("foo") == null);
+        assertTrue(validator.isValid(" foo") != null);
+        assertTrue(validator.isValid("foo ") != null);
+        assertTrue(validator.isValid("foo@") != null);
+    }
+
+    public void testUniqueOrExists() throws Exception {
+        Set<String> existing = new HashSet<String>();
+        existing.add("foo1");
+        existing.add("foo2");
+        existing.add("foo3");
+
+        ResourceNameValidator validator = ResourceNameValidator.create(true, existing,
+                ResourceType.ID);
+        validator.unique();
+
+        assertNull(validator.isValid("foo")); // null: ok (no error message)
+        assertNull(validator.isValid("foo4"));
+        assertNotNull(validator.isValid("foo1"));
+        assertNotNull(validator.isValid("foo2"));
+        assertNotNull(validator.isValid("foo3"));
+
+        validator.exist();
+        assertNotNull(validator.isValid("foo"));
+        assertNotNull(validator.isValid("foo4"));
+        assertNull(validator.isValid("foo1"));
+        assertNull(validator.isValid("foo2"));
+        assertNull(validator.isValid("foo3"));
     }
 }

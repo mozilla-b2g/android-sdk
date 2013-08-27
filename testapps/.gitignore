@@ -1,3 +1,5 @@
-*/bin
-*/local.properties
-*/gen
+bin
+coverage
+local.properties
+gen
+proguard

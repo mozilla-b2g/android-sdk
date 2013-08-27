@@ -16,9 +16,10 @@
 
 package com.android.ide.eclipse.tests.functests.layoutRendering;
 
-import com.android.AndroidConstants;
+import com.android.SdkConstants;
 import com.android.ide.common.rendering.LayoutLibrary;
 import com.android.ide.common.rendering.api.AdapterBinding;
+import com.android.ide.common.rendering.api.HardwareConfig;
 import com.android.ide.common.rendering.api.ILayoutPullParser;
 import com.android.ide.common.rendering.api.IProjectCallback;
 import com.android.ide.common.rendering.api.RenderSession;
@@ -26,6 +27,7 @@ import com.android.ide.common.rendering.api.ResourceReference;
 import com.android.ide.common.rendering.api.ResourceValue;
 import com.android.ide.common.rendering.api.SessionParams;
 import com.android.ide.common.rendering.api.SessionParams.RenderingMode;
+import com.android.ide.common.resources.ResourceItem;
 import com.android.ide.common.resources.ResourceRepository;
 import com.android.ide.common.resources.ResourceResolver;
 import com.android.ide.common.resources.configuration.DensityQualifier;
@@ -43,10 +45,9 @@ import com.android.ide.common.resources.configuration.SmallestScreenWidthQualifi
 import com.android.ide.common.resources.configuration.TextInputMethodQualifier;
 import com.android.ide.common.resources.configuration.TouchScreenQualifier;
 import com.android.ide.common.sdk.LoadStatus;
-import com.android.ide.eclipse.adt.internal.resources.manager.ProjectResources;
 import com.android.ide.eclipse.adt.internal.resources.manager.ResourceManager;
 import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetData;
-import com.android.ide.eclipse.tests.SdkTestCase;
+import com.android.ide.eclipse.tests.SdkLoadingTestCase;
 import com.android.io.FolderWrapper;
 import com.android.resources.Density;
 import com.android.resources.Keyboard;
@@ -59,7 +60,6 @@ import com.android.resources.ScreenRatio;
 import com.android.resources.ScreenSize;
 import com.android.resources.TouchScreen;
 import com.android.sdklib.IAndroidTarget;
-import com.android.sdklib.SdkConstants;
 import com.android.util.Pair;
 
 import org.kxml2.io.KXmlParser;
@@ -74,7 +74,7 @@ import java.util.Map;
 
 import javax.imageio.ImageIO;
 
-public class ApiDemosRenderingTest extends SdkTestCase {
+public class ApiDemosRenderingTest extends SdkLoadingTestCase {
 
     /**
      * Custom parser that implements {@link ILayoutPullParser} (which itself extends
@@ -85,10 +85,12 @@ public class ApiDemosRenderingTest extends SdkTestCase {
          * Since we're not going to go through the result of the rendering/layout, we can return
          * null for the View Key.
          */
+        @Override
         public Object getViewCookie() {
             return null;
         }
 
+        @Override
         public ILayoutPullParser getParser(String layoutName) {
             return null;
         }
@@ -108,11 +110,13 @@ public class ApiDemosRenderingTest extends SdkTestCase {
 
         private boolean mCustomViewAttempt = false;
 
+        @Override
         public String getNamespace() {
             // TODO: read from the ApiDemos manifest.
             return "com.example.android.apis";
         }
 
+        @Override
         @SuppressWarnings("unchecked")
         public Object loadView(String name, Class[] constructorSignature, Object[] constructorArgs)
                 throws ClassNotFoundException, Exception {
@@ -120,24 +124,29 @@ public class ApiDemosRenderingTest extends SdkTestCase {
             return null;
         }
 
+        @Override
         public Integer getResourceId(ResourceType type, String name) {
             Integer result = ++mIdCounter;
             mResourceMap.put(result, Pair.of(type, name));
             return result;
         }
 
+        @Override
         public Pair<ResourceType, String> resolveResourceId(int id) {
             return mResourceMap.get(id);
         }
 
+        @Override
         public String resolveResourceId(int[] id) {
             return null;
         }
 
+        @Override
         public ILayoutPullParser getParser(String layoutName) {
             return null;
         }
 
+        @Override
         public Object getAdapterItemValue(ResourceReference adapterView, Object adapterCookie,
                 ResourceReference itemRef, int fullPosition, int typePosition,
                 int fullChildPosition, int typeChildPosition,
@@ -145,11 +154,13 @@ public class ApiDemosRenderingTest extends SdkTestCase {
             return null;
         }
 
+        @Override
         public AdapterBinding getAdapterBinding(ResourceReference adapterView,
                 Object adapterCookie, Object viewObject) {
             return null;
         }
 
+        @Override
         public ILayoutPullParser getParser(ResourceValue layoutResource) {
             return null;
         }
@@ -196,7 +207,7 @@ public class ApiDemosRenderingTest extends SdkTestCase {
         }
 
         // look for the layout folder
-        File layoutFolder = new File(resFolder, AndroidConstants.FD_RES_LAYOUT);
+        File layoutFolder = new File(resFolder, SdkConstants.FD_RES_LAYOUT);
         if (layoutFolder.isDirectory() == false) {
             fail("Sample project has no layout folder!");
         }
@@ -205,8 +216,13 @@ public class ApiDemosRenderingTest extends SdkTestCase {
         ResourceRepository framework = ResourceManager.getInstance().loadFrameworkResources(target);
 
         // now load the project resources
-        ProjectResources project = new ProjectResources(null /*project*/);
-        project.loadResources(resFolder);
+        ResourceRepository project = new ResourceRepository(resFolder, false) {
+            @Override
+            protected ResourceItem createResourceItem(String name) {
+                return new ResourceItem(name);
+            }
+
+        };
 
         // Create a folder configuration that will be used for the rendering:
         FolderConfiguration config = getConfiguration();
@@ -235,15 +251,21 @@ public class ApiDemosRenderingTest extends SdkTestCase {
                     configuredProject, configuredFramework,
                     "Theme", false /*isProjectTheme*/);
 
-            RenderSession session = layoutLib.createSession(new SessionParams(
-                    parser,
-                    RenderingMode.NORMAL,
-                    null /*projectKey*/,
+            HardwareConfig hardwareConfig = new HardwareConfig(
                     320,
                     480,
                     Density.MEDIUM,
                     160, //xdpi
                     160, // ydpi
+                    ScreenSize.NORMAL,
+                    ScreenOrientation.PORTRAIT,
+                    false /*software buttons */);
+
+            RenderSession session = layoutLib.createSession(new SessionParams(
+                    parser,
+                    RenderingMode.NORMAL,
+                    null /*projectKey*/,
+                    hardwareConfig,
                     resolver,
                     projectCallBack,
                     1, // minSdkVersion

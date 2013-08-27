@@ -16,18 +16,18 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.refactoring;
 
-import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.REQUEST_FOCUS;
-import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.VIEW_FRAGMENT;
-import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.VIEW_INCLUDE;
+import static com.android.SdkConstants.REQUEST_FOCUS;
+import static com.android.SdkConstants.VIEW_FRAGMENT;
+import static com.android.SdkConstants.VIEW_INCLUDE;
 
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.ViewElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.CustomViewFinder;
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.ViewMetadataRepository;
 import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetData;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.sdklib.IAndroidTarget;
-import com.android.util.Pair;
+import com.android.utils.Pair;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.swt.SWT;
@@ -44,7 +44,7 @@ class ChangeViewWizard extends VisualRefactoringWizard {
     private static final String SEPARATOR_LABEL =
         "----------------------------------------"; //$NON-NLS-1$
 
-    public ChangeViewWizard(ChangeViewRefactoring ref, LayoutEditor editor) {
+    public ChangeViewWizard(ChangeViewRefactoring ref, LayoutEditorDelegate editor) {
         super(ref, editor);
         setDefaultPageTitle("Change Widget Type");
     }
@@ -63,7 +63,7 @@ class ChangeViewWizard extends VisualRefactoringWizard {
                 break;
             }
         }
-        addPage(new InputPage(mEditor.getProject(), oldType));
+        addPage(new InputPage(mDelegate.getEditor().getProject(), oldType));
     }
 
     /** Wizard page which inputs parameters for the {@link ChangeViewRefactoring} operation */
@@ -79,6 +79,7 @@ class ChangeViewWizard extends VisualRefactoringWizard {
             mOldType = oldType;
         }
 
+        @Override
         public void createControl(Composite parent) {
             Composite composite = new Composite(parent, SWT.NONE);
             composite.setLayout(new GridLayout(2, false));

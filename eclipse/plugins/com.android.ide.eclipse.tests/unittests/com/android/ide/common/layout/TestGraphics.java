@@ -16,6 +16,7 @@
 
 package com.android.ide.common.layout;
 
+import com.android.annotations.NonNull;
 import com.android.ide.common.api.DrawingStyle;
 import com.android.ide.common.api.IColor;
 import com.android.ide.common.api.IGraphics;
@@ -50,102 +51,126 @@ public class TestGraphics implements IGraphics {
 
     // ==== IGraphics ====
 
-    public void drawBoxedStrings(int x, int y, List<?> strings) {
+    @Override
+    public void drawBoxedStrings(int x, int y, @NonNull List<?> strings) {
         mDrawn.add("drawBoxedStrings(" + x + "," + y + "," + strings + ")");
     }
 
+    @Override
     public void drawLine(int x1, int y1, int x2, int y2) {
         mDrawn.add("drawLine(" + x1 + "," + y1 + "," + x2 + "," + y2 + ")");
     }
 
-    public void drawLine(Point p1, Point p2) {
+    @Override
+    public void drawLine(@NonNull Point p1, @NonNull Point p2) {
         mDrawn.add("drawLine(" + p1 + "," + p2 + ")");
     }
 
+    @Override
     public void drawRect(int x1, int y1, int x2, int y2) {
         mDrawn.add("drawRect(" + x1 + "," + y1 + "," + x2 + "," + y2 + ")");
     }
 
-    public void drawRect(Point p1, Point p2) {
+    @Override
+    public void drawRect(@NonNull Point p1, @NonNull Point p2) {
         mDrawn.add("drawRect(" + p1 + "," + p2 + ")");
     }
 
-    public void drawRect(Rect r) {
+    @Override
+    public void drawRect(@NonNull Rect r) {
         mDrawn.add("drawRect(" + rectToString(r) + ")");
     }
 
-    public void drawString(String string, int x, int y) {
+    @Override
+    public void drawString(@NonNull String string, int x, int y) {
         mDrawn.add("drawString(" + x + "," + y + "," + string + ")");
     }
 
-    public void drawString(String string, Point topLeft) {
+    @Override
+    public void drawString(@NonNull String string, @NonNull Point topLeft) {
         mDrawn.add("drawString(" + string + "," + topLeft + ")");
     }
 
+    @Override
     public void fillRect(int x1, int y1, int x2, int y2) {
         mDrawn.add("fillRect(" + x1 + "," + y1 + "," + x2 + "," + y2 + ")");
     }
 
-    public void fillRect(Point p1, Point p2) {
+    @Override
+    public void fillRect(@NonNull Point p1, @NonNull Point p2) {
         mDrawn.add("fillRect(" + p1 + "," + p2 + ")");
     }
 
-    public void fillRect(Rect r) {
+    @Override
+    public void fillRect(@NonNull Rect r) {
         mDrawn.add("fillRect(" + rectToString(r) + ")");
     }
 
+    @Override
     public int getAlpha() {
         return mAlpha;
     }
 
-    public IColor getBackground() {
+    @Override
+    public @NonNull IColor getBackground() {
         return mBackground;
     }
 
+    @Override
     public int getFontHeight() {
         return 12;
     }
 
-    public IColor getForeground() {
+    @Override
+    public @NonNull IColor getForeground() {
         return mForeground;
     }
 
-    public IColor registerColor(int rgb) {
+    @Override
+    public @NonNull IColor registerColor(int rgb) {
         mDrawn.add("registerColor(" + Integer.toHexString(rgb) + ")");
         return new TestColor(rgb);
     }
 
+    @Override
     public void setAlpha(int alpha) {
         mAlpha = alpha;
         mDrawn.add("setAlpha(" + alpha + ")");
     }
 
-    public void setBackground(IColor color) {
+    @Override
+    public void setBackground(@NonNull IColor color) {
         mDrawn.add("setBackground(" + color + ")");
         mBackground = color;
     }
 
-    public void setForeground(IColor color) {
+    @Override
+    public void setForeground(@NonNull IColor color) {
         mDrawn.add("setForeground(" + color + ")");
         mForeground = color;
     }
 
-    public void setLineStyle(LineStyle style) {
+    @Override
+    public void setLineStyle(@NonNull LineStyle style) {
         mDrawn.add("setLineStyle(" + style + ")");
     }
 
+    @Override
     public void setLineWidth(int width) {
         mDrawn.add("setLineWidth(" + width + ")");
     }
 
-    public void useStyle(DrawingStyle style) {
+    @Override
+    public void useStyle(@NonNull DrawingStyle style) {
         mDrawn.add("useStyle(" + style + ")");
     }
 
+    @Override
     public void drawArrow(int x1, int y1, int x2, int y2, int size) {
         mDrawn.add("drawArrow(" + x1 + "," + y1 + "," + x2 + "," + y2 + ")");
     }
 
+    @Override
     public void drawPoint(int x, int y) {
         mDrawn.add("drawPoint(" + x + "," + y + ")");
     }

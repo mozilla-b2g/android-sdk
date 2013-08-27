@@ -15,33 +15,39 @@
  */
 package com.android.ide.common.layout.grid;
 
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ATTR_COLUMN_COUNT;
+import static com.android.SdkConstants.ATTR_ID;
+import static com.android.SdkConstants.ATTR_LAYOUT_COLUMN;
+import static com.android.SdkConstants.ATTR_LAYOUT_COLUMN_SPAN;
+import static com.android.SdkConstants.ATTR_LAYOUT_GRAVITY;
+import static com.android.SdkConstants.ATTR_LAYOUT_HEIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_ROW;
+import static com.android.SdkConstants.ATTR_LAYOUT_ROW_SPAN;
+import static com.android.SdkConstants.ATTR_LAYOUT_WIDTH;
+import static com.android.SdkConstants.ATTR_ORIENTATION;
+import static com.android.SdkConstants.ATTR_ROW_COUNT;
+import static com.android.SdkConstants.FQCN_GRID_LAYOUT;
+import static com.android.SdkConstants.FQCN_SPACE;
+import static com.android.SdkConstants.FQCN_SPACE_V7;
+import static com.android.SdkConstants.GRID_LAYOUT;
+import static com.android.SdkConstants.NEW_ID_PREFIX;
+import static com.android.SdkConstants.SPACE;
+import static com.android.SdkConstants.VALUE_BOTTOM;
+import static com.android.SdkConstants.VALUE_CENTER_VERTICAL;
+import static com.android.SdkConstants.VALUE_N_DP;
+import static com.android.SdkConstants.VALUE_TOP;
+import static com.android.SdkConstants.VALUE_VERTICAL;
 import static com.android.ide.common.layout.GravityHelper.GRAVITY_BOTTOM;
 import static com.android.ide.common.layout.GravityHelper.GRAVITY_CENTER_HORIZ;
 import static com.android.ide.common.layout.GravityHelper.GRAVITY_CENTER_VERT;
 import static com.android.ide.common.layout.GravityHelper.GRAVITY_RIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_COLUMN_COUNT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_COLUMN;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_COLUMN_SPAN;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_GRAVITY;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_HEIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ROW;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ROW_SPAN;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_WIDTH;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ORIENTATION;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ROW_COUNT;
-import static com.android.ide.common.layout.LayoutConstants.FQCN_SPACE;
-import static com.android.ide.common.layout.LayoutConstants.NEW_ID_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_BOTTOM;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_CENTER_VERTICAL;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_N_DP;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_TOP;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_VERTICAL;
 import static java.lang.Math.abs;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.api.IClientRulesEngine;
 import com.android.ide.common.api.INode;
 import com.android.ide.common.api.IViewMetadata;
@@ -49,11 +55,15 @@ import com.android.ide.common.api.Margins;
 import com.android.ide.common.api.Rect;
 import com.android.ide.common.layout.GravityHelper;
 import com.android.ide.common.layout.GridLayoutRule;
-import com.android.util.Pair;
+import com.android.utils.Pair;
+import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.Multimap;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -63,8 +73,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /** Models a GridLayout */
 public class GridModel {
@@ -72,26 +80,32 @@ public class GridModel {
     static final int UNDEFINED = Integer.MIN_VALUE;
 
     /** The size of spacers in the dimension that they are not defining */
-    private static final int SPACER_SIZE_DP = 1;
+    static final int SPACER_SIZE_DP = 1;
+
     /** Attribute value used for {@link #SPACER_SIZE_DP} */
     private static final String SPACER_SIZE = String.format(VALUE_N_DP, SPACER_SIZE_DP);
+
     /** Width assigned to a newly added column with the Add Column action */
     private static final int DEFAULT_CELL_WIDTH = 100;
+
     /** Height assigned to a newly added row with the Add Row action */
     private static final int DEFAULT_CELL_HEIGHT = 15;
-    private static final Pattern DIP_PATTERN = Pattern.compile("(\\d+)dp"); //$NON-NLS-1$
 
     /** The GridLayout node, never null */
     public final INode layout;
 
     /** True if this is a vertical layout, and false if it is horizontal (the default) */
     public boolean vertical;
+
     /** The declared count of rows (which may be {@link #UNDEFINED} if not specified) */
     public int declaredRowCount;
+
     /** The declared count of columns (which may be {@link #UNDEFINED} if not specified) */
     public int declaredColumnCount;
+
     /** The actual count of rows found in the grid */
     public int actualRowCount;
+
     /** The actual count of columns found in the grid */
     public int actualColumnCount;
 
@@ -133,19 +147,13 @@ public class GridModel {
     /** The {@link IClientRulesEngine} */
     private final IClientRulesEngine mRulesEngine;
 
-    /** List of nodes marked for deletion (may be null) */
-    private Set<INode> mDeleted;
-
-    /**
-     * Flag which tracks whether we've edited the DOM model, in which case the grid data
-     * may be stale and should be refreshed.
-     */
-    private boolean stale;
-
     /**
      * An actual instance of a GridLayout object that this grid model corresponds to.
      */
     private Object mViewObject;
+
+    /** The namespace to use for attributes */
+    private String mNamespace;
 
     /**
      * Constructs a {@link GridModel} for the given layout
@@ -154,11 +162,42 @@ public class GridModel {
      * @param node the GridLayout node
      * @param viewObject an actual GridLayout instance, or null
      */
-    public GridModel(IClientRulesEngine rulesEngine, INode node, Object viewObject) {
+    private GridModel(IClientRulesEngine rulesEngine, INode node, Object viewObject) {
         mRulesEngine = rulesEngine;
         layout = node;
         mViewObject = viewObject;
         loadFromXml();
+    }
+
+    // Factory cache for most recent item (used primarily because during paints and drags
+    // the grid model is called repeatedly for the same view object.)
+    private static WeakReference<Object> sCachedViewObject = new WeakReference<Object>(null);
+    private static WeakReference<GridModel> sCachedViewModel;
+
+    /**
+     * Factory which returns a grid model for the given node.
+     *
+     * @param rulesEngine the associated rules engine
+     * @param node the GridLayout node
+     * @param viewObject an actual GridLayout instance, or null
+     * @return a new model
+     */
+    @NonNull
+    public static GridModel get(
+            @NonNull IClientRulesEngine rulesEngine,
+            @NonNull INode node,
+            @Nullable Object viewObject) {
+        if (viewObject != null && viewObject == sCachedViewObject.get()) {
+            GridModel model = sCachedViewModel.get();
+            if (model != null) {
+                return model;
+            }
+        }
+
+        GridModel model = new GridModel(rulesEngine, node, viewObject);
+        sCachedViewModel = new WeakReference<GridModel>(model);
+        sCachedViewObject = new WeakReference<Object>(viewObject);
+        return model;
     }
 
     /**
@@ -250,7 +289,7 @@ public class GridModel {
                     if (baseline != -1) {
                         // Even views that do have baselines do not count towards a row
                         // baseline if they have a vertical gravity
-                        String gravity = view.node.getStringAttr(ANDROID_URI, ATTR_LAYOUT_GRAVITY);
+                        String gravity = getGridAttribute(view.node, ATTR_LAYOUT_GRAVITY);
                         if (gravity == null
                                 || !(gravity.contains(VALUE_TOP)
                                         || gravity.contains(VALUE_BOTTOM)
@@ -275,11 +314,60 @@ public class GridModel {
         }
 
         // Also fix the columnCount
-        if (layout.getStringAttr(ANDROID_URI, ATTR_COLUMN_COUNT) != null &&
+        if (getGridAttribute(layout, ATTR_COLUMN_COUNT) != null &&
                 declaredColumnCount > actualColumnCount) {
-            layout.setAttribute(ANDROID_URI, ATTR_COLUMN_COUNT,
-                    Integer.toString(actualColumnCount));
+            setGridAttribute(layout, ATTR_COLUMN_COUNT, actualColumnCount);
         }
+    }
+
+    /**
+     * Sets the given GridLayout attribute (rowCount, layout_row, etc) to the
+     * given value. This automatically handles using the right XML namespace
+     * based on whether the GridLayout is the android.widget.GridLayout, or the
+     * support library GridLayout, and whether it's in a library project or not
+     * etc.
+     *
+     * @param node the node to apply the attribute to
+     * @param name the local name of the attribute
+     * @param value the integer value to set the attribute to
+     */
+    public void setGridAttribute(INode node, String name, int value) {
+        setGridAttribute(node, name, Integer.toString(value));
+    }
+
+    /**
+     * Sets the given GridLayout attribute (rowCount, layout_row, etc) to the
+     * given value. This automatically handles using the right XML namespace
+     * based on whether the GridLayout is the android.widget.GridLayout, or the
+     * support library GridLayout, and whether it's in a library project or not
+     * etc.
+     *
+     * @param node the node to apply the attribute to
+     * @param name the local name of the attribute
+     * @param value the string value to set the attribute to, or null to clear
+     *            it
+     */
+    public void setGridAttribute(INode node, String name, String value) {
+        node.setAttribute(getNamespace(), name, value);
+    }
+
+    /**
+     * Returns the namespace URI to use for GridLayout-specific attributes, such
+     * as columnCount, layout_column, layout_column_span, layout_gravity etc.
+     *
+     * @return the namespace, never null
+     */
+    public String getNamespace() {
+        if (mNamespace == null) {
+            mNamespace = ANDROID_URI;
+
+            String fqcn = layout.getFqcn();
+            if (!fqcn.equals(GRID_LAYOUT) && !fqcn.equals(FQCN_GRID_LAYOUT)) {
+                mNamespace = mRulesEngine.getAppNameSpace();
+            }
+        }
+
+        return mNamespace;
     }
 
     /** Removes the given flag from a flag attribute value and returns the result */
@@ -310,13 +398,13 @@ public class GridModel {
     /**
      * Loads a {@link GridModel} from the XML model.
      */
-    void loadFromXml() {
+    private void loadFromXml() {
         INode[] children = layout.getChildren();
 
-        declaredRowCount = getInt(layout, ATTR_ROW_COUNT, UNDEFINED);
-        declaredColumnCount = getInt(layout, ATTR_COLUMN_COUNT, UNDEFINED);
+        declaredRowCount = getGridAttribute(layout, ATTR_ROW_COUNT, UNDEFINED);
+        declaredColumnCount = getGridAttribute(layout, ATTR_COLUMN_COUNT, UNDEFINED);
         // Horizontal is the default, so if no value is specified it is horizontal.
-        vertical = VALUE_VERTICAL.equals(layout.getStringAttr(ANDROID_URI, ATTR_ORIENTATION));
+        vertical = VALUE_VERTICAL.equals(getGridAttribute(layout, ATTR_ORIENTATION));
 
         mChildViews = new ArrayList<ViewData>(children.length);
         int index = 0;
@@ -326,17 +414,17 @@ public class GridModel {
         }
 
         // Assign row/column positions to all cells that do not explicitly define them
-        assignRowsAndColumns(
-                declaredRowCount == UNDEFINED ? children.length : declaredRowCount,
-                declaredColumnCount == UNDEFINED ? children.length : declaredColumnCount);
+        if (!assignRowsAndColumnsFromViews(mChildViews)) {
+            assignRowsAndColumnsFromXml(
+                    declaredRowCount == UNDEFINED ? children.length : declaredRowCount,
+                    declaredColumnCount == UNDEFINED ? children.length : declaredColumnCount);
+        }
 
         assignCellBounds();
 
         for (int i = 0; i <= actualRowCount; i++) {
             mBaselines[i] = UNDEFINED;
         }
-
-        stale = false;
     }
 
     private Pair<Map<Integer, Integer>, Map<Integer, Integer>> findCellsOutsideDeclaredBounds() {
@@ -395,7 +483,7 @@ public class GridModel {
      * TODO: Consolidate with the algorithm in GridLayout to ensure we get the
      * exact same results!
      */
-    private void assignRowsAndColumns(int rowCount, int columnCount) {
+    private void assignRowsAndColumnsFromXml(int rowCount, int columnCount) {
         Pair<Map<Integer, Integer>, Map<Integer, Integer>> p = findCellsOutsideDeclaredBounds();
         Map<Integer, Integer> extraRowsMap = p.getFirst();
         Map<Integer, Integer> extraColumnsMap = p.getSecond();
@@ -498,6 +586,80 @@ public class GridModel {
         }
     }
 
+    private static boolean sAttemptSpecReflection = true;
+
+    private boolean assignRowsAndColumnsFromViews(List<ViewData> views) {
+        if (!sAttemptSpecReflection) {
+            return false;
+        }
+
+        try {
+            // Lazily initialized reflection methods
+            Field spanField = null;
+            Field rowSpecField = null;
+            Field colSpecField = null;
+            Field minField = null;
+            Field maxField = null;
+            Method getLayoutParams = null;
+
+            for (ViewData view : views) {
+                // TODO: If the element *specifies* anything in XML, use that instead
+                Object child = mRulesEngine.getViewObject(view.node);
+                if (child == null) {
+                    // Fallback to XML model
+                    return false;
+                }
+
+                if (getLayoutParams == null) {
+                    getLayoutParams = child.getClass().getMethod("getLayoutParams"); //$NON-NLS-1$
+                }
+                Object layoutParams = getLayoutParams.invoke(child);
+                if (rowSpecField == null) {
+                    Class<? extends Object> layoutParamsClass = layoutParams.getClass();
+                    rowSpecField = layoutParamsClass.getDeclaredField("rowSpec");    //$NON-NLS-1$
+                    colSpecField = layoutParamsClass.getDeclaredField("columnSpec"); //$NON-NLS-1$
+                    rowSpecField.setAccessible(true);
+                    colSpecField.setAccessible(true);
+                }
+                assert colSpecField != null;
+
+                Object rowSpec = rowSpecField.get(layoutParams);
+                Object colSpec = colSpecField.get(layoutParams);
+                if (spanField == null) {
+                    spanField = rowSpec.getClass().getDeclaredField("span"); //$NON-NLS-1$
+                    spanField.setAccessible(true);
+                }
+                assert spanField != null;
+                Object rowInterval = spanField.get(rowSpec);
+                Object colInterval = spanField.get(colSpec);
+                if (minField == null) {
+                    Class<? extends Object> intervalClass = rowInterval.getClass();
+                    minField = intervalClass.getDeclaredField("min"); //$NON-NLS-1$
+                    maxField = intervalClass.getDeclaredField("max"); //$NON-NLS-1$
+                    minField.setAccessible(true);
+                    maxField.setAccessible(true);
+                }
+                assert maxField != null;
+
+                int row = minField.getInt(rowInterval);
+                int col = minField.getInt(colInterval);
+                int rowEnd = maxField.getInt(rowInterval);
+                int colEnd = maxField.getInt(colInterval);
+
+                view.column = col;
+                view.row = row;
+                view.columnSpan = colEnd - col;
+                view.rowSpan = rowEnd - row;
+            }
+
+            return true;
+
+        } catch (Throwable e) {
+            sAttemptSpecReflection = false;
+            return false;
+        }
+    }
+
     /**
      * Computes the positions of the column and row boundaries
      */
@@ -520,11 +682,26 @@ public class GridModel {
             if (cellBounds != null) {
                 int[] xs = cellBounds.getFirst();
                 int[] ys = cellBounds.getSecond();
+                Rect layoutBounds = layout.getBounds();
+
+                // Handle "blank" grid layouts: insert a fake grid of CELL_COUNT^2 cells
+                // where the user can do initial placement
+                if (actualColumnCount <= 1 && actualRowCount <= 1 && mChildViews.isEmpty()) {
+                    final int CELL_COUNT = 1;
+                    xs = new int[CELL_COUNT + 1];
+                    ys = new int[CELL_COUNT + 1];
+                    int cellWidth = layoutBounds.w / CELL_COUNT;
+                    int cellHeight = layoutBounds.h / CELL_COUNT;
+
+                    for (int i = 0; i <= CELL_COUNT; i++) {
+                        xs[i] = i * cellWidth;
+                        ys[i] = i * cellHeight;
+                    }
+                }
 
                 actualColumnCount = xs.length - 1;
                 actualRowCount = ys.length - 1;
 
-                Rect layoutBounds = layout.getBounds();
                 int layoutBoundsX = layoutBounds.x;
                 int layoutBoundsY = layoutBounds.y;
                 mLeft = new int[xs.length];
@@ -627,7 +804,7 @@ public class GridModel {
         }
 
         // The bounds should be in ascending order now
-        if (GridLayoutRule.sDebugGridLayout) {
+        if (false && GridLayoutRule.sDebugGridLayout) {
             for (int i = 1; i < actualRowCount; i++) {
                 assert mTop[i + 1] >= mTop[i];
             }
@@ -750,14 +927,11 @@ public class GridModel {
      */
     public INode addColumn(int newColumn, INode newView, int columnWidthDp,
             boolean split, int row, int x) {
-        assert !stale;
-        stale = true;
-
         // Insert a new column
+        actualColumnCount++;
         if (declaredColumnCount != UNDEFINED) {
             declaredColumnCount++;
-            layout.setAttribute(ANDROID_URI, ATTR_COLUMN_COUNT,
-                    Integer.toString(declaredColumnCount));
+            setGridAttribute(layout, ATTR_COLUMN_COUNT, declaredColumnCount);
         }
 
         boolean isLastColumn = true;
@@ -784,11 +958,14 @@ public class GridModel {
                             index++;
                         }
 
-                        newView = addSpacer(layout, index,
+                        ViewData newViewData = addSpacer(layout, index,
                                 split ? row : UNDEFINED,
                                 split ? newColumn - 1 : UNDEFINED,
                                 columnWidthDp != UNDEFINED ? columnWidthDp : DEFAULT_CELL_WIDTH,
                                 DEFAULT_CELL_HEIGHT);
+                        newViewData.column = newColumn - 1;
+                        newViewData.row = row;
+                        newView = newViewData.node;
                     }
 
                     // Set the actual row number on the first cell on the new row.
@@ -796,21 +973,23 @@ public class GridModel {
                     // the new row number, but we use the spacer to assign the row
                     // some height.
                     if (view.column == newColumn) {
-                        view.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_COLUMN,
-                                Integer.toString(view.column + 1));
+                        view.column++;
+                        setGridAttribute(view.node, ATTR_LAYOUT_COLUMN, view.column);
                     } // else: endColumn == newColumn: handled below
-                } else if (view.node.getStringAttr(ANDROID_URI, ATTR_LAYOUT_COLUMN) != null) {
-                    view.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_COLUMN,
-                            Integer.toString(view.column + 1));
+                } else if (getGridAttribute(view.node, ATTR_LAYOUT_COLUMN) != null) {
+                    view.column++;
+                    setGridAttribute(view.node, ATTR_LAYOUT_COLUMN, view.column);
                 }
             } else if (endColumn > newColumn) {
-                setColumnSpanAttribute(view.node, view.columnSpan + 1);
+                view.columnSpan++;
+                setColumnSpanAttribute(view.node, view.columnSpan);
                 columnSpanSet = true;
             }
 
             if (split && !columnSpanSet && view.node.getBounds().x2() > x) {
                 if (view.node.getBounds().x < x) {
-                    setColumnSpanAttribute(view.node, view.columnSpan + 1);
+                    view.columnSpan++;
+                    setColumnSpanAttribute(view.node, view.columnSpan);
                 }
             }
         }
@@ -820,8 +999,7 @@ public class GridModel {
         if (isLastColumn) {
             for (ViewData view : mChildViews) {
                 if (view.column == 0 && view.row > 0) {
-                    view.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_ROW,
-                            Integer.toString(view.row));
+                    setGridAttribute(view.node, ATTR_LAYOUT_ROW, view.row);
                 }
             }
             if (split) {
@@ -845,18 +1023,17 @@ public class GridModel {
             return;
         }
 
-        assert !stale;
-        stale = true;
-
         // Figure out which columns should be removed
-        Set<Integer> removedSet = new HashSet<Integer>();
+        Set<Integer> removeColumns = new HashSet<Integer>();
+        Set<ViewData> removedViews = new HashSet<ViewData>();
         for (INode child : selectedChildren) {
             ViewData view = getView(child);
-            removedSet.add(view.column);
+            removedViews.add(view);
+            removeColumns.add(view.column);
         }
         // Sort them in descending order such that we can process each
         // deletion independently
-        List<Integer> removed = new ArrayList<Integer>(removedSet);
+        List<Integer> removed = new ArrayList<Integer>(removeColumns);
         Collections.sort(removed, Collections.reverseOrder());
 
         for (int removedColumn : removed) {
@@ -865,10 +1042,9 @@ public class GridModel {
             // TODO: Don't do this if the column being deleted is outside
             // the declared column range!
             // TODO: Do this under a write lock? / editXml lock?
+            actualColumnCount--;
             if (declaredColumnCount != UNDEFINED) {
                 declaredColumnCount--;
-                layout.setAttribute(ANDROID_URI, ATTR_COLUMN_COUNT,
-                        Integer.toString(declaredColumnCount));
             }
 
             // Remove any elements that begin in the deleted columns...
@@ -885,22 +1061,44 @@ public class GridModel {
                         int columnWidth = getColumnWidth(removedColumn, view.columnSpan) -
                                 getColumnWidth(removedColumn, 1);
                         int columnWidthDip = mRulesEngine.pxToDp(columnWidth);
-                        addSpacer(layout, index, UNDEFINED, UNDEFINED, columnWidthDip,
-                                SPACER_SIZE_DP);
+                        ViewData spacer = addSpacer(layout, index, UNDEFINED, UNDEFINED,
+                                columnWidthDip, SPACER_SIZE_DP);
+                        spacer.row = 0;
+                        spacer.column = removedColumn;
                     }
                     layout.removeChild(view.node);
                 } else if (view.column < removedColumn
                         && view.column + view.columnSpan > removedColumn) {
                     // Subtract column span to skip this item
-                    setColumnSpanAttribute(view.node, view.columnSpan - 1);
+                    view.columnSpan--;
+                    setColumnSpanAttribute(view.node, view.columnSpan);
                 } else if (view.column > removedColumn) {
-                    if (view.node.getStringAttr(ANDROID_URI, ATTR_LAYOUT_COLUMN) != null) {
-                        view.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_COLUMN,
-                                Integer.toString(view.column - 1));
+                    view.column--;
+                    if (getGridAttribute(view.node, ATTR_LAYOUT_COLUMN) != null) {
+                        setGridAttribute(view.node, ATTR_LAYOUT_COLUMN, view.column);
                     }
                 }
             }
         }
+
+        // Remove children from child list!
+        if (removedViews.size() <= 2) {
+            mChildViews.removeAll(removedViews);
+        } else {
+            List<ViewData> remaining =
+                    new ArrayList<ViewData>(mChildViews.size() - removedViews.size());
+            for (ViewData view : mChildViews) {
+                if (!removedViews.contains(view)) {
+                    remaining.add(view);
+                }
+            }
+            mChildViews = remaining;
+        }
+
+        //if (declaredColumnCount != UNDEFINED) {
+            setGridAttribute(layout, ATTR_COLUMN_COUNT, actualColumnCount);
+        //}
+
     }
 
     /**
@@ -942,15 +1140,12 @@ public class GridModel {
      */
     public INode addRow(int newRow, INode newView, int rowHeightDp, boolean split,
             int column, int y) {
-        // We'll modify the grid data; the cached data is out of date
-        assert !stale;
-        stale = true;
-
+        actualRowCount++;
         if (declaredRowCount != UNDEFINED) {
             declaredRowCount++;
-            layout.setAttribute(ANDROID_URI, ATTR_ROW_COUNT,
-                    Integer.toString(declaredRowCount));
+            setGridAttribute(layout, ATTR_ROW_COUNT, declaredRowCount);
         }
+
         boolean added = false;
         for (ViewData view : mChildViews) {
             if (view.row >= newRow) {
@@ -961,35 +1156,39 @@ public class GridModel {
                         int index = getChildIndex(layout.getChildren(), view.node);
                         assert view.index == index; // TODO: Get rid of getter
                         if (declaredColumnCount != UNDEFINED && !split) {
-                            layout.setAttribute(ANDROID_URI, ATTR_COLUMN_COUNT,
-                                    Integer.toString(declaredColumnCount));
+                            setGridAttribute(layout, ATTR_COLUMN_COUNT, declaredColumnCount);
                         }
-                        newView = addSpacer(layout, index,
+                        ViewData newViewData = addSpacer(layout, index,
                                     split ? newRow - 1 : UNDEFINED,
                                     split ? column : UNDEFINED,
                                     SPACER_SIZE_DP,
                                     rowHeightDp != UNDEFINED ? rowHeightDp : DEFAULT_CELL_HEIGHT);
+                        newViewData.column = column;
+                        newViewData.row = newRow - 1;
+                        newView = newViewData.node;
                     }
 
                     // Set the actual row number on the first cell on the new row.
                     // This means we don't really need the spacer above to imply
                     // the new row number, but we use the spacer to assign the row
                     // some height.
-                    view.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_ROW,
-                            Integer.toString(view.row + 1));
+                    view.row++;
+                    setGridAttribute(view.node, ATTR_LAYOUT_ROW, view.row);
 
                     added = true;
-                } else if (view.node.getStringAttr(ANDROID_URI, ATTR_LAYOUT_ROW) != null) {
-                    view.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_ROW,
-                            Integer.toString(view.row + 1));
+                } else if (getGridAttribute(view.node, ATTR_LAYOUT_ROW) != null) {
+                    view.row++;
+                    setGridAttribute(view.node, ATTR_LAYOUT_ROW, view.row);
                 }
             } else {
                 int endRow = view.row + view.rowSpan;
                 if (endRow > newRow) {
-                    setRowSpanAttribute(view.node, view.rowSpan + 1);
+                    view.rowSpan++;
+                    setRowSpanAttribute(view.node, view.rowSpan);
                 } else if (split && view.node.getBounds().y2() > y) {
                     if (view.node.getBounds().y < y) {
-                        setRowSpanAttribute(view.node, view.rowSpan + 1);
+                        view.rowSpan++;
+                        setRowSpanAttribute(view.node, view.rowSpan);
                     }
                 }
             }
@@ -998,17 +1197,20 @@ public class GridModel {
         if (!added) {
             // Append a row at the end
             if (newView == null) {
-                newView = addSpacer(layout, -1, UNDEFINED, UNDEFINED,
+                ViewData newViewData = addSpacer(layout, -1, UNDEFINED, UNDEFINED,
                         SPACER_SIZE_DP,
                         rowHeightDp != UNDEFINED ? rowHeightDp : DEFAULT_CELL_HEIGHT);
+                newViewData.column = column;
+                // TODO: MAke sure this row number is right!
+                newViewData.row = split ? newRow - 1 : newRow;
+                newView = newViewData.node;
             }
             if (declaredColumnCount != UNDEFINED && !split) {
-                newView.setAttribute(ANDROID_URI, ATTR_COLUMN_COUNT,
-                        Integer.toString(declaredColumnCount));
+                setGridAttribute(layout, ATTR_COLUMN_COUNT, declaredColumnCount);
             }
             if (split) {
-                newView.setAttribute(ANDROID_URI, ATTR_LAYOUT_ROW, Integer.toString(newRow - 1));
-                newView.setAttribute(ANDROID_URI, ATTR_LAYOUT_COLUMN, Integer.toString(column));
+                setGridAttribute(newView, ATTR_LAYOUT_ROW, newRow - 1);
+                setGridAttribute(newView, ATTR_LAYOUT_COLUMN, column);
             }
         }
 
@@ -1025,18 +1227,17 @@ public class GridModel {
             return;
         }
 
-        assert !stale;
-        stale = true;
-
         // Figure out which rows should be removed
-        Set<Integer> removedSet = new HashSet<Integer>();
+        Set<ViewData> removedViews = new HashSet<ViewData>();
+        Set<Integer> removedRows = new HashSet<Integer>();
         for (INode child : selectedChildren) {
             ViewData view = getView(child);
-            removedSet.add(view.row);
+            removedViews.add(view);
+            removedRows.add(view.row);
         }
         // Sort them in descending order such that we can process each
         // deletion independently
-        List<Integer> removed = new ArrayList<Integer>(removedSet);
+        List<Integer> removed = new ArrayList<Integer>(removedRows);
         Collections.sort(removed, Collections.reverseOrder());
 
         for (int removedRow : removed) {
@@ -1044,10 +1245,10 @@ public class GridModel {
             // First, adjust row count.
             // TODO: Don't do this if the row being deleted is outside
             // the declared row range!
+            actualRowCount--;
             if (declaredRowCount != UNDEFINED) {
                 declaredRowCount--;
-                layout.setAttribute(ANDROID_URI, ATTR_ROW_COUNT,
-                        Integer.toString(declaredRowCount));
+                setGridAttribute(layout, ATTR_ROW_COUNT, declaredRowCount);
             }
 
             // Remove any elements that begin in the deleted rows...
@@ -1060,18 +1261,34 @@ public class GridModel {
                     // We don't have to worry about a rowSpan > 1 here, because even
                     // if it is, those rowspans are not used to assign default row/column
                     // positions for other cells
+// TODO: Check this; it differs from the removeColumns logic!
                     layout.removeChild(view.node);
                 } else if (view.row > removedRow) {
-                    if (view.node.getStringAttr(ANDROID_URI, ATTR_LAYOUT_ROW) != null) {
-                        view.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_ROW,
-                                Integer.toString(view.row - 1));
+                    view.row--;
+                    if (getGridAttribute(view.node, ATTR_LAYOUT_ROW) != null) {
+                        setGridAttribute(view.node, ATTR_LAYOUT_ROW, view.row);
                     }
                 } else if (view.row < removedRow
                         && view.row + view.rowSpan > removedRow) {
                     // Subtract row span to skip this item
-                    setRowSpanAttribute(view.node, view.rowSpan - 1);
+                    view.rowSpan--;
+                    setRowSpanAttribute(view.node, view.rowSpan);
                 }
             }
+        }
+
+        // Remove children from child list!
+        if (removedViews.size() <= 2) {
+            mChildViews.removeAll(removedViews);
+        } else {
+            List<ViewData> remaining =
+                    new ArrayList<ViewData>(mChildViews.size() - removedViews.size());
+            for (ViewData view : mChildViews) {
+                if (!removedViews.contains(view)) {
+                    remaining.add(view);
+                }
+            }
+            mChildViews = remaining;
         }
     }
 
@@ -1321,10 +1538,6 @@ public class GridModel {
      */
     @Override
     public String toString() {
-        if (stale) {
-            System.out.println("WARNING: Grid has been modified, so model may be out of date!");
-        }
-
         // Dump out the view table
         int cellWidth = 25;
 
@@ -1337,9 +1550,6 @@ public class GridModel {
             rowList.add(columnList);
         }
         for (ViewData view : mChildViews) {
-            if (mDeleted != null && mDeleted.contains(view.node)) {
-                continue;
-            }
             for (int i = 0; i < view.rowSpan; i++) {
                 if (view.row + i > mTop.length) { // Guard against bogus span values
                     break;
@@ -1413,8 +1623,7 @@ public class GridModel {
      * @param x the x coordinate of the new column
      */
     public void splitColumn(int newColumn, boolean insertMarginColumn, int columnWidthDp, int x) {
-        assert !stale;
-        stale = true;
+        actualColumnCount++;
 
         // Insert a new column
         if (declaredColumnCount != UNDEFINED) {
@@ -1422,8 +1631,7 @@ public class GridModel {
             if (insertMarginColumn) {
                 declaredColumnCount++;
             }
-            layout.setAttribute(ANDROID_URI, ATTR_COLUMN_COUNT,
-                    Integer.toString(declaredColumnCount));
+            setGridAttribute(layout, ATTR_COLUMN_COUNT, declaredColumnCount);
         }
 
         // Are we inserting a new last column in the grid? That requires some special handling...
@@ -1441,9 +1649,8 @@ public class GridModel {
         if (isLastColumn) {
             for (ViewData view : mChildViews) {
                 if (view.column == 0 && view.row > 0) {
-                    if (view.node.getStringAttr(ANDROID_URI, ATTR_LAYOUT_ROW) == null) {
-                        view.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_ROW,
-                                Integer.toString(view.row));
+                    if (getGridAttribute(view.node, ATTR_LAYOUT_ROW) == null) {
+                        setGridAttribute(view.node, ATTR_LAYOUT_ROW, view.row);
                     }
                 }
             }
@@ -1483,16 +1690,26 @@ public class GridModel {
                 //   where necessary, e.g. only on the FIRST view on this row following the
                 //   skipped column!
 
-                //if (node.getStringAttr(ANDROID_URI, ATTR_LAYOUT_COLUMN) != null) {
-                node.setAttribute(ANDROID_URI, ATTR_LAYOUT_COLUMN,
-                        Integer.toString(column + (insertMarginColumn ? 2 : 1)));
+                //if (getGridAttribute(node, ATTR_LAYOUT_COLUMN) != null) {
+                view.column += insertMarginColumn ? 2 : 1;
+                setGridAttribute(node, ATTR_LAYOUT_COLUMN, view.column);
                 //}
             } else if (!view.isSpacer()) {
+                // Adjust the column span? We must increase it if
+                //  (1) the new column is inside the range [column, column + columnSpan]
+                //  (2) the new column is within the last cell in the column span,
+                //      and the exact X location of the split is within the horizontal
+                //      *bounds* of this node (provided it has gravity=left)
+                //  (3) the new column is within the last cell and the cell has gravity
+                //      right or gravity center
                 int endColumn = column + view.columnSpan;
                 if (endColumn > newColumn
-                        || endColumn == newColumn && view.node.getBounds().x2() > x) {
+                        || endColumn == newColumn && (view.node.getBounds().x2() > x
+                                || GravityHelper.isConstrainedHorizontally(view.gravity)
+                                    &&  !GravityHelper.isLeftAligned(view.gravity))) {
                     // This cell spans the new insert position, so increment the column span
-                    setColumnSpanAttribute(node, view.columnSpan + (insertMarginColumn ? 2 : 1));
+                    view.columnSpan += insertMarginColumn ? 2 : 1;
+                    setColumnSpanAttribute(node, view.columnSpan);
                 }
             }
         }
@@ -1508,8 +1725,9 @@ public class GridModel {
             if (remaining > 0) {
                 prevColumnSpacer.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_WIDTH,
                         String.format(VALUE_N_DP, remaining));
-                prevColumnSpacer.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_COLUMN,
-                        Integer.toString(insertMarginColumn ? newColumn + 1 : newColumn));
+                prevColumnSpacer.column = insertMarginColumn ? newColumn + 1 : newColumn;
+                setGridAttribute(prevColumnSpacer.node, ATTR_LAYOUT_COLUMN,
+                        prevColumnSpacer.column);
             }
         }
 
@@ -1535,14 +1753,15 @@ public class GridModel {
      * @param y the y coordinate of the new row
      */
     public void splitRow(int newRow, boolean insertMarginRow, int rowHeightDp, int y) {
+        actualRowCount++;
+
         // Insert a new row
         if (declaredRowCount != UNDEFINED) {
             declaredRowCount++;
             if (insertMarginRow) {
                 declaredRowCount++;
             }
-            layout.setAttribute(ANDROID_URI, ATTR_ROW_COUNT,
-                    Integer.toString(declaredRowCount));
+            setGridAttribute(layout, ATTR_ROW_COUNT, declaredRowCount);
         }
 
         // Find the spacer which marks this row, and if found, mark it as a split
@@ -1563,16 +1782,19 @@ public class GridModel {
             INode node = view.node;
             int row = view.row;
             if (row > newRow || (row == newRow && view.node.getBounds().y2() > y)) {
-                //if (node.getStringAttr(ANDROID_URI, ATTR_LAYOUT_ROW) != null) {
-                node.setAttribute(ANDROID_URI, ATTR_LAYOUT_ROW,
-                        Integer.toString(row + (insertMarginRow ? 2 : 1)));
+                //if (getGridAttribute(node, ATTR_LAYOUT_ROW) != null) {
+                view.row += insertMarginRow ? 2 : 1;
+                setGridAttribute(node, ATTR_LAYOUT_ROW, view.row);
                 //}
             } else if (!view.isSpacer()) {
                 int endRow = row + view.rowSpan;
                 if (endRow > newRow
-                        || endRow == newRow && view.node.getBounds().y2() > y) {
+                        || endRow == newRow && (view.node.getBounds().y2() > y
+                                || GravityHelper.isConstrainedVertically(view.gravity)
+                                    && !GravityHelper.isTopAligned(view.gravity))) {
                     // This cell spans the new insert position, so increment the row span
-                    setRowSpanAttribute(node, view.rowSpan + (insertMarginRow ? 2 : 1));
+                    view.rowSpan += insertMarginRow ? 2 : 1;
+                    setRowSpanAttribute(node, view.rowSpan);
                 }
             }
         }
@@ -1588,8 +1810,8 @@ public class GridModel {
             if (remaining > 0) {
                 prevRowSpacer.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_HEIGHT,
                         String.format(VALUE_N_DP, remaining));
-                prevRowSpacer.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_ROW,
-                        Integer.toString(insertMarginRow ? newRow + 1 : newRow));
+                prevRowSpacer.row = insertMarginRow ? newRow + 1 : newRow;
+                setGridAttribute(prevRowSpacer.node, ATTR_LAYOUT_ROW, prevRowSpacer.row);
             }
         }
 
@@ -1604,7 +1826,7 @@ public class GridModel {
      * Data about a view in a table; this is not the same as a cell because multiple views
      * can share a single cell, and a view can span many cells.
      */
-    static class ViewData {
+    public class ViewData {
         public final INode node;
         public final int index;
         public int row;
@@ -1617,24 +1839,17 @@ public class GridModel {
             node = n;
             this.index = index;
 
-            column = getInt(n, ATTR_LAYOUT_COLUMN, UNDEFINED);
-            columnSpan = getInt(n, ATTR_LAYOUT_COLUMN_SPAN, 1);
-            row = getInt(n, ATTR_LAYOUT_ROW, UNDEFINED);
-            rowSpan = getInt(n, ATTR_LAYOUT_ROW_SPAN, 1);
-            gravity = GravityHelper.getGravity(n.getStringAttr(ANDROID_URI, ATTR_LAYOUT_GRAVITY),
-                    0);
+            column = getGridAttribute(n, ATTR_LAYOUT_COLUMN, UNDEFINED);
+            columnSpan = getGridAttribute(n, ATTR_LAYOUT_COLUMN_SPAN, 1);
+            row = getGridAttribute(n, ATTR_LAYOUT_ROW, UNDEFINED);
+            rowSpan = getGridAttribute(n, ATTR_LAYOUT_ROW_SPAN, 1);
+            gravity = GravityHelper.getGravity(getGridAttribute(n, ATTR_LAYOUT_GRAVITY), 0);
         }
 
         /** Applies the column and row fields into the XML model */
         void applyPositionAttributes() {
-            if (node.getStringAttr(ANDROID_URI, ATTR_LAYOUT_COLUMN) == null) {
-                node.setAttribute(ANDROID_URI, ATTR_LAYOUT_COLUMN,
-                        Integer.toString(column));
-            }
-            if (node.getStringAttr(ANDROID_URI, ATTR_LAYOUT_ROW) == null) {
-                node.setAttribute(ANDROID_URI, ATTR_LAYOUT_ROW,
-                        Integer.toString(row));
-            }
+            setGridAttribute(node, ATTR_LAYOUT_COLUMN, column);
+            setGridAttribute(node, ATTR_LAYOUT_ROW, row);
         }
 
         /** Returns the id of this node, or makes one up for display purposes */
@@ -1653,7 +1868,7 @@ public class GridModel {
 
         /** Returns true if this {@link ViewData} represents a spacer */
         boolean isSpacer() {
-            return FQCN_SPACE.equals(node.getFqcn());
+            return isSpace(node.getFqcn());
         }
 
         /**
@@ -1690,9 +1905,8 @@ public class GridModel {
      * @param node the target node
      * @param span the new column span
      */
-    public static void setColumnSpanAttribute(INode node, int span) {
-        node.setAttribute(ANDROID_URI, ATTR_LAYOUT_COLUMN_SPAN,
-                span > 1 ? Integer.toString(span) : null);
+    public void setColumnSpanAttribute(INode node, int span) {
+        setGridAttribute(node, ATTR_LAYOUT_COLUMN_SPAN, span > 1 ? Integer.toString(span) : null);
     }
 
     /**
@@ -1702,9 +1916,8 @@ public class GridModel {
      * @param node the target node
      * @param span the new row span
      */
-    public static void setRowSpanAttribute(INode node, int span) {
-        node.setAttribute(ANDROID_URI, ATTR_LAYOUT_ROW_SPAN,
-                span > 1 ? Integer.toString(span) : null);
+    public void setRowSpanAttribute(INode node, int span) {
+        setGridAttribute(node, ATTR_LAYOUT_ROW_SPAN, span > 1 ? Integer.toString(span) : null);
     }
 
     /** Returns the index of the given target node in the given child node array */
@@ -1721,46 +1934,52 @@ public class GridModel {
     }
 
     /**
-     * Notify the grid that the given node is about to be deleted. This can be used in
-     * conjunction with {@link #cleanup()} to remove and merge unnecessary rows and
-     * columns.
+     * Update the model to account for the given nodes getting deleted. The nodes
+     * are not actually deleted by this method; that is assumed to be performed by the
+     * caller. Instead this method performs whatever model updates are necessary to
+     * preserve the grid structure.
      *
-     * @param child the child that is going to be removed shortly
+     * @param nodes the nodes to be deleted
      */
-    public void markDeleted(INode child) {
-        if (mDeleted == null) {
-            mDeleted = new HashSet<INode>();
-        }
-
-        mDeleted.add(child);
-    }
-
-    /**
-     * Clean up rows and columns that are no longer needed after the nodes marked for
-     * deletion by {@link #markDeleted(INode)} are removed.
-     */
-    public void cleanup() {
-        if (mDeleted == null) {
+    public void onDeleted(@NonNull List<INode> nodes) {
+        if (nodes.size() == 0) {
             return;
         }
 
+        // Attempt to clean up spacer objects for any newly-empty rows or columns
+        // as the result of this deletion
+
+        Set<INode> deleted = new HashSet<INode>();
+
+        for (INode child : nodes) {
+            // We don't care about deletion of spacers
+            String fqcn = child.getFqcn();
+            if (fqcn.equals(FQCN_SPACE) || fqcn.equals(FQCN_SPACE_V7)) {
+                continue;
+            }
+            deleted.add(child);
+        }
+
         Set<Integer> usedColumns = new HashSet<Integer>(actualColumnCount);
-        Set<Integer> usedRows = new HashSet<Integer>(actualColumnCount);
-        Map<Integer, ViewData> columnSpacers = new HashMap<Integer, ViewData>(actualColumnCount);
-        Map<Integer, ViewData> rowSpacers = new HashMap<Integer, ViewData>(actualColumnCount);
+        Set<Integer> usedRows = new HashSet<Integer>(actualRowCount);
+        Multimap<Integer, ViewData> columnSpacers = ArrayListMultimap.create(actualColumnCount, 2);
+        Multimap<Integer, ViewData> rowSpacers = ArrayListMultimap.create(actualRowCount, 2);
+        Set<ViewData> removedViews = new HashSet<ViewData>();
 
         for (ViewData view : mChildViews) {
-            if (view.isColumnSpacer()) {
+            if (deleted.contains(view.node)) {
+                removedViews.add(view);
+            } else if (view.isColumnSpacer()) {
                 columnSpacers.put(view.column, view);
             } else if (view.isRowSpacer()) {
                 rowSpacers.put(view.row, view);
-            } else if (!mDeleted.contains(view.node)) {
+            } else {
                 usedColumns.add(Integer.valueOf(view.column));
                 usedRows.add(Integer.valueOf(view.row));
             }
         }
 
-        if (usedColumns.size() == 0) {
+        if (usedColumns.size() == 0 || usedRows.size() == 0) {
             // No more views - just remove all the spacers
             for (ViewData spacer : columnSpacers.values()) {
                 layout.removeChild(spacer.node);
@@ -1768,161 +1987,263 @@ public class GridModel {
             for (ViewData spacer : rowSpacers.values()) {
                 layout.removeChild(spacer.node);
             }
-            layout.setAttribute(ANDROID_URI, ATTR_COLUMN_COUNT, Integer.toString(2));
+            mChildViews.clear();
+            actualColumnCount = 0;
+            declaredColumnCount = 2;
+            actualRowCount = 0;
+            declaredRowCount = UNDEFINED;
+            setGridAttribute(layout, ATTR_COLUMN_COUNT, 2);
+
             return;
         }
 
-        // Remove (merge back) unnecessary columns
-        for (int column = actualColumnCount - 1; column >= 0; column--) {
-            if (!usedColumns.contains(column)) {
-                // This column is no longer needed. Remove it!
-                ViewData spacer = columnSpacers.get(column);
-                ViewData prevSpacer = columnSpacers.get(column - 1);
-                if (spacer == null) {
-                    // Can't touch this column; we only merge spacer columns, not
-                    // other types of columns (TODO: Consider what we can do here!)
+        // Determine columns to introduce spacers into:
+        // This is tricky; I should NOT combine spacers if there are cells tied to
+        // individual ones
 
-                    // Try to merge with next column
-                    ViewData nextSpacer = columnSpacers.get(column + 1);
-                    if (nextSpacer != null) {
-                        int nextSizeDp = getDipSize(nextSpacer, false /* row */);
-                        int columnWidthPx = getColumnWidth(column, 1);
-                        int columnWidthDp = mRulesEngine.pxToDp(columnWidthPx);
-                        int combinedSizeDp = nextSizeDp + columnWidthDp;
-                        nextSpacer.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_WIDTH,
-                                String.format(VALUE_N_DP, combinedSizeDp));
-                        // Also move the spacer into this column
-                        nextSpacer.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_COLUMN,
-                                Integer.toString(column));
-                        columnSpacers.put(column, nextSpacer);
-                    } else {
-                        continue;
-                    }
-                } else if (prevSpacer == null) {
-                    // Can't combine this column with a previous column; we don't have
-                    // data for it.
-                    continue;
+        // TODO: Invalidate column sizes too! Otherwise repeated updates might get confused!
+        // Similarly, inserts need to do the same!
+
+        // Produce map of old column numbers to new column numbers
+        // Collapse regions of consecutive space and non-space ranges together
+        int[] columnMap = new int[actualColumnCount + 1]; // +1: Easily handle columnSpans as well
+        int newColumn = 0;
+        boolean prevUsed = usedColumns.contains(0);
+        for (int column = 1; column < actualColumnCount; column++) {
+            boolean used = usedColumns.contains(column);
+            if (used || prevUsed != used) {
+                newColumn++;
+                prevUsed = used;
+            }
+            columnMap[column] = newColumn;
+        }
+        newColumn++;
+        columnMap[actualColumnCount] = newColumn;
+        assert columnMap[0] == 0;
+
+        int[] rowMap = new int[actualRowCount + 1]; // +1: Easily handle rowSpans as well
+        int newRow = 0;
+        prevUsed = usedRows.contains(0);
+        for (int row = 1; row < actualRowCount; row++) {
+            boolean used = usedRows.contains(row);
+            if (used || prevUsed != used) {
+                newRow++;
+                prevUsed = used;
+            }
+            rowMap[row] = newRow;
+        }
+        newRow++;
+        rowMap[actualRowCount] = newRow;
+        assert rowMap[0] == 0;
+
+
+        // Adjust column and row numbers to account for deletions: for a given cell, if it
+        // is to the right of a deleted column, reduce its column number, and if it only
+        // spans across the deleted column, reduce its column span.
+        for (ViewData view : mChildViews) {
+            if (removedViews.contains(view)) {
+                continue;
+            }
+            int newColumnStart = columnMap[Math.min(columnMap.length - 1, view.column)];
+            // Gracefully handle rogue/invalid columnSpans in the XML
+            int newColumnEnd = columnMap[Math.min(columnMap.length - 1,
+                    view.column + view.columnSpan)];
+            if (newColumnStart != view.column) {
+                view.column = newColumnStart;
+                setGridAttribute(view.node, ATTR_LAYOUT_COLUMN, view.column);
+            }
+
+            int columnSpan = newColumnEnd - newColumnStart;
+            if (columnSpan != view.columnSpan) {
+                if (columnSpan >= 1) {
+                    view.columnSpan = columnSpan;
+                    setColumnSpanAttribute(view.node, view.columnSpan);
+                } // else: merging spacing columns together
+            }
+
+
+            int newRowStart = rowMap[Math.min(rowMap.length - 1, view.row)];
+            int newRowEnd = rowMap[Math.min(rowMap.length - 1, view.row + view.rowSpan)];
+            if (newRowStart != view.row) {
+                view.row = newRowStart;
+                setGridAttribute(view.node, ATTR_LAYOUT_ROW, view.row);
+            }
+
+            int rowSpan = newRowEnd - newRowStart;
+            if (rowSpan != view.rowSpan) {
+                if (rowSpan >= 1) {
+                    view.rowSpan = rowSpan;
+                    setRowSpanAttribute(view.node, view.rowSpan);
+                } // else: merging spacing rows together
+            }
+        }
+
+        // Merge spacers (and add spacers for newly empty columns)
+        int start = 0;
+        while (start < actualColumnCount) {
+            // Find next unused span
+            while (start < actualColumnCount && usedColumns.contains(start)) {
+                start++;
+            }
+            if (start == actualColumnCount) {
+                break;
+            }
+            assert !usedColumns.contains(start);
+            // Find the next span of unused columns and produce a SINGLE
+            // spacer for that range (unless it's a zero-sized columns)
+            int end = start + 1;
+            for (; end < actualColumnCount; end++) {
+                if (usedColumns.contains(end)) {
+                    break;
                 }
+            }
 
-                if (spacer != null) {
-                    // Combine spacer and prevSpacer.
-                    mergeSpacers(prevSpacer, spacer, false /*row*/);
-                }
+            // Add up column sizes
+            int width = getColumnWidth(start, end - start);
 
-                // Decrement column numbers for all elements to the right of the deleted column,
-                // and subtract columnSpans for any elements that overlap it
-                for (ViewData view : mChildViews) {
-                    if (view.column >= column) {
-                        if (view.column > 0) {
-                            view.column--;
-                            view.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_COLUMN,
-                                    Integer.toString(view.column));
-                        }
-                    } else if (!view.isSpacer()) {
-                        int endColumn = view.column + view.columnSpan;
-                        if (endColumn > column && view.columnSpan > 1) {
-                            view.columnSpan--;
-                            setColumnSpanAttribute(view.node, view.columnSpan);
+            // Find all spacers: the first one found should be moved to the start column
+            // and assigned to the full height of the columns, and
+            // the column count reduced by the corresponding amount
+
+            // TODO: if width = 0, fully remove
+
+            boolean isFirstSpacer = true;
+            for (int column = start; column < end; column++) {
+                Collection<ViewData> spacers = columnSpacers.get(column);
+                if (spacers != null && !spacers.isEmpty()) {
+                    // Avoid ConcurrentModificationException since we're inserting into the
+                    // map within this loop (always at a different index, but the map doesn't
+                    // know that)
+                    spacers = new ArrayList<ViewData>(spacers);
+                    for (ViewData spacer : spacers) {
+                        if (isFirstSpacer) {
+                            isFirstSpacer = false;
+                            spacer.column = columnMap[start];
+                            setGridAttribute(spacer.node, ATTR_LAYOUT_COLUMN, spacer.column);
+                            if (end - start > 1) {
+                                // Compute a merged width for all the spacers (not needed if
+                                // there's just one spacer; it should already have the correct width)
+                                int columnWidthDp = mRulesEngine.pxToDp(width);
+                                spacer.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_WIDTH,
+                                        String.format(VALUE_N_DP, columnWidthDp));
+                            }
+                            columnSpacers.put(start, spacer);
+                        } else {
+                            removedViews.add(spacer); // Mark for model removal
+                            layout.removeChild(spacer.node);
                         }
                     }
                 }
             }
+
+            if (isFirstSpacer) {
+                // No spacer: create one
+                int columnWidthDp = mRulesEngine.pxToDp(width);
+                addSpacer(layout, -1, UNDEFINED, columnMap[start], columnWidthDp, DEFAULT_CELL_HEIGHT);
+            }
+
+            start = end;
         }
+        actualColumnCount = newColumn;
+//if (usedColumns.contains(newColumn)) {
+//    // TODO: This may be totally wrong for right aligned content!
+//    actualColumnCount++;
+//}
 
-        for (int row = actualRowCount - 1; row >= 0; row--) {
-            if (!usedRows.contains(row)) {
-                // This row is no longer needed. Remove it!
-                ViewData spacer = rowSpacers.get(row);
-                ViewData prevSpacer = rowSpacers.get(row - 1);
-                if (spacer == null) {
-                    ViewData nextSpacer = rowSpacers.get(row + 1);
-                    if (nextSpacer != null) {
-                        int nextSizeDp = getDipSize(nextSpacer, true /* row */);
-                        int rowHeightPx = getRowHeight(row, 1);
-                        int rowHeightDp = mRulesEngine.pxToDp(rowHeightPx);
-                        int combinedSizeDp = nextSizeDp + rowHeightDp;
-                        nextSpacer.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_HEIGHT,
-                                String.format(VALUE_N_DP, combinedSizeDp));
-                        nextSpacer.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_ROW,
-                                Integer.toString(row));
-                        rowSpacers.put(row, nextSpacer);
-                    } else {
-                        continue;
-                    }
-                } else if (prevSpacer == null) {
-                    continue;
+        // Merge spacers for rows
+        start = 0;
+        while (start < actualRowCount) {
+            // Find next unused span
+            while (start < actualRowCount && usedRows.contains(start)) {
+                start++;
+            }
+            if (start == actualRowCount) {
+                break;
+            }
+            assert !usedRows.contains(start);
+            // Find the next span of unused rows and produce a SINGLE
+            // spacer for that range (unless it's a zero-sized rows)
+            int end = start + 1;
+            for (; end < actualRowCount; end++) {
+                if (usedRows.contains(end)) {
+                    break;
                 }
+            }
 
-                if (spacer != null) {
-                    // Combine spacer and prevSpacer.
-                    mergeSpacers(prevSpacer, spacer, true /*row*/);
-                }
+            // Add up row sizes
+            int height = getRowHeight(start, end - start);
 
+            // Find all spacers: the first one found should be moved to the start row
+            // and assigned to the full height of the rows, and
+            // the row count reduced by the corresponding amount
 
-                // Decrement row numbers for all elements below the deleted row,
-                // and subtract rowSpans for any elements that overlap it
-                for (ViewData view : mChildViews) {
-                    if (view.row >= row) {
-                        if (view.row > 0) {
-                            view.row--;
-                            view.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_ROW,
-                                    Integer.toString(view.row));
-                        }
-                    } else if (!view.isSpacer()) {
-                        int endRow = view.row + view.rowSpan;
-                        if (endRow > row && view.rowSpan > 1) {
-                            view.rowSpan--;
-                            setRowSpanAttribute(view.node, view.rowSpan);
+            // TODO: if width = 0, fully remove
+
+            boolean isFirstSpacer = true;
+            for (int row = start; row < end; row++) {
+                Collection<ViewData> spacers = rowSpacers.get(row);
+                if (spacers != null && !spacers.isEmpty()) {
+                    // Avoid ConcurrentModificationException since we're inserting into the
+                    // map within this loop (always at a different index, but the map doesn't
+                    // know that)
+                    spacers = new ArrayList<ViewData>(spacers);
+                    for (ViewData spacer : spacers) {
+                        if (isFirstSpacer) {
+                            isFirstSpacer = false;
+                            spacer.row = rowMap[start];
+                            setGridAttribute(spacer.node, ATTR_LAYOUT_ROW, spacer.row);
+                            if (end - start > 1) {
+                                // Compute a merged width for all the spacers (not needed if
+                                // there's just one spacer; it should already have the correct height)
+                                int rowHeightDp = mRulesEngine.pxToDp(height);
+                                spacer.node.setAttribute(ANDROID_URI, ATTR_LAYOUT_HEIGHT,
+                                        String.format(VALUE_N_DP, rowHeightDp));
+                            }
+                            rowSpacers.put(start, spacer);
+                        } else {
+                            removedViews.add(spacer); // Mark for model removal
+                            layout.removeChild(spacer.node);
                         }
                     }
                 }
             }
+
+            if (isFirstSpacer) {
+                // No spacer: create one
+                int rowWidthDp = mRulesEngine.pxToDp(height);
+                addSpacer(layout, -1, rowMap[start], UNDEFINED, DEFAULT_CELL_WIDTH, rowWidthDp);
+            }
+
+            start = end;
         }
+        actualRowCount = newRow;
+//        if (usedRows.contains(newRow)) {
+//            actualRowCount++;
+//        }
 
-        // TODO: Reduce row/column counts!
-    }
-
-    /**
-     * Merges two spacers together - either row spacers or column spacers based on the
-     * parameter
-     */
-    private void mergeSpacers(ViewData prevSpacer, ViewData spacer, boolean row) {
-        int combinedSizeDp = -1;
-        int prevSizeDp = getDipSize(prevSpacer, row);
-        int sizeDp = getDipSize(spacer, row);
-        combinedSizeDp = prevSizeDp + sizeDp;
-        String attribute = row ? ATTR_LAYOUT_HEIGHT : ATTR_LAYOUT_WIDTH;
-        prevSpacer.node.setAttribute(ANDROID_URI, attribute,
-                String.format(VALUE_N_DP, combinedSizeDp));
-        layout.removeChild(spacer.node);
-    }
-
-    /**
-     * Computes the size (in device independent pixels) of the given spacer.
-     *
-     * @param spacer the spacer to measure
-     * @param row if true, this is a row spacer, otherwise it is a column spacer
-     * @return the size in device independent pixels
-     */
-    private int getDipSize(ViewData spacer, boolean row) {
-        String attribute = row ? ATTR_LAYOUT_HEIGHT : ATTR_LAYOUT_WIDTH;
-        String size = spacer.node.getStringAttr(ANDROID_URI, attribute);
-        if (size != null) {
-            Matcher matcher = DIP_PATTERN.matcher(size);
-            if (matcher.matches()) {
-                try {
-                    return Integer.parseInt(matcher.group(1));
-                } catch (NumberFormatException nfe) {
-                    // Can't happen; we pre-check with regexp above.
+        // Update the model: remove removed children from the view data list
+        if (removedViews.size() <= 2) {
+            mChildViews.removeAll(removedViews);
+        } else {
+            List<ViewData> remaining =
+                    new ArrayList<ViewData>(mChildViews.size() - removedViews.size());
+            for (ViewData view : mChildViews) {
+                if (!removedViews.contains(view)) {
+                    remaining.add(view);
                 }
             }
+            mChildViews = remaining;
         }
 
-        // Fallback for cases where the attribute values are not regular (e.g. user has edited
-        // to some resource or other dimension format) - in that case just do bounds-based
-        // computation.
-        Rect bounds = spacer.node.getBounds();
-        return mRulesEngine.pxToDp(row ? bounds.h : bounds.w);
+        // Update the final column and row declared attributes
+        if (declaredColumnCount != UNDEFINED) {
+            declaredColumnCount = actualColumnCount;
+            setGridAttribute(layout, ATTR_COLUMN_COUNT, actualColumnCount);
+        }
+        if (declaredRowCount != UNDEFINED) {
+            declaredRowCount = actualRowCount;
+            setGridAttribute(layout, ATTR_ROW_COUNT, actualRowCount);
+        }
     }
 
     /**
@@ -1937,19 +2258,32 @@ public class GridModel {
      * @param heightDp the height in device independent pixels to assign to the spacer
      * @return the newly added spacer
      */
-    static INode addSpacer(INode parent, int index, int row, int column,
+    ViewData addSpacer(INode parent, int index, int row, int column,
             int widthDp, int heightDp) {
         INode spacer;
-        if (index != -1) {
-            spacer = parent.insertChildAt(FQCN_SPACE, index);
-        } else {
-            spacer = parent.appendChild(FQCN_SPACE);
+
+        String tag = FQCN_SPACE;
+        String gridLayout = parent.getFqcn();
+        if (!gridLayout.equals(GRID_LAYOUT) && gridLayout.length() > GRID_LAYOUT.length()) {
+            String pkg = gridLayout.substring(0, gridLayout.length() - GRID_LAYOUT.length());
+            tag = pkg + SPACE;
         }
+        if (index != -1) {
+            spacer = parent.insertChildAt(tag, index);
+        } else {
+            spacer = parent.appendChild(tag);
+        }
+
+        ViewData view = new ViewData(spacer, index != -1 ? index : mChildViews.size());
+        mChildViews.add(view);
+
         if (row != UNDEFINED) {
-            spacer.setAttribute(ANDROID_URI, ATTR_LAYOUT_ROW, Integer.toString(row));
+            view.row = row;
+            setGridAttribute(spacer, ATTR_LAYOUT_ROW, row);
         }
         if (column != UNDEFINED) {
-            spacer.setAttribute(ANDROID_URI, ATTR_LAYOUT_COLUMN, Integer.toString(column));
+            view.column = column;
+            setGridAttribute(spacer, ATTR_LAYOUT_COLUMN, column);
         }
         if (widthDp > 0) {
             spacer.setAttribute(ANDROID_URI, ATTR_LAYOUT_WIDTH,
@@ -1981,20 +2315,35 @@ public class GridModel {
         }
 
 
-        return spacer;
+        return view;
+    }
+
+    /**
+     * Returns the string value of the given attribute, or null if it does not
+     * exist. This only works for attributes that are GridLayout specific, such
+     * as columnCount, layout_column, layout_row_span, etc.
+     *
+     * @param node the target node
+     * @param name the attribute name (which must be in the android: namespace)
+     * @return the attribute value or null
+     */
+
+    public String getGridAttribute(INode node, String name) {
+        return node.getStringAttr(getNamespace(), name);
     }
 
     /**
      * Returns the integer value of the given attribute, or the given defaultValue if the
-     * attribute was not set.
+     * attribute was not set. This only works for attributes that are GridLayout specific,
+     * such as columnCount, layout_column, layout_row_span, etc.
      *
      * @param node the target node
      * @param attribute the attribute name (which must be in the android: namespace)
      * @param defaultValue the default value to use if the value is not set
      * @return the attribute integer value
      */
-    private static int getInt(INode node, String attribute, int defaultValue) {
-        String valueString = node.getStringAttr(ANDROID_URI, attribute);
+    private int getGridAttribute(INode node, String attribute, int defaultValue) {
+        String valueString = node.getStringAttr(getNamespace(), attribute);
         if (valueString != null) {
             try {
                 return Integer.decode(valueString);
@@ -2007,51 +2356,21 @@ public class GridModel {
     }
 
     /**
-     * Returns the float value of the given attribute, or the given defaultValue if the
-     * attribute was not set.
-     *
-     * @param node the target node
-     * @param attribute the attribute name (which must be in the android: namespace)
-     * @param defaultValue the default value to use if the value is not set
-     * @return the attribute float value
-     */
-    private static float getFloat(INode node, String attribute, float defaultValue) {
-        String valueString = node.getStringAttr(ANDROID_URI, attribute);
-        if (valueString != null) {
-            try {
-                return Float.parseFloat(valueString);
-            } catch (NumberFormatException nufe) {
-                // Ignore - error in user's XML
-            }
-        }
-
-        return defaultValue;
-    }
-
-    /**
-     * Returns the boolean value of the given attribute, or the given defaultValue if the
-     * attribute was not set.
-     *
-     * @param node the target node
-     * @param attribute the attribute name (which must be in the android: namespace)
-     * @param defaultValue the default value to use if the value is not set
-     * @return the attribute boolean value
-     */
-    private static boolean getBoolean(INode node, String attribute, boolean defaultValue) {
-        String valueString = node.getStringAttr(ANDROID_URI, attribute);
-        if (valueString != null) {
-            return Boolean.valueOf(valueString);
-        }
-
-        return defaultValue;
-    }
-
-    /**
      * Returns the number of children views in the GridLayout
      *
      * @return the number of children views in the GridLayout
      */
     public int getViewCount() {
         return mChildViews.size();
+    }
+
+    /**
+     * Returns true if the given class name represents a spacer
+     *
+     * @param fqcn the fully qualified class name
+     * @return true if this is a spacer
+     */
+    public static boolean isSpace(String fqcn) {
+        return FQCN_SPACE.equals(fqcn) || FQCN_SPACE_V7.equals(fqcn);
     }
 }

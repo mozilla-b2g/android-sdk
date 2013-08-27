@@ -261,6 +261,7 @@ public final class UiTreeBlock extends MasterDetailsBlock implements ICommitXml 
         // all parts in the managed form.
         // This is picked up by UiElementDetail.selectionChanged().
         mTreeViewer.addSelectionChangedListener(new ISelectionChangedListener() {
+            @Override
             public void selectionChanged(SelectionChangedEvent event) {
                 managedForm.fireSelectionChanged(mMasterPart, event.getSelection());
                 adjustTreeButtons(event.getSelection());
@@ -272,12 +273,14 @@ public final class UiTreeBlock extends MasterDetailsBlock implements ICommitXml 
         // - One to refresh the tree viewer when the framework resources have changed
         // - One to enable/disable the UI based on the application node's presence.
         mUiRefreshListener = new IUiUpdateListener() {
+            @Override
             public void uiElementNodeUpdated(UiElementNode ui_node, UiUpdateState state) {
                 mTreeViewer.refresh();
             }
         };
 
         mUiEnableListener = new IUiUpdateListener() {
+            @Override
             public void uiElementNodeUpdated(UiElementNode ui_node, UiUpdateState state) {
                 // The UiElementNode for the application XML node always exists, even
                 // if there is no corresponding XML node in the XML file.
@@ -336,6 +339,7 @@ public final class UiTreeBlock extends MasterDetailsBlock implements ICommitXml 
 
         // Remove listeners when the tree widget gets disposed.
         tree.addDisposeListener(new DisposeListener() {
+            @Override
             public void widgetDisposed(DisposeEvent e) {
                 if (mUiRootNode != null) {
                     UiElementNode node = mUiRootNode.getUiParent() != null ?
@@ -486,7 +490,8 @@ public final class UiTreeBlock extends MasterDetailsBlock implements ICommitXml 
              * tree selection and if it is of the appropriate type it re-creates
              * the necessary actions.
              */
-           public void menuAboutToShow(IMenuManager manager) {
+           @Override
+        public void menuAboutToShow(IMenuManager manager) {
                ISelection selection = mTreeViewer.getSelection();
                if (!selection.isEmpty() && selection instanceof ITreeSelection) {
                    ArrayList<UiElementNode> selected = filterSelection((ITreeSelection) selection);
@@ -637,11 +642,10 @@ public final class UiTreeBlock extends MasterDetailsBlock implements ICommitXml 
      *
      * @return A new list of {@link UiElementNode} with at least one item or null.
      */
-    @SuppressWarnings("unchecked")
     private ArrayList<UiElementNode> filterSelection(ITreeSelection selection) {
         ArrayList<UiElementNode> selected = new ArrayList<UiElementNode>();
 
-        for (Iterator it = selection.iterator(); it.hasNext(); ) {
+        for (Iterator<Object> it = selection.iterator(); it.hasNext(); ) {
             Object selectedObj = it.next();
 
             if (selectedObj instanceof UiElementNode) {
@@ -760,6 +764,7 @@ public final class UiTreeBlock extends MasterDetailsBlock implements ICommitXml 
     }
 
     /* Implements ICommitXml for CopyCutAction */
+    @Override
     public void commitPendingXmlChanges() {
         commitManagedForm();
     }
@@ -785,6 +790,7 @@ public final class UiTreeBlock extends MasterDetailsBlock implements ICommitXml 
         final UiTreeBlock tree = this;
 
         inDetailsPart.setPageProvider(new IDetailsPageProvider() {
+            @Override
             public IDetailsPage getPage(Object key) {
                 if (key instanceof UiElementNode) {
                     return new UiElementDetail(tree);
@@ -792,6 +798,7 @@ public final class UiTreeBlock extends MasterDetailsBlock implements ICommitXml 
                 return null;
             }
 
+            @Override
             public Object getPageKey(Object object) {
                 return object;  // use node object as key
             }

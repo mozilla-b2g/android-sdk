@@ -15,9 +15,11 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
-import static com.android.ide.common.layout.LayoutConstants.ID_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.NEW_ID_PREFIX;
+import static com.android.SdkConstants.ATTR_ID;
+import static com.android.SdkConstants.ID_PREFIX;
+import static com.android.SdkConstants.NEW_ID_PREFIX;
+import static com.android.SdkConstants.TOOLS_PREFIX;
+import static com.android.SdkConstants.TOOLS_URI;
 
 import com.android.ide.common.layout.BaseLayoutRule;
 import com.android.ide.eclipse.adt.AdtPlugin;
@@ -25,7 +27,8 @@ import com.android.ide.eclipse.adt.AdtUtils;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.layout.refactoring.AdtProjectTest;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
-import com.android.util.Pair;
+import com.android.utils.Pair;
+import com.android.utils.XmlUtils;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.jface.text.IDocument;
@@ -33,115 +36,30 @@ import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.PartInitException;
 import org.eclipse.wst.sse.core.internal.provisional.IndexedRegion;
 import org.eclipse.wst.sse.core.internal.provisional.text.IStructuredDocument;
+import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 
-@SuppressWarnings("restriction") // XML DOM model
+/**
+ *
+ */
+@SuppressWarnings({"restriction", "javadoc", "deprecation"}) // XML DOM model
 public class LayoutMetadataTest extends AdtProjectTest {
+
     public void testMetadata1() throws Exception {
         Pair<IDocument, UiElementNode> pair = getNode("metadata.xml", "listView1");
-        IDocument document = pair.getFirst();
         UiElementNode uiNode = pair.getSecond();
         Node node = uiNode.getXmlNode();
 
-        LayoutMetadata metadata = LayoutMetadata.get();
-        assertNull(metadata.getProperty(document, node, "foo"));
-        String before =
-            "<ListView android:layout_width=\"match_parent\" android:id=\"@+id/listView1\"\n" +
-            "        android:layout_height=\"wrap_content\">\n" +
-            "    </ListView>";
-        assertEquals(before, getText(document, node));
+        assertNull(LayoutMetadata.getProperty(node, "foo"));
 
-        // Set the property
-        metadata.setProperty(document, node,
-                "listitem", "@android:layout/simple_list_item_checked");
-        String after =
-            "<ListView android:layout_width=\"match_parent\" android:id=\"@+id/listView1\"\n" +
-            "        android:layout_height=\"wrap_content\">\n" +
-            "        <!-- Preview: listitem=@android:layout/simple_list_item_checked -->\n" +
-            "    </ListView>";
-        assertEquals(after, getText(document, node));
-
-        // Set a second property
-        metadata.setProperty(document, node,
-                "listheader", "@android:layout/browser_link_context_header");
-        after =
-            "<ListView android:layout_width=\"match_parent\" android:id=\"@+id/listView1\"\n" +
-            "        android:layout_height=\"wrap_content\">\n" +
-            "        <!-- Preview: \n" +
-            "            listheader=@android:layout/browser_link_context_header\n" +
-            "            listitem=@android:layout/simple_list_item_checked\n" +
-            "         -->\n" +
-            "    </ListView>";
-        assertEquals(after, getText(document, node));
-
-        // Set list item to a different layout
-        metadata.setProperty(document, node,
-                "listitem", "@android:layout/simple_list_item_single_choice");
-        after =
-            "<ListView android:layout_width=\"match_parent\" android:id=\"@+id/listView1\"\n" +
-            "        android:layout_height=\"wrap_content\">\n" +
-            "        <!-- Preview: \n" +
-            "            listheader=@android:layout/browser_link_context_header\n" +
-            "            listitem=@android:layout/simple_list_item_single_choice\n" +
-            "         -->\n" +
-            "    </ListView>";
-        assertEquals(after, getText(document, node));
-
-        // Set header to a different layout
-        metadata.setProperty(document, node,
-                "listheader", "@layout/foo");
-        after =
-            "<ListView android:layout_width=\"match_parent\" android:id=\"@+id/listView1\"\n" +
-            "        android:layout_height=\"wrap_content\">\n" +
-            "        <!-- Preview: \n" +
-            "            listheader=@layout/foo\n" +
-            "            listitem=@android:layout/simple_list_item_single_choice\n" +
-            "         -->\n" +
-            "    </ListView>";
-        assertEquals(after, getText(document, node));
-
-        // Clear out list item
-        metadata.setProperty(document, node,
-                "listitem", null);
-        after =
-            "<ListView android:layout_width=\"match_parent\" android:id=\"@+id/listView1\"\n" +
-            "        android:layout_height=\"wrap_content\">\n" +
-            "        <!-- Preview: listheader=@layout/foo -->\n" +
-            "    </ListView>";
-        assertEquals(after, getText(document, node));
-
-        // Clear out list header
-        metadata.setProperty(document, node,
-                "listheader", null);
-        after =
-            "<ListView android:layout_width=\"match_parent\" android:id=\"@+id/listView1\"\n" +
-            "        android:layout_height=\"wrap_content\"></ListView>";
-        assertEquals(after, getText(document, node));
-
-        // Check node expansion on the button which doesn't have an end tag:
-        before = "<Button android:text=\"Button\" android:id=\"@+id/button1\"/>";
-    }
-
-    public void testMetadata2() throws Exception {
-        Pair<IDocument, UiElementNode> pair = getNode("metadata.xml", "button1");
-        IDocument document = pair.getFirst();
-        UiElementNode uiNode = pair.getSecond();
-        Node node = uiNode.getXmlNode();
-
-        LayoutMetadata metadata = LayoutMetadata.get();
-        assertNull(metadata.getProperty(document, node, "foo"));
-        String before =
-            "<Button android:text=\"Button\" android:id=\"@+id/button1\"/>";
-        assertEquals(before, getText(document, node));
-
-        // Set the property
-        metadata.setProperty(document, node,
-                "listitem", "@android:layout/simple_list_item_checked");
-        String after =
-            "<Button android:text=\"Button\" android:id=\"@+id/button1\">\n" +
-            "        <!-- Preview: listitem=@android:layout/simple_list_item_checked -->\n" +
-            "    </Button>";
-        assertEquals(after, getText(document, node));
+        Element element = (Element) node;
+        String prefix = XmlUtils.lookupNamespacePrefix(element, TOOLS_URI, null, false);
+        if (prefix == null) {
+            // Add in new prefix...
+            prefix = XmlUtils.lookupNamespacePrefix(element,
+                    TOOLS_URI, TOOLS_PREFIX, true);
+        }
+        element.setAttribute(prefix + ':' + "foo", "bar");
     }
 
     // ==== Test utilities ====

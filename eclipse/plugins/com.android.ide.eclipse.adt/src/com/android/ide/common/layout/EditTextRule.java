@@ -16,8 +16,12 @@
 
 package com.android.ide.common.layout;
 
-import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.REQUEST_FOCUS;
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ATTR_EMS;
+import static com.android.SdkConstants.REQUEST_FOCUS;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.api.IMenuCallback;
 import com.android.ide.common.api.INode;
 import com.android.ide.common.api.INodeHandler;
@@ -33,7 +37,8 @@ import java.util.List;
 public class EditTextRule extends BaseViewRule {
 
     @Override
-    public void onCreate(INode node, INode parent, InsertType insertType) {
+    public void onCreate(@NonNull INode node, @NonNull INode parent,
+            @NonNull InsertType insertType) {
         super.onCreate(node, parent, insertType);
 
         if (parent != null) {
@@ -41,6 +46,10 @@ public class EditTextRule extends BaseViewRule {
             if (focus == null) {
                 // Add <requestFocus>
                 node.appendChild(REQUEST_FOCUS);
+            }
+
+            if (parent.getBounds().w >= 320) {
+                node.setAttribute(ANDROID_URI, ATTR_EMS, "10"); //$NON-NLS-1$
             }
         }
     }
@@ -51,17 +60,23 @@ public class EditTextRule extends BaseViewRule {
      * Adds a "Request Focus" menu item.
      */
     @Override
-    public void addContextMenuActions(List<RuleAction> actions, final INode selectedNode) {
+    public void addContextMenuActions(@NonNull List<RuleAction> actions,
+            final @NonNull INode selectedNode) {
         super.addContextMenuActions(actions, selectedNode);
 
         final boolean hasFocus = hasFocus(selectedNode);
         final String label = hasFocus ? "Clear Focus" : "Request Focus";
 
         IMenuCallback onChange = new IMenuCallback() {
-            public void action(RuleAction menuAction, List<? extends INode> selectedNodes,
-                    String valueId, Boolean newValue) {
+            @Override
+            public void action(
+                    @NonNull RuleAction menuAction,
+                    @NonNull List<? extends INode> selectedNodes,
+                    @Nullable String valueId,
+                    @Nullable Boolean newValue) {
                 selectedNode.editXml(label, new INodeHandler() {
-                    public void handle(INode node) {
+                    @Override
+                    public void handle(@NonNull INode node) {
                         INode focus = findFocus(findRoot(node));
                         if (focus != null && focus.getParent() != null) {
                             focus.getParent().removeChild(focus);

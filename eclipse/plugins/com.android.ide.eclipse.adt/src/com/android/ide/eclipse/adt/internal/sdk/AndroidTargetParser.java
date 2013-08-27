@@ -16,6 +16,7 @@
 
 package com.android.ide.eclipse.adt.internal.sdk;
 
+import com.android.SdkConstants;
 import com.android.ide.common.rendering.LayoutLibrary;
 import com.android.ide.common.resources.ResourceRepository;
 import com.android.ide.common.resources.platform.AttrsXmlParser;
@@ -29,10 +30,9 @@ import com.android.ide.eclipse.adt.internal.editors.drawable.DrawableDescriptors
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.manifest.descriptors.AndroidManifestDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.menu.descriptors.MenuDescriptors;
-import com.android.ide.eclipse.adt.internal.editors.xml.descriptors.XmlDescriptors;
+import com.android.ide.eclipse.adt.internal.editors.otherxml.descriptors.OtherXmlDescriptors;
 import com.android.ide.eclipse.adt.internal.resources.manager.ResourceManager;
 import com.android.sdklib.IAndroidTarget;
-import com.android.sdklib.SdkConstants;
 
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
@@ -129,15 +129,17 @@ public final class AndroidTargetParser {
             progress.subTask("Attributes definitions");
             AttrsXmlParser attrsXmlParser = new AttrsXmlParser(
                     mAndroidTarget.getPath(IAndroidTarget.ATTRIBUTES),
-                    AdtPlugin.getDefault());
+                    AdtPlugin.getDefault(),
+                    1000);
             attrsXmlParser.preload();
+
             progress.worked(1);
 
             progress.subTask("Manifest definitions");
             AttrsXmlParser attrsManifestXmlParser = new AttrsXmlParser(
                     mAndroidTarget.getPath(IAndroidTarget.MANIFEST_ATTRIBUTES),
                     attrsXmlParser,
-                    AdtPlugin.getDefault());
+                    AdtPlugin.getDefault(), 1100);
             attrsManifestXmlParser.preload();
             progress.worked(1);
 
@@ -215,8 +217,8 @@ public final class AndroidTargetParser {
                 return Status.CANCEL_STATUS;
             }
 
-            XmlDescriptors xmlDescriptors = new XmlDescriptors();
-            xmlDescriptors.updateDescriptors(
+            OtherXmlDescriptors otherXmlDescriptors = new OtherXmlDescriptors();
+            otherXmlDescriptors.updateDescriptors(
                     xmlSearchableMap,
                     xmlAppWidgetMap,
                     preferencesInfo,
@@ -274,7 +276,7 @@ public final class AndroidTargetParser {
                     manifestDescriptors,
                     layoutDescriptors,
                     menuDescriptors,
-                    xmlDescriptors,
+                    otherXmlDescriptors,
                     drawableDescriptors,
                     animatorDescriptors,
                     animDescriptors,
@@ -289,6 +291,8 @@ public final class AndroidTargetParser {
                     mAndroidTarget.getOptionalLibraries(),
                     frameworkResources,
                     layoutBridge);
+
+            targetData.setAttributeMap(attrsXmlParser.getAttributeMap());
 
             Sdk.getCurrent().setTargetData(mAndroidTarget, targetData);
 

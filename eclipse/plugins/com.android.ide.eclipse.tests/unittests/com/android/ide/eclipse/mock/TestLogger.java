@@ -16,7 +16,8 @@
 
 package com.android.ide.eclipse.mock;
 
-import com.android.ide.common.log.ILogger;
+
+import com.android.utils.ILogger;
 
 import junit.framework.Assert;
 
@@ -26,6 +27,7 @@ import junit.framework.Assert;
  */
 public class TestLogger implements ILogger {
 
+    @Override
     public void error(Throwable t, String errorFormat, Object... args) {
         String message = String.format(errorFormat, args);
         if (t != null) {
@@ -34,10 +36,17 @@ public class TestLogger implements ILogger {
         Assert.fail(message);
     }
 
-    public void printf(String msgFormat, Object... args) {
+    @Override
+    public void info(String msgFormat, Object... args) {
         System.out.println(String.format(msgFormat, args));
     }
 
+    @Override
+    public void verbose(String msgFormat, Object... args) {
+        info(msgFormat, args);
+    }
+
+    @Override
     public void warning(String warningFormat, Object... args) {
         System.err.println(String.format(warningFormat, args));
     }

@@ -17,49 +17,10 @@ package com.android.ide.eclipse.adt;
 
 import junit.framework.TestCase;
 
+import java.util.Locale;
+
 @SuppressWarnings("javadoc")
 public class AdtUtilsTest extends TestCase {
-    public void testEndsWithIgnoreCase() {
-        assertTrue(AdtUtils.endsWithIgnoreCase("foo", "foo"));
-        assertTrue(AdtUtils.endsWithIgnoreCase("foo", "Foo"));
-        assertTrue(AdtUtils.endsWithIgnoreCase("foo", "foo"));
-        assertTrue(AdtUtils.endsWithIgnoreCase("Barfoo", "foo"));
-        assertTrue(AdtUtils.endsWithIgnoreCase("BarFoo", "foo"));
-        assertTrue(AdtUtils.endsWithIgnoreCase("BarFoo", "foO"));
-
-        assertFalse(AdtUtils.endsWithIgnoreCase("foob", "foo"));
-        assertFalse(AdtUtils.endsWithIgnoreCase("foo", "fo"));
-    }
-
-    public void testEndsWith() {
-        assertTrue(AdtUtils.endsWith("foo", "foo"));
-        assertTrue(AdtUtils.endsWith("foobar", "obar"));
-        assertTrue(AdtUtils.endsWith("foobar", "bar"));
-        assertTrue(AdtUtils.endsWith("foobar", "ar"));
-        assertTrue(AdtUtils.endsWith("foobar", "r"));
-        assertTrue(AdtUtils.endsWith("foobar", ""));
-
-        assertTrue(AdtUtils.endsWith(new StringBuilder("foobar"), "bar"));
-        assertTrue(AdtUtils.endsWith(new StringBuilder("foobar"), new StringBuffer("obar")));
-        assertTrue(AdtUtils.endsWith("foobar", new StringBuffer("obar")));
-
-        assertFalse(AdtUtils.endsWith("foo", "fo"));
-        assertFalse(AdtUtils.endsWith("foobar", "Bar"));
-        assertFalse(AdtUtils.endsWith("foobar", "longfoobar"));
-    }
-
-    public void testEndsWith2() {
-        assertTrue(AdtUtils.endsWith("foo", "foo".length(), "foo"));
-        assertTrue(AdtUtils.endsWith("foo", "fo".length(), "fo"));
-        assertTrue(AdtUtils.endsWith("foo", "f".length(), "f"));
-    }
-
-    public void testStripWhitespace() {
-        assertEquals("foo", AdtUtils.stripWhitespace("foo"));
-        assertEquals("foobar", AdtUtils.stripWhitespace("foo bar"));
-        assertEquals("foobar", AdtUtils.stripWhitespace("  foo bar  \n\t"));
-    }
-
     public void testExtractClassName() {
         assertEquals("Foo", AdtUtils.extractClassName("foo"));
         assertEquals("Foobar", AdtUtils.extractClassName("foo bar"));
@@ -93,15 +54,74 @@ public class AdtUtilsTest extends TestCase {
         assertNull(null, AdtUtils.capitalize(null));
     }
 
-    public void testEditDistance() {
-        // editing kitten to sitting has edit distance 3:
-        //   replace k with s
-        //   replace e with i
-        //   append g
-        assertEquals(3, AdtUtils.editDistance("kitten", "sitting"));
+    public void testCamelCaseToUnderlines() {
+        assertEquals("", AdtUtils.camelCaseToUnderlines(""));
+        assertEquals("foo", AdtUtils.camelCaseToUnderlines("foo"));
+        assertEquals("foo", AdtUtils.camelCaseToUnderlines("Foo"));
+        assertEquals("foo_bar", AdtUtils.camelCaseToUnderlines("FooBar"));
+        assertEquals("test_xml", AdtUtils.camelCaseToUnderlines("testXML"));
+        assertEquals("test_foo", AdtUtils.camelCaseToUnderlines("testFoo"));
+    }
 
-        assertEquals(3, AdtUtils.editDistance("saturday", "sunday"));
-        assertEquals(1, AdtUtils.editDistance("button", "bitton"));
-        assertEquals(6, AdtUtils.editDistance("radiobutton", "bitton"));
+    public void testUnderlinesToCamelCase() {
+        assertEquals("", AdtUtils.underlinesToCamelCase(""));
+        assertEquals("", AdtUtils.underlinesToCamelCase("_"));
+        assertEquals("Foo", AdtUtils.underlinesToCamelCase("foo"));
+        assertEquals("FooBar", AdtUtils.underlinesToCamelCase("foo_bar"));
+        assertEquals("FooBar", AdtUtils.underlinesToCamelCase("foo__bar"));
+        assertEquals("Foo", AdtUtils.underlinesToCamelCase("foo_"));
+    }
+
+    public void testStripSuffix() {
+        assertEquals("Foo", AdtUtils.stripSuffix("Foo", ""));
+        assertEquals("Fo", AdtUtils.stripSuffix("Foo", "o"));
+        assertEquals("F", AdtUtils.stripSuffix("Fo", "o"));
+        assertEquals("", AdtUtils.stripSuffix("Foo", "Foo"));
+        assertEquals("LinearLayout_Layout",
+                AdtUtils.stripSuffix("LinearLayout_LayoutParams", "Params"));
+        assertEquals("Foo", AdtUtils.stripSuffix("Foo", "Bar"));
+    }
+
+    public void testFormatFloatValue() throws Exception {
+        assertEquals("1", AdtUtils.formatFloatAttribute(1.0f));
+        assertEquals("2", AdtUtils.formatFloatAttribute(2.0f));
+        assertEquals("1.50", AdtUtils.formatFloatAttribute(1.5f));
+        assertEquals("1.50", AdtUtils.formatFloatAttribute(1.50f));
+        assertEquals("1.51", AdtUtils.formatFloatAttribute(1.51f));
+        assertEquals("1.51", AdtUtils.formatFloatAttribute(1.514542f));
+        assertEquals("1.52", AdtUtils.formatFloatAttribute(1.516542f));
+        assertEquals("-1.51", AdtUtils.formatFloatAttribute(-1.51f));
+        assertEquals("-1", AdtUtils.formatFloatAttribute(-1f));
+    }
+
+    public void testFormatFloatValueLocale() throws Exception {
+        // Ensure that the layout float values aren't affected by
+        // locale settings, like using commas instead of of periods
+        Locale originalDefaultLocale = Locale.getDefault();
+
+        try {
+            Locale.setDefault(Locale.FRENCH);
+
+            // Ensure that this is a locale which uses a comma instead of a period:
+            assertEquals("5,24", String.format("%.2f", 5.236f));
+
+            // Ensure that the formatFloatAttribute is immune
+            assertEquals("1.50", AdtUtils.formatFloatAttribute(1.5f));
+        } finally {
+            Locale.setDefault(originalDefaultLocale);
+        }
+    }
+
+    public void testEscapeUnicodeChars() throws Exception {
+        assertEquals("", AdtUtils.replaceUnicodeEscapes(""));
+        assertEquals("foo bar", AdtUtils.replaceUnicodeEscapes("foo bar"));
+        assertEquals("\u25C0", AdtUtils.replaceUnicodeEscapes("\\u25C0"));
+        assertEquals("!\u25C0\u25C1!", AdtUtils.replaceUnicodeEscapes("!\\u25C0\\u25C1!"));
+        assertEquals("\u1234\\", AdtUtils.replaceUnicodeEscapes("\\u1234\\"));
+
+        assertEquals("\\U25C0", AdtUtils.replaceUnicodeEscapes("\\U25C0")); // no unicode expand
+        assertEquals("\\u25C", AdtUtils.replaceUnicodeEscapes("\\u25C")); // no unicode expand
+        assertEquals("\\\\u25C0", AdtUtils.replaceUnicodeEscapes("\\\\u25C0")); // escaped
+        assertEquals("\\u123\\", AdtUtils.replaceUnicodeEscapes("\\u123\\")); // broken
     }
 }

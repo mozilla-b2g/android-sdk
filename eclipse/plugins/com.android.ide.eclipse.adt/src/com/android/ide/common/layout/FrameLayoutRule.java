@@ -16,11 +16,13 @@
 
 package com.android.ide.common.layout;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_GRAVITY;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_HEIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_WIDTH;
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ATTR_LAYOUT_GRAVITY;
+import static com.android.SdkConstants.ATTR_LAYOUT_HEIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_WIDTH;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.api.DrawingStyle;
 import com.android.ide.common.api.DropFeedback;
 import com.android.ide.common.api.IDragElement;
@@ -35,7 +37,7 @@ import com.android.ide.common.api.InsertType;
 import com.android.ide.common.api.Point;
 import com.android.ide.common.api.Rect;
 import com.android.ide.common.api.RuleAction;
-import com.android.util.Pair;
+import com.android.utils.Pair;
 
 import java.util.List;
 import java.util.Map;
@@ -50,14 +52,16 @@ public class FrameLayoutRule extends BaseLayoutRule {
     // The FrameLayout accepts any drag'n'drop anywhere on its surface.
 
     @Override
-    public DropFeedback onDropEnter(INode targetNode, Object targetView,
-            final IDragElement[] elements) {
+    public DropFeedback onDropEnter(@NonNull INode targetNode, @Nullable Object targetView,
+            final @Nullable IDragElement[] elements) {
         if (elements.length == 0) {
             return null;
         }
 
         return new DropFeedback(null, new IFeedbackPainter() {
-            public void paint(IGraphics gc, INode node, DropFeedback feedback) {
+            @Override
+            public void paint(@NonNull IGraphics gc, @NonNull INode node,
+                    @NonNull DropFeedback feedback) {
                 drawFeedback(gc, node, elements, feedback);
             }
         });
@@ -112,21 +116,22 @@ public class FrameLayoutRule extends BaseLayoutRule {
     }
 
     @Override
-    public DropFeedback onDropMove(INode targetNode, IDragElement[] elements,
-            DropFeedback feedback, Point p) {
+    public DropFeedback onDropMove(@NonNull INode targetNode, @NonNull IDragElement[] elements,
+            @Nullable DropFeedback feedback, @NonNull Point p) {
         feedback.userData = p;
         feedback.requestPaint = true;
         return feedback;
     }
 
     @Override
-    public void onDropLeave(INode targetNode, IDragElement[] elements, DropFeedback feedback) {
+    public void onDropLeave(@NonNull INode targetNode, @NonNull IDragElement[] elements,
+            @Nullable DropFeedback feedback) {
         // ignore
     }
 
     @Override
-    public void onDropped(final INode targetNode, final IDragElement[] elements,
-            final DropFeedback feedback, final Point p) {
+    public void onDropped(final @NonNull INode targetNode, final @NonNull IDragElement[] elements,
+            final @Nullable DropFeedback feedback, final @NonNull Point p) {
         Rect b = targetNode.getBounds();
         if (!b.isValid()) {
             return;
@@ -139,7 +144,8 @@ public class FrameLayoutRule extends BaseLayoutRule {
 
         targetNode.editXml("Add elements to FrameLayout", new INodeHandler() {
 
-            public void handle(INode node) {
+            @Override
+            public void handle(@NonNull INode node) {
 
                 // Now write the new elements.
                 for (IDragElement element : elements) {
@@ -157,8 +163,10 @@ public class FrameLayoutRule extends BaseLayoutRule {
     }
 
     @Override
-    public void addLayoutActions(List<RuleAction> actions, final INode parentNode,
-            final List<? extends INode> children) {
+    public void addLayoutActions(
+            @NonNull List<RuleAction> actions,
+            final @NonNull INode parentNode,
+            final @NonNull List<? extends INode> children) {
         super.addLayoutActions(actions, parentNode, children);
         actions.add(RuleAction.createSeparator(25));
         actions.add(createMarginAction(parentNode, children));
@@ -168,7 +176,8 @@ public class FrameLayoutRule extends BaseLayoutRule {
     }
 
     @Override
-    public void onChildInserted(INode node, INode parent, InsertType insertType) {
+    public void onChildInserted(@NonNull INode node, @NonNull INode parent,
+            @NonNull InsertType insertType) {
         // Look at the fill preferences and fill embedded layouts etc
         String fqcn = node.getFqcn();
         IViewMetadata metadata = mRulesEngine.getMetadata(fqcn);

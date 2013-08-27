@@ -16,18 +16,12 @@
 
 package com.android.ide.eclipse.adt.internal.refactorings.extractstring;
 
+import com.android.SdkConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
-import com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors;
 
-import org.eclipse.core.filebuffers.FileBuffers;
-import org.eclipse.core.filebuffers.ITextFileBuffer;
-import org.eclipse.core.filebuffers.ITextFileBufferManager;
-import org.eclipse.core.filebuffers.LocationKind;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
-import org.eclipse.core.runtime.NullProgressMonitor;
-import org.eclipse.jface.text.IDocument;
 import org.eclipse.wst.sse.core.StructuredModelManager;
 import org.eclipse.wst.sse.core.internal.provisional.IModelManager;
 import org.eclipse.wst.sse.core.internal.provisional.IStructuredModel;
@@ -124,15 +118,15 @@ class XmlStringFileHelper {
                     //    <string name="ID">something</string>
                     // </resources>
 
-                    Node root = findChild(doc, null, ResourcesDescriptors.ROOT_ELEMENT);
+                    Node root = findChild(doc, null, SdkConstants.TAG_RESOURCES);
                     if (root != null) {
                         for (Node strNode = findChild(root, null,
-                                                      ResourcesDescriptors.STRING_ELEMENT);
+                                                      SdkConstants.TAG_STRING);
                              strNode != null;
                              strNode = findChild(null, strNode,
-                                                 ResourcesDescriptors.STRING_ELEMENT)) {
+                                                 SdkConstants.TAG_STRING)) {
                             NamedNodeMap attrs = strNode.getAttributes();
-                            Node nameAttr = attrs.getNamedItem(ResourcesDescriptors.NAME_ATTR);
+                            Node nameAttr = attrs.getNamedItem(SdkConstants.ATTR_NAME);
                             if (nameAttr != null) {
                                 String id = nameAttr.getNodeValue();
 

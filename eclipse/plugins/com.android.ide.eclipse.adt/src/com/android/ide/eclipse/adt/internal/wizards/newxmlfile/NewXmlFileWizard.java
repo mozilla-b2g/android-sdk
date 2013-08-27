@@ -14,26 +14,29 @@
  * limitations under the License.
  */
 
-
-
 package com.android.ide.eclipse.adt.internal.wizards.newxmlfile;
 
+import static com.android.SdkConstants.FQCN_GRID_LAYOUT;
+import static com.android.SdkConstants.GRID_LAYOUT;
+
+import com.android.SdkConstants;
 import com.android.ide.common.resources.configuration.FolderConfiguration;
-import com.android.ide.eclipse.adt.AdtConstants;
+import com.android.ide.common.xml.XmlFormatStyle;
 import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.ide.eclipse.adt.AdtUtils;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.IconFactory;
-import com.android.ide.eclipse.adt.internal.editors.formatting.XmlFormatPreferences;
-import com.android.ide.eclipse.adt.internal.editors.formatting.XmlFormatStyle;
-import com.android.ide.eclipse.adt.internal.editors.formatting.XmlPrettyPrinter;
+import com.android.ide.eclipse.adt.internal.editors.formatting.EclipseXmlFormatPreferences;
+import com.android.ide.eclipse.adt.internal.editors.formatting.EclipseXmlPrettyPrinter;
+import com.android.ide.eclipse.adt.internal.editors.layout.gle2.RenderPreviewManager;
+import com.android.ide.eclipse.adt.internal.editors.manifest.ManifestInfo;
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
+import com.android.ide.eclipse.adt.internal.project.SupportLibraryHelper;
 import com.android.ide.eclipse.adt.internal.wizards.newxmlfile.NewXmlFileCreationPage.TypeInfo;
 import com.android.resources.ResourceFolderType;
-import com.android.util.Pair;
+import com.android.utils.Pair;
 
-import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
-import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.runtime.CoreException;
@@ -73,6 +76,7 @@ public class NewXmlFileWizard extends Wizard implements INewWizard {
     private ChooseConfigurationPage mConfigPage;
     private Values mValues;
 
+    @Override
     public void init(IWorkbench workbench, IStructuredSelection selection) {
         setHelpAvailable(false); // TODO have help
         setWindowTitle("New Android XML File");
@@ -85,6 +89,10 @@ public class NewXmlFileWizard extends Wizard implements INewWizard {
         mMainPage.setInitialSelection(selection);
 
         mConfigPage = new ChooseConfigurationPage(mValues);
+
+        // Trigger a check to see if the SDK needs to be reloaded (which will
+        // invoke onSdkLoaded asynchronously as needed).
+        AdtPlugin.getDefault().refreshSdk();
     }
 
     /**
@@ -132,6 +140,7 @@ public class NewXmlFileWizard extends Wizard implements INewWizard {
             // Open the file
             // This has to be delayed in order for focus handling to work correctly
             AdtPlugin.getDisplay().asyncExec(new Runnable() {
+                @Override
                 public void run() {
                     IFile file = created.getFirst();
                     IRegion region = created.getSecond();
@@ -194,10 +203,21 @@ public class NewXmlFileWizard extends Wizard implements INewWizard {
             }
             need_delete = true;
         } else {
-            createWsParentDirectory(file.getParent());
+            AdtUtils.createWsParentDirectory(file.getParent());
         }
 
         StringBuilder sb = new StringBuilder(XML_HEADER_LINE);
+
+        if (folderType == ResourceFolderType.LAYOUT && root.equals(GRID_LAYOUT)) {
+            IProject project = file.getParent().getProject();
+            int minSdk = ManifestInfo.get(project).getMinSdkVersion();
+            if (minSdk < 14) {
+                root = SupportLibraryHelper.getTagFor(project, FQCN_GRID_LAYOUT);
+                if (root.equals(FQCN_GRID_LAYOUT)) {
+                    root = GRID_LAYOUT;
+                }
+            }
+        }
 
         sb.append('<').append(root);
         if (xmlns != null) {
@@ -230,14 +250,14 @@ public class NewXmlFileWizard extends Wizard implements INewWizard {
 
         sb.append("</").append(root).append(">\n");  //$NON-NLS-1$ //$NON-NLS-2$
 
-        XmlFormatPreferences formatPrefs = XmlFormatPreferences.create();
+        EclipseXmlFormatPreferences formatPrefs = EclipseXmlFormatPreferences.create();
         String fileContents;
         if (!autoFormat) {
             fileContents = sb.toString();
         } else {
-            XmlFormatStyle style = XmlFormatStyle.getForFolderType(folderType);
-            fileContents = XmlPrettyPrinter.prettyPrint(sb.toString(), formatPrefs,
-                                style, null /*lineSeparator*/);
+            XmlFormatStyle style = EclipseXmlPrettyPrinter.getForFolderType(folderType);
+            fileContents = EclipseXmlPrettyPrinter.prettyPrint(sb.toString(), formatPrefs,
+                    style, null /*lineSeparator*/);
         }
 
         // Remove marker tokens and replace them with whitespace
@@ -256,6 +276,15 @@ public class NewXmlFileWizard extends Wizard implements INewWizard {
             }
             file.create(stream, true /*force*/, null /*progress*/);
             IRegion region = caretOffset != -1 ? new Region(caretOffset, 0) : null;
+
+            // If you introduced a new locale, or new screen variations etc, ensure that
+            // the list of render previews is updated if necessary
+            if (file.getParent().getName().indexOf('-') != -1
+                    && (folderType == ResourceFolderType.LAYOUT
+                        || folderType == ResourceFolderType.VALUES)) {
+                RenderPreviewManager.bumpRevision();
+            }
+
             return Pair.of(file, region);
         } catch (UnsupportedEncodingException e) {
             error = e.getMessage();
@@ -299,32 +328,6 @@ public class NewXmlFileWizard extends Wizard implements INewWizard {
         }
         String attrs = type.getDefaultAttrs(project, root);
         return createXmlFile(file, xmlns, root, attrs, null, folderType);
-    }
-
-    /**
-     * Creates all the directories required for the given path.
-     *
-     * @param wsPath the path to create all the parent directories for
-     * @return true if all the parent directories were created
-     */
-    public static boolean createWsParentDirectory(IContainer wsPath) {
-        if (wsPath.getType() == IResource.FOLDER) {
-            if (wsPath.exists()) {
-                return true;
-            }
-
-            IFolder folder = (IFolder) wsPath;
-            try {
-                if (createWsParentDirectory(wsPath.getParent())) {
-                    folder.create(true /* force */, true /* local */, null /* monitor */);
-                    return true;
-                }
-            } catch (CoreException e) {
-                e.printStackTrace();
-            }
-        }
-
-        return false;
     }
 
     /**
@@ -396,7 +399,7 @@ public class NewXmlFileWizard extends Wizard implements INewWizard {
             } else {
                 fileName = name.trim();
                 if (fileName.length() > 0 && fileName.indexOf('.') == -1) {
-                    fileName = fileName + AdtConstants.DOT_XML;
+                    fileName = fileName + SdkConstants.DOT_XML;
                 }
             }
 

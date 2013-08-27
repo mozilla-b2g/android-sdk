@@ -17,6 +17,7 @@
 package com.android.ide.eclipse.adt.internal.preferences;
 
 import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.ide.eclipse.adt.AdtPlugin.CheckSdkErrorHandler;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk.ITargetChangeListener;
 import com.android.sdklib.IAndroidTarget;
@@ -80,6 +81,7 @@ public class AndroidPreferencePage extends FieldEditorPreferencePage implements
      *
      * @see org.eclipse.ui.IWorkbenchPreferencePage#init(org.eclipse.ui.IWorkbench)
      */
+    @Override
     public void init(IWorkbench workbench) {
     }
 
@@ -139,13 +141,17 @@ public class AndroidPreferencePage extends FieldEditorPreferencePage implements
             boolean ok = AdtPlugin.getDefault().checkSdkLocationAndId(fileName,
                     new AdtPlugin.CheckSdkErrorHandler() {
                 @Override
-                public boolean handleError(String message) {
+                public boolean handleError(
+                        CheckSdkErrorHandler.Solution solution,
+                        String message) {
                     setErrorMessage(message.replaceAll("\n", " ")); //$NON-NLS-1$ //$NON-NLS-2$
                     return false;  // Apply/OK must be disabled
                 }
 
                 @Override
-                public boolean handleWarning(String message) {
+                public boolean handleWarning(
+                        CheckSdkErrorHandler.Solution solution,
+                        String message) {
                     showMessage(message.replaceAll("\n", " ")); //$NON-NLS-1$ //$NON-NLS-2$
                     return true;  // Apply/OK must be enabled
                 }
@@ -201,6 +207,10 @@ public class AndroidPreferencePage extends FieldEditorPreferencePage implements
                 if (mTargetChangeListener == null) {
                     mTargetChangeListener = new TargetChangedListener();
                     AdtPlugin.getDefault().addTargetListener(mTargetChangeListener);
+
+                    // Trigger a check to see if the SDK needs to be reloaded (which will
+                    // invoke onSdkLoaded asynchronously as needed).
+                    AdtPlugin.getDefault().refreshSdk();
                 }
             } catch (Exception e) {
                 // We need to catch *any* exception that arises here, otherwise it disables
@@ -220,6 +230,7 @@ public class AndroidPreferencePage extends FieldEditorPreferencePage implements
         }
 
         private class TargetChangedListener implements ITargetChangeListener {
+            @Override
             public void onSdkLoaded() {
                 if (mTargetSelector != null) {
                     // We may not have an sdk if the sdk path pref is empty or not valid.
@@ -230,10 +241,12 @@ public class AndroidPreferencePage extends FieldEditorPreferencePage implements
                 }
             }
 
+            @Override
             public void onProjectTargetChange(IProject changedProject) {
                 // do nothing.
             }
 
+            @Override
             public void onTargetLoaded(IAndroidTarget target) {
                 // do nothing.
             }

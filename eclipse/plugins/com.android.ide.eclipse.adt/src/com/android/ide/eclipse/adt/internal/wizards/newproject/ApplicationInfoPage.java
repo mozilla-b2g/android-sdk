@@ -15,13 +15,13 @@
  */
 package com.android.ide.eclipse.adt.internal.wizards.newproject;
 
+import com.android.SdkConstants;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk.ITargetChangeListener;
 import com.android.ide.eclipse.adt.internal.wizards.newproject.NewProjectWizardState.Mode;
 import com.android.sdklib.IAndroidTarget;
-import com.android.sdklib.SdkConstants;
 
 import org.eclipse.core.filesystem.URIUtil;
 import org.eclipse.core.resources.IProject;
@@ -52,7 +52,7 @@ import java.io.FileFilter;
 import java.net.URI;
 
 /** Page where you choose the application name, activity name, and optional test project info */
-class ApplicationInfoPage extends WizardPage implements SelectionListener, ModifyListener,
+public class ApplicationInfoPage extends WizardPage implements SelectionListener, ModifyListener,
         ITargetChangeListener {
     private static final String JDK_15 = "1.5"; //$NON-NLS-1$
     private final static String DUMMY_PACKAGE = "your.package.namespace";
@@ -92,6 +92,7 @@ class ApplicationInfoPage extends WizardPage implements SelectionListener, Modif
     /**
      * Create contents of the wizard.
      */
+    @Override
     @SuppressWarnings("unused") // Eclipse marks SWT constructors with side effects as unused
     public void createControl(Composite parent) {
         Composite container = new Composite(parent, SWT.NULL);
@@ -293,6 +294,7 @@ class ApplicationInfoPage extends WizardPage implements SelectionListener, Modif
         return super.isPageComplete();
     }
 
+    @Override
     public void modifyText(ModifyEvent e) {
         if (mIgnore) {
             return;
@@ -366,6 +368,7 @@ class ApplicationInfoPage extends WizardPage implements SelectionListener, Modif
         validatePage();
     }
 
+    @Override
     public void widgetSelected(SelectionEvent e) {
         if (mIgnore) {
             return;
@@ -430,6 +433,7 @@ class ApplicationInfoPage extends WizardPage implements SelectionListener, Modif
         validatePage();
     }
 
+    @Override
     public void widgetDefaultSelected(SelectionEvent e) {
     }
 
@@ -564,10 +568,11 @@ class ApplicationInfoPage extends WizardPage implements SelectionListener, Modif
         } else if (osTarget.indexOf('.') == 0) {
             osTarget = mValues.packageName + osTarget;
         }
-        osTarget = osTarget.replace('.', File.separatorChar) + AdtConstants.DOT_JAVA;
+        osTarget = osTarget.replace('.', File.separatorChar) + SdkConstants.DOT_JAVA;
 
         File projectDir = mValues.projectLocation;
         File[] allDirs = projectDir.listFiles(new FileFilter() {
+            @Override
             public boolean accept(File pathname) {
                 return pathname.isDirectory();
             }
@@ -632,7 +637,7 @@ class ApplicationInfoPage extends WizardPage implements SelectionListener, Modif
         return null;
     }
 
-    private IStatus validatePackage(String packageFieldContents) {
+    public static IStatus validatePackage(String packageFieldContents) {
         // Validate package
         if (packageFieldContents == null || packageFieldContents.length() == 0) {
             return new Status(IStatus.ERROR, AdtPlugin.PLUGIN_ID,
@@ -666,14 +671,35 @@ class ApplicationInfoPage extends WizardPage implements SelectionListener, Modif
         return null;
     }
 
+    public static IStatus validateClass(String className) {
+        if (className == null || className.length() == 0) {
+            return new Status(IStatus.ERROR, AdtPlugin.PLUGIN_ID,
+                    "Class name must be specified.");
+        }
+        if (className.indexOf('.') != -1) {
+            return new Status(IStatus.ERROR, AdtPlugin.PLUGIN_ID,
+                    "Enter just a class name, not a full package name");
+        }
+        return JavaConventions.validateJavaTypeName(className, JDK_15, JDK_15);
+    }
+
     private IStatus validateActivity() {
         // Validate activity (if creating an activity)
         if (!mValues.createActivity) {
             return null;
         }
 
+        return validateActivity(mValues.activityName);
+    }
+
+    /**
+     * Validates the given activity name
+     *
+     * @param activityFieldContents the activity name to validate
+     * @return a status for whether the activity name is valid
+     */
+    public static IStatus validateActivity(String activityFieldContents) {
         // Validate activity field
-        String activityFieldContents = mValues.activityName;
         if (activityFieldContents == null || activityFieldContents.length() == 0) {
             return new Status(IStatus.ERROR, AdtPlugin.PLUGIN_ID,
                     "Activity name must be specified.");
@@ -725,6 +751,7 @@ class ApplicationInfoPage extends WizardPage implements SelectionListener, Modif
 
     // ---- Implement ITargetChangeListener ----
 
+    @Override
     public void onSdkLoaded() {
         if (mSdkCombo == null) {
             return;
@@ -740,10 +767,12 @@ class ApplicationInfoPage extends WizardPage implements SelectionListener, Modif
         setSdkTargets(targets, mValues.target);
     }
 
+    @Override
     public void onProjectTargetChange(IProject changedProject) {
         // Ignore
     }
 
+    @Override
     public void onTargetLoaded(IAndroidTarget target) {
         // Ignore
     }

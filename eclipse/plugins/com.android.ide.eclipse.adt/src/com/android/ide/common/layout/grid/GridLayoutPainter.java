@@ -19,6 +19,7 @@ import static com.android.ide.common.layout.GridLayoutRule.GRID_SIZE;
 import static com.android.ide.common.layout.GridLayoutRule.MARGIN_SIZE;
 import static com.android.ide.common.layout.grid.GridModel.UNDEFINED;
 
+import com.android.annotations.NonNull;
 import com.android.ide.common.api.DrawingStyle;
 import com.android.ide.common.api.DropFeedback;
 import com.android.ide.common.api.IDragElement;
@@ -28,7 +29,7 @@ import com.android.ide.common.api.INode;
 import com.android.ide.common.api.Rect;
 import com.android.ide.common.api.SegmentType;
 import com.android.ide.common.layout.GridLayoutRule;
-import com.android.util.Pair;
+import com.android.utils.Pair;
 
 /**
  * Painter which paints feedback during drag, drop and resizing operations, as well as
@@ -126,7 +127,9 @@ public class GridLayoutPainter {
         }
 
         // Implements IFeedbackPainter
-        public void paint(IGraphics gc, INode node, DropFeedback feedback) {
+        @Override
+        public void paint(@NonNull IGraphics gc, @NonNull INode node,
+                @NonNull DropFeedback feedback) {
             Rect b = node.getBounds();
             if (!b.isValid()) {
                 return;
@@ -231,15 +234,27 @@ public class GridLayoutPainter {
                 gc.drawLine(x, b.y, x, b.y2());
             }
 
-            // Draw preview rectangle of the first dragged element
+            // Draw preview rectangles for all the dragged elements
             gc.useStyle(DrawingStyle.DROP_PREVIEW);
-            mRule.drawElement(gc, first, x + offsetX - bounds.x, y + offsetY - bounds.y);
+            offsetX += x - bounds.x;
+            offsetY += y - bounds.y;
 
-            // Preview baseline as well
-            if (feedback.dragBaseline != -1) {
-                int x1 = dragBounds.x + x + offsetX - bounds.x;
-                int y1 = dragBounds.y + y + offsetY - bounds.y + feedback.dragBaseline;
-                gc.drawLine(x1, y1, x1 + dragBounds.w, y1);
+            for (IDragElement element : mElements) {
+                if (element == first) {
+                    mRule.drawElement(gc, first, offsetX, offsetY);
+                    // Preview baseline as well
+                    if (feedback.dragBaseline != -1) {
+                        int x1 = dragBounds.x + offsetX;
+                        int y1 = dragBounds.y + offsetY + feedback.dragBaseline;
+                        gc.drawLine(x1, y1, x1 + dragBounds.w, y1);
+                    }
+                } else {
+                    b = element.getBounds();
+                    if (b.isValid()) {
+                        gc.drawRect(b.x + offsetX, b.y + offsetY,
+                                b.x + offsetX + b.w, b.y + offsetY + b.h);
+                    }
+                }
             }
         }
 
@@ -267,10 +282,12 @@ public class GridLayoutPainter {
             gc.drawRect(b.x + 2 * radius, b.y + 2 * radius,
                     b.x2() - 2 * radius, b.y2() - 2 * radius);
 
-            int column = data.getColumnMatch().cellIndex;
-            int row = data.getRowMatch().cellIndex;
-            boolean createColumn = data.getColumnMatch().createCell;
-            boolean createRow = data.getRowMatch().createCell;
+            GridMatch columnMatch = data.getColumnMatch();
+            GridMatch rowMatch = data.getRowMatch();
+            int column = columnMatch.cellIndex;
+            int row = rowMatch.cellIndex;
+            boolean createColumn = columnMatch.createCell;
+            boolean createRow = rowMatch.createCell;
 
             Rect cellBounds = grid.getCellBounds(row, column, 1, 1);
 
@@ -297,7 +314,22 @@ public class GridLayoutPainter {
             }
 
             gc.useStyle(DrawingStyle.DROP_PREVIEW);
-            mRule.drawElement(gc, first, offsetX, offsetY);
+
+            Rect bounds = first.getBounds();
+            int x = offsetX;
+            int y = offsetY;
+            if (columnMatch.type == SegmentType.RIGHT) {
+                x += cellBounds.w - bounds.w;
+            } else if (columnMatch.type == SegmentType.CENTER_HORIZONTAL) {
+                x += cellBounds.w / 2 - bounds.w / 2;
+            }
+            if (rowMatch.type == SegmentType.BOTTOM) {
+                y += cellBounds.h - bounds.h;
+            } else if (rowMatch.type == SegmentType.CENTER_VERTICAL) {
+                y += cellBounds.h / 2 - bounds.h / 2;
+            }
+
+            mRule.drawElement(gc, first, x, y);
         }
     }
 

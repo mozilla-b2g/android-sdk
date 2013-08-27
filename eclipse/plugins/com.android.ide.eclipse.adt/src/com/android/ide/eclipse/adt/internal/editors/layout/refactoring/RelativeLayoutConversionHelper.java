@@ -15,6 +15,41 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.layout.refactoring;
 
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ATTR_BACKGROUND;
+import static com.android.SdkConstants.ATTR_BASELINE_ALIGNED;
+import static com.android.SdkConstants.ATTR_LAYOUT_ABOVE;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_BASELINE;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_BOTTOM;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_LEFT;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_PARENT_BOTTOM;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_PARENT_LEFT;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_PARENT_RIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_PARENT_TOP;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_RIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_TOP;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_WITH_PARENT_MISSING;
+import static com.android.SdkConstants.ATTR_LAYOUT_BELOW;
+import static com.android.SdkConstants.ATTR_LAYOUT_CENTER_HORIZONTAL;
+import static com.android.SdkConstants.ATTR_LAYOUT_CENTER_VERTICAL;
+import static com.android.SdkConstants.ATTR_LAYOUT_HEIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_MARGIN_LEFT;
+import static com.android.SdkConstants.ATTR_LAYOUT_MARGIN_TOP;
+import static com.android.SdkConstants.ATTR_LAYOUT_RESOURCE_PREFIX;
+import static com.android.SdkConstants.ATTR_LAYOUT_TO_LEFT_OF;
+import static com.android.SdkConstants.ATTR_LAYOUT_TO_RIGHT_OF;
+import static com.android.SdkConstants.ATTR_LAYOUT_WEIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_WIDTH;
+import static com.android.SdkConstants.ATTR_ORIENTATION;
+import static com.android.SdkConstants.ID_PREFIX;
+import static com.android.SdkConstants.LINEAR_LAYOUT;
+import static com.android.SdkConstants.NEW_ID_PREFIX;
+import static com.android.SdkConstants.RELATIVE_LAYOUT;
+import static com.android.SdkConstants.VALUE_FALSE;
+import static com.android.SdkConstants.VALUE_N_DP;
+import static com.android.SdkConstants.VALUE_TRUE;
+import static com.android.SdkConstants.VALUE_VERTICAL;
+import static com.android.SdkConstants.VALUE_WRAP_CONTENT;
 import static com.android.ide.common.layout.GravityHelper.GRAVITY_BOTTOM;
 import static com.android.ide.common.layout.GravityHelper.GRAVITY_CENTER_HORIZ;
 import static com.android.ide.common.layout.GravityHelper.GRAVITY_CENTER_VERT;
@@ -24,41 +59,6 @@ import static com.android.ide.common.layout.GravityHelper.GRAVITY_LEFT;
 import static com.android.ide.common.layout.GravityHelper.GRAVITY_RIGHT;
 import static com.android.ide.common.layout.GravityHelper.GRAVITY_TOP;
 import static com.android.ide.common.layout.GravityHelper.GRAVITY_VERT_MASK;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_BACKGROUND;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_BASELINE_ALIGNED;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ABOVE;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_BASELINE;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_BOTTOM;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_LEFT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_PARENT_BOTTOM;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_PARENT_LEFT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_PARENT_RIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_PARENT_TOP;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_RIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_TOP;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_WITH_PARENT_MISSING;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_BELOW;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_CENTER_HORIZONTAL;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_CENTER_VERTICAL;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_HEIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_MARGIN_LEFT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_MARGIN_TOP;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_TO_LEFT_OF;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_TO_RIGHT_OF;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_WEIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_WIDTH;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ORIENTATION;
-import static com.android.ide.common.layout.LayoutConstants.ID_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.LINEAR_LAYOUT;
-import static com.android.ide.common.layout.LayoutConstants.NEW_ID_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.RELATIVE_LAYOUT;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_FALSE;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_N_DP;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_TRUE;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_VERTICAL;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_WRAP_CONTENT;
 
 import com.android.ide.common.layout.GravityHelper;
 import com.android.ide.eclipse.adt.AdtPlugin;
@@ -66,7 +66,7 @@ import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescripto
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.CanvasViewInfo;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.DomUtilities;
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
-import com.android.util.Pair;
+import com.android.utils.Pair;
 
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.swt.graphics.Rectangle;
@@ -695,7 +695,7 @@ class RelativeLayoutConversionHelper {
                     if (name.equals(ATTR_LAYOUT_WIDTH)
                             || name.equals(ATTR_LAYOUT_HEIGHT)) {
                         // Ignore these for now
-                    } else if (name.startsWith(ATTR_LAYOUT_PREFIX)
+                    } else if (name.startsWith(ATTR_LAYOUT_RESOURCE_PREFIX)
                             && ANDROID_URI.equals(attribute.getNamespaceURI())) {
                         // Determine if the reference is to a known edge
                         String id = getIdBasename(value);
@@ -1401,6 +1401,7 @@ class RelativeLayoutConversionHelper {
                 mRowSort = rowSort;
             }
 
+            @Override
             public int compare(View view1, View view2) {
                 if (mRowSort) {
                     return view1.mRow - view2.mRow;

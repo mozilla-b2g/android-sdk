@@ -16,8 +16,10 @@
 
 package com.android.ide.eclipse.adt.internal.resources;
 
-import static com.android.ide.eclipse.adt.AdtConstants.DOT_XML;
+import static com.android.SdkConstants.DOT_XML;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.resources.ResourceItem;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.ImageUtils;
@@ -42,6 +44,12 @@ public class ResourceNameValidator implements IInputValidator {
     /** Set of existing names to check for conflicts with */
     private Set<String> mExisting;
 
+    /** If true, the validated name must be unique */
+    private boolean mUnique = true;
+
+    /** If true, the validated name must exist */
+    private boolean mExist;
+
     /**
      * True if the resource name being considered is a "file" based resource (where the
      * resource name is the actual file name, rather than just a value attribute inside an
@@ -65,6 +73,31 @@ public class ResourceNameValidator implements IInputValidator {
         mIsImageType = isImageType;
     }
 
+    /**
+     * Makes the resource name validator require that names are unique.
+     *
+     * @return this, for construction chaining
+     */
+    public ResourceNameValidator unique() {
+        mUnique = true;
+        mExist = false;
+
+        return this;
+    }
+
+    /**
+     * Makes the resource name validator require that names already exist
+     *
+     * @return this, for construction chaining
+     */
+    public ResourceNameValidator exist() {
+        mExist = true;
+        mUnique = false;
+
+        return this;
+    }
+
+    @Override
     public String isValid(String newText) {
         // IValidator has the same interface as SWT's IInputValidator
         try {
@@ -79,6 +112,10 @@ public class ResourceNameValidator implements IInputValidator {
             if (mAllowXmlExtension && mIsImageType
                     && ImageUtils.hasImageExtension(newText)) {
                 newText = newText.substring(0, newText.lastIndexOf('.'));
+            }
+
+            if (!mIsFileType) {
+                newText = newText.replace('.', '_');
             }
 
             if (newText.indexOf('.') != -1 && !newText.endsWith(DOT_XML)) {
@@ -125,8 +162,14 @@ public class ResourceNameValidator implements IInputValidator {
                 return String.format("%1$s is not a valid name (reserved Java keyword)", newText);
             }
 
-            if (mExisting != null && mExisting.contains(newText)) {
-                return String.format("%1$s already exists", newText);
+
+            if (mExisting != null && (mUnique || mExist)) {
+                boolean exists = mExisting.contains(newText);
+                if (mUnique && exists) {
+                    return String.format("%1$s already exists", newText);
+                } else if (mExist && !exists) {
+                    return String.format("%1$s does not exist", newText);
+                }
             }
 
             return null;
@@ -165,11 +208,12 @@ public class ResourceNameValidator implements IInputValidator {
             ResourceType type) {
         boolean isFileType = ResourceHelper.isFileBasedResourceType(type);
         return new ResourceNameValidator(allowXmlExtension, existing, isFileType,
-                type == ResourceType.DRAWABLE);
+                type == ResourceType.DRAWABLE).unique();
     }
 
     /**
-     * Creates a new {@link ResourceNameValidator}
+     * Creates a new {@link ResourceNameValidator}. By default, the name will need to be
+     * unique in the project.
      *
      * @param allowXmlExtension if true, allow .xml to be entered as a suffix for the
      *            resource name
@@ -177,14 +221,18 @@ public class ResourceNameValidator implements IInputValidator {
      * @param type the resource type of the resource name being validated
      * @return a new {@link ResourceNameValidator}
      */
-    public static ResourceNameValidator create(boolean allowXmlExtension, IProject project,
-            ResourceType type) {
-        Set<String> existing = new HashSet<String>();
-        ResourceManager manager = ResourceManager.getInstance();
-        ProjectResources projectResources = manager.getProjectResources(project);
-        Collection<ResourceItem> items = projectResources.getResourceItemsOfType(type);
-        for (ResourceItem item : items) {
-            existing.add(item.getName());
+    public static ResourceNameValidator create(boolean allowXmlExtension,
+            @Nullable IProject project,
+            @NonNull ResourceType type) {
+        Set<String> existing = null;
+        if (project != null) {
+            existing = new HashSet<String>();
+            ResourceManager manager = ResourceManager.getInstance();
+            ProjectResources projectResources = manager.getProjectResources(project);
+            Collection<ResourceItem> items = projectResources.getResourceItemsOfType(type);
+            for (ResourceItem item : items) {
+                existing.add(item.getName());
+            }
         }
 
         boolean isFileType = ResourceHelper.isFileBasedResourceType(type);

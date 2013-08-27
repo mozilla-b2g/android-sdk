@@ -15,13 +15,13 @@
  */
 package com.android.ide.eclipse.tests.functests.sampleProjects;
 
+import com.android.SdkConstants;
 import com.android.ide.eclipse.adt.AdtUtils;
 import com.android.ide.eclipse.adt.internal.wizards.newproject.NewProjectCreator;
 import com.android.ide.eclipse.adt.internal.wizards.newproject.NewProjectWizardState;
 import com.android.ide.eclipse.adt.internal.wizards.newproject.NewProjectWizardState.Mode;
-import com.android.ide.eclipse.tests.SdkTestCase;
+import com.android.ide.eclipse.tests.SdkLoadingTestCase;
 import com.android.sdklib.IAndroidTarget;
-import com.android.sdklib.SdkConstants;
 
 import org.eclipse.core.resources.IMarker;
 import org.eclipse.core.resources.IProject;
@@ -50,7 +50,7 @@ import java.util.logging.Logger;
  * execution there
  *
  */
-public class SampleProjectTest extends SdkTestCase {
+public class SampleProjectTest extends SdkLoadingTestCase {
 
     private static final Logger sLogger = Logger.getLogger(SampleProjectTest.class.getName());
 
@@ -100,6 +100,7 @@ public class SampleProjectTest extends SdkTestCase {
             prepareProject(path, target);
 
             IRunnableContext context = new IRunnableContext() {
+                @Override
                 public void run(boolean fork, boolean cancelable, IRunnableWithProgress runnable)
                         throws InvocationTargetException, InterruptedException {
                     runnable.run(new NullProgressMonitor());
@@ -192,6 +193,7 @@ public class SampleProjectTest extends SdkTestCase {
         final BuiltProjectDeltaVisitor deltaVisitor = new BuiltProjectDeltaVisitor(iproject);
         IResourceChangeListener newBuildListener = new IResourceChangeListener() {
 
+            @Override
             public void resourceChanged(IResourceChangeEvent event) {
                 try {
                     event.getDelta().accept(deltaVisitor);
@@ -241,6 +243,7 @@ public class SampleProjectTest extends SdkTestCase {
             mIsBuilt = false;
         }
 
+        @Override
         public boolean visit(IResourceDelta delta) {
             if (mIProject.equals(delta.getResource())) {
                 setBuilt(true);

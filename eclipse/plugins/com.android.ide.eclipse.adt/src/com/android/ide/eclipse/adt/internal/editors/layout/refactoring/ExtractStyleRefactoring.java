@@ -15,38 +15,42 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.layout.refactoring;
 
-import static com.android.AndroidConstants.FD_RES_VALUES;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_NS_NAME;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_NS_NAME_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_HINT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_MARGIN;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ON_CLICK;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_SRC;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_STYLE;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_TEXT;
-import static com.android.ide.eclipse.adt.AdtConstants.EXT_XML;
+import static com.android.SdkConstants.ANDROID_NS_NAME;
+import static com.android.SdkConstants.ANDROID_NS_NAME_PREFIX;
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ATTR_HINT;
+import static com.android.SdkConstants.ATTR_ID;
+import static com.android.SdkConstants.ATTR_LAYOUT_MARGIN;
+import static com.android.SdkConstants.ATTR_LAYOUT_RESOURCE_PREFIX;
+import static com.android.SdkConstants.ATTR_NAME;
+import static com.android.SdkConstants.ATTR_ON_CLICK;
+import static com.android.SdkConstants.ATTR_PARENT;
+import static com.android.SdkConstants.ATTR_SRC;
+import static com.android.SdkConstants.ATTR_STYLE;
+import static com.android.SdkConstants.ATTR_TEXT;
+import static com.android.SdkConstants.EXT_XML;
+import static com.android.SdkConstants.FD_RESOURCES;
+import static com.android.SdkConstants.FD_RES_VALUES;
+import static com.android.SdkConstants.PREFIX_ANDROID;
+import static com.android.SdkConstants.PREFIX_RESOURCE_REF;
+import static com.android.SdkConstants.REFERENCE_STYLE;
+import static com.android.SdkConstants.TAG_ITEM;
+import static com.android.SdkConstants.TAG_RESOURCES;
+import static com.android.SdkConstants.XMLNS_PREFIX;
 import static com.android.ide.eclipse.adt.AdtConstants.WS_SEP;
-import static com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor.XMLNS_COLON;
-import static com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors.ITEM_TAG;
-import static com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors.NAME_ATTR;
-import static com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors.PARENT_ATTR;
-import static com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors.ROOT_ELEMENT;
-import static com.android.sdklib.SdkConstants.FD_RESOURCES;
 
+import com.android.annotations.NonNull;
 import com.android.annotations.VisibleForTesting;
 import com.android.ide.common.rendering.api.ResourceValue;
 import com.android.ide.common.resources.ResourceResolver;
+import com.android.ide.common.xml.XmlFormatStyle;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.DescriptorsUtils;
-import com.android.ide.eclipse.adt.internal.editors.formatting.XmlFormatStyle;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
 import com.android.ide.eclipse.adt.internal.wizards.newxmlfile.NewXmlFileWizard;
-import com.android.util.Pair;
+import com.android.utils.Pair;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
@@ -140,13 +144,16 @@ public class ExtractStyleRefactoring extends VisualRefactoring {
         }
     }
 
-    public ExtractStyleRefactoring(IFile file, LayoutEditor editor, ITextSelection selection,
+    public ExtractStyleRefactoring(
+            IFile file,
+            LayoutEditorDelegate delegate,
+            ITextSelection selection,
             ITreeSelection treeSelection) {
-        super(file, editor, selection, treeSelection);
+        super(file, delegate, selection, treeSelection);
     }
 
     @VisibleForTesting
-    ExtractStyleRefactoring(List<Element> selectedElements, LayoutEditor editor) {
+    ExtractStyleRefactoring(List<Element> selectedElements, LayoutEditorDelegate editor) {
         super(selectedElements, editor);
     }
 
@@ -305,7 +312,7 @@ public class ExtractStyleRefactoring extends VisualRefactoring {
         return !(name == null
                 || name.equals(ATTR_ID)
                 || name.startsWith(ATTR_STYLE)
-                || (name.startsWith(ATTR_LAYOUT_PREFIX) &&
+                || (name.startsWith(ATTR_LAYOUT_RESOURCE_PREFIX) &&
                         !name.startsWith(ATTR_LAYOUT_MARGIN))
                 || name.equals(ATTR_TEXT)
                 || name.equals(ATTR_HINT)
@@ -319,13 +326,13 @@ public class ExtractStyleRefactoring extends VisualRefactoring {
     }
 
     @Override
-    protected List<Change> computeChanges(IProgressMonitor monitor) {
+    protected @NonNull List<Change> computeChanges(IProgressMonitor monitor) {
         List<Change> changes = new ArrayList<Change>();
         if (mChosenAttributes.size() == 0) {
             return changes;
         }
 
-        IFile file = getStyleFile(mEditor.getProject());
+        IFile file = getStyleFile(mDelegate.getEditor().getProject());
         boolean createFile = !file.exists();
         int insertAtIndex;
         String initialIndent = null;
@@ -359,14 +366,16 @@ public class ExtractStyleRefactoring extends VisualRefactoring {
         // Set the style attribute?
         if (mApplyStyle) {
             for (Element element : getElements()) {
-                String value = ResourceResolver.PREFIX_RESOURCE_REF +
-                   ResourceResolver.REFERENCE_STYLE + mStyleName;
+                String value = PREFIX_RESOURCE_REF + REFERENCE_STYLE + mStyleName;
                 setAttribute(rootEdit, element, null, null, ATTR_STYLE, value);
             }
         }
 
         if (rootEdit.hasChildren()) {
-            IFile sourceFile = mEditor.getInputFile();
+            IFile sourceFile = mDelegate.getEditor().getInputFile();
+            if (sourceFile == null) {
+                return changes;
+            }
             TextFileChange change = new TextFileChange(sourceFile.getName(), sourceFile);
             change.setTextType(EXT_XML);
             changes.add(change);
@@ -388,8 +397,8 @@ public class ExtractStyleRefactoring extends VisualRefactoring {
         StringBuilder sb = new StringBuilder();
         if (createFile) {
             sb.append(NewXmlFileWizard.XML_HEADER_LINE);
-            sb.append('<').append(ROOT_ELEMENT).append(' ');
-            sb.append(XMLNS_COLON).append(ANDROID_NS_NAME).append('=').append('"');
+            sb.append('<').append(TAG_RESOURCES).append(' ');
+            sb.append(XMLNS_PREFIX).append(ANDROID_NS_NAME).append('=').append('"');
             sb.append(ANDROID_URI);
             sb.append('"').append('>').append('\n');
         }
@@ -406,11 +415,11 @@ public class ExtractStyleRefactoring extends VisualRefactoring {
         }
         sb.append(initialIndent);
         String styleTag = "style"; //$NON-NLS-1$ // TODO - use constant in parallel changeset
-        sb.append('<').append(styleTag).append(' ').append(NAME_ATTR).append('=').append('"');
+        sb.append('<').append(styleTag).append(' ').append(ATTR_NAME).append('=').append('"');
         sb.append(mStyleName);
         sb.append('"');
         if (mParent != null) {
-            sb.append(' ').append(PARENT_ATTR).append('=').append('"');
+            sb.append(' ').append(ATTR_PARENT).append('=').append('"');
             sb.append(mParent);
             sb.append('"');
         }
@@ -418,7 +427,7 @@ public class ExtractStyleRefactoring extends VisualRefactoring {
 
         for (Attr attribute : mChosenAttributes) {
             sb.append(initialIndent).append(indent);
-            sb.append('<').append(ITEM_TAG).append(' ').append(NAME_ATTR).append('=').append('"');
+            sb.append('<').append(TAG_ITEM).append(' ').append(ATTR_NAME).append('=').append('"');
             // We've already enforced that regardless of prefix, only attributes with
             // an Android namespace can be in the set of chosen attributes. Rewrite the
             // prefix to android here.
@@ -428,12 +437,12 @@ public class ExtractStyleRefactoring extends VisualRefactoring {
             sb.append(attribute.getLocalName());
             sb.append('"').append('>');
             sb.append(attribute.getValue());
-            sb.append('<').append('/').append(ITEM_TAG).append('>').append('\n');
+            sb.append('<').append('/').append(TAG_ITEM).append('>').append('\n');
         }
         sb.append(initialIndent).append('<').append('/').append(styleTag).append('>').append('\n');
 
         if (createFile) {
-            sb.append('<').append('/').append(ROOT_ELEMENT).append('>').append('\n');
+            sb.append('<').append('/').append(TAG_RESOURCES).append('>').append('\n');
         }
         String styleString = sb.toString();
         return styleString;
@@ -487,7 +496,7 @@ public class ExtractStyleRefactoring extends VisualRefactoring {
 
         if (insertAtIndex == -1) {
             String contents = AdtPlugin.readFile(file);
-            insertAtIndex = contents.indexOf("</" + ROOT_ELEMENT + ">"); //$NON-NLS-1$
+            insertAtIndex = contents.indexOf("</" + TAG_RESOURCES + ">"); //$NON-NLS-1$
             if (insertAtIndex == -1) {
                 insertAtIndex = contents.length();
             }
@@ -498,7 +507,7 @@ public class ExtractStyleRefactoring extends VisualRefactoring {
 
     @Override
     VisualRefactoringWizard createWizard() {
-        return new ExtractStyleWizard(this, mEditor);
+        return new ExtractStyleWizard(this, mDelegate);
     }
 
     public static class Descriptor extends VisualRefactoringDescriptor {
@@ -547,7 +556,7 @@ public class ExtractStyleRefactoring extends VisualRefactoring {
         if (types.size() == 1) {
             String view = DescriptorsUtils.getBasename(types.iterator().next());
 
-            ResourceResolver resolver = mEditor.getGraphicalEditor().getResourceResolver();
+            ResourceResolver resolver = mDelegate.getGraphicalEditor().getResourceResolver();
             // Look up the theme item name, which for a Button would be "buttonStyle", and so on.
             String n = Character.toLowerCase(view.charAt(0)) + view.substring(1)
                 + "Style"; //$NON-NLS-1$
@@ -557,7 +566,7 @@ public class ExtractStyleRefactoring extends VisualRefactoring {
                 String name = resolvedValue.getName();
                 if (name != null) {
                     if (resolvedValue.isFramework()) {
-                        return ResourceResolver.PREFIX_ANDROID + name;
+                        return PREFIX_ANDROID + name;
                     } else {
                         return name;
                     }

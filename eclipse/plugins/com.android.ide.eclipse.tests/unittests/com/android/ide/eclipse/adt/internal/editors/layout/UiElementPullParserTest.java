@@ -16,6 +16,7 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout;
 
+import com.android.SdkConstants;
 import com.android.ide.common.api.IAttributeInfo.Format;
 import com.android.ide.common.resources.platform.AttributeInfo;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.AttributeDescriptor;
@@ -24,7 +25,6 @@ import com.android.ide.eclipse.adt.internal.editors.descriptors.TextAttributeDes
 import com.android.ide.eclipse.adt.internal.editors.mock.MockXmlNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
 import com.android.resources.Density;
-import com.android.sdklib.SdkConstants;
 
 import org.w3c.dom.Node;
 import org.xmlpull.v1.XmlPullParser;
@@ -44,10 +44,8 @@ public class UiElementPullParserTest extends TestCase {
     private TextAttributeDescriptor createTextAttrDesc(String xmlName) {
         return new TextAttributeDescriptor(
                 xmlName,    // xmlLocalName
-                xmlName,    // uiName
-                SdkConstants.NS_RESOURCES, // ns uri
-                "",         // tooltip
-                new AttributeInfo(xmlName, new Format[] { Format.STRING })
+                SdkConstants.NS_RESOURCES,
+                new AttributeInfo(xmlName, Format.STRING_SET)
                 );
     }
 
@@ -172,7 +170,6 @@ public class UiElementPullParserTest extends TestCase {
                     false, // explodedView
                     null, // explodeNodes
                     Density.MEDIUM, // density (default from ConfigurationComposite)
-                    Density.MEDIUM.getDpiValue(), // xdpi (default from ConfigurationComposite)
                     null // iProject
                     );
 

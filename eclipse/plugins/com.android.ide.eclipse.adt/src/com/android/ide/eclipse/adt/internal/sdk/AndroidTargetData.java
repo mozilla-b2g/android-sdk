@@ -16,9 +16,12 @@
 
 package com.android.ide.eclipse.adt.internal.sdk;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.rendering.LayoutLibrary;
 import com.android.ide.common.rendering.api.LayoutLog;
 import com.android.ide.common.resources.ResourceRepository;
+import com.android.ide.common.resources.platform.AttributeInfo;
 import com.android.ide.common.sdk.LoadStatus;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.editors.animator.AnimDescriptors;
@@ -29,8 +32,8 @@ import com.android.ide.eclipse.adt.internal.editors.drawable.DrawableDescriptors
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.manifest.descriptors.AndroidManifestDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.menu.descriptors.MenuDescriptors;
-import com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors;
-import com.android.ide.eclipse.adt.internal.editors.xml.descriptors.XmlDescriptors;
+import com.android.ide.eclipse.adt.internal.editors.otherxml.descriptors.OtherXmlDescriptors;
+import com.android.ide.eclipse.adt.internal.editors.values.descriptors.ValuesDescriptors;
 import com.android.ide.eclipse.adt.internal.resources.manager.ProjectResources;
 import com.android.sdklib.IAndroidTarget;
 import com.android.sdklib.IAndroidTarget.IOptionalLibrary;
@@ -50,7 +53,7 @@ public class AndroidTargetData {
     public final static int DESCRIPTOR_MANIFEST = 1;
     public final static int DESCRIPTOR_LAYOUT = 2;
     public final static int DESCRIPTOR_MENU = 3;
-    public final static int DESCRIPTOR_XML = 4;
+    public final static int DESCRIPTOR_OTHER_XML = 4;
     public final static int DESCRIPTOR_RESOURCES = 5;
     public final static int DESCRIPTOR_SEARCHABLE = 6;
     public final static int DESCRIPTOR_PREFERENCES = 7;
@@ -66,7 +69,7 @@ public class AndroidTargetData {
      * mAttributeValues is a map { key => list [ values ] }.
      * The key for the map is "(element-xml-name,attribute-namespace:attribute-xml-local-name)".
      * The attribute namespace prefix must be:
-     * - "android" for AndroidConstants.NS_RESOURCES
+     * - "android" for SdkConstants.NS_RESOURCES
      * - "xmlns" for the XMLNS URI.
      *
      * This is used for attributes that do not have a unique name, but still need to be populated
@@ -81,17 +84,39 @@ public class AndroidTargetData {
     private ColorDescriptors mColorDescriptors;
     private LayoutDescriptors mLayoutDescriptors;
     private MenuDescriptors mMenuDescriptors;
-    private XmlDescriptors mXmlDescriptors;
+    private OtherXmlDescriptors mOtherXmlDescriptors;
 
     private Map<String, Map<String, Integer>> mEnumValueMap;
 
     private ResourceRepository mFrameworkResources;
     private LayoutLibrary mLayoutLibrary;
+    private Map<String, AttributeInfo> mAttributeMap;
 
     private boolean mLayoutBridgeInit = false;
 
     AndroidTargetData(IAndroidTarget androidTarget) {
         mTarget = androidTarget;
+    }
+
+    /**
+     * Sets the associated map from string attribute name to
+     * {@link AttributeInfo}
+     *
+     * @param attributeMap the map
+     */
+    public void setAttributeMap(@NonNull Map<String, AttributeInfo> attributeMap) {
+        mAttributeMap = attributeMap;
+    }
+
+    /**
+     * Returns the associated map from string attribute name to
+     * {@link AttributeInfo}
+     *
+     * @return the map
+     */
+    @Nullable
+    public Map<String, AttributeInfo> getAttributeMap() {
+        return mAttributeMap;
     }
 
     /**
@@ -101,7 +126,7 @@ public class AndroidTargetData {
             AndroidManifestDescriptors manifestDescriptors,
             LayoutDescriptors layoutDescriptors,
             MenuDescriptors menuDescriptors,
-            XmlDescriptors xmlDescriptors,
+            OtherXmlDescriptors otherXmlDescriptors,
             DrawableDescriptors drawableDescriptors,
             AnimatorDescriptors animatorDescriptors,
             AnimDescriptors animDescriptors,
@@ -124,7 +149,7 @@ public class AndroidTargetData {
         mColorDescriptors = colorDescriptors;
         mLayoutDescriptors = layoutDescriptors;
         mMenuDescriptors = menuDescriptors;
-        mXmlDescriptors = xmlDescriptors;
+        mOtherXmlDescriptors = otherXmlDescriptors;
         mEnumValueMap = enumValueMap;
         mFrameworkResources = frameworkResources;
         mLayoutLibrary = layoutLibrary;
@@ -138,7 +163,7 @@ public class AndroidTargetData {
     /**
      * Returns an {@link IDescriptorProvider} from a given Id.
      * The Id can be one of {@link #DESCRIPTOR_MANIFEST}, {@link #DESCRIPTOR_LAYOUT},
-     * {@link #DESCRIPTOR_MENU}, or {@link #DESCRIPTOR_XML}.
+     * {@link #DESCRIPTOR_MENU}, or {@link #DESCRIPTOR_OTHER_XML}.
      * All other values will throw an {@link IllegalArgumentException}.
      */
     public IDescriptorProvider getDescriptorProvider(int descriptorId) {
@@ -149,17 +174,17 @@ public class AndroidTargetData {
                 return mLayoutDescriptors;
             case DESCRIPTOR_MENU:
                 return mMenuDescriptors;
-            case DESCRIPTOR_XML:
-                return mXmlDescriptors;
+            case DESCRIPTOR_OTHER_XML:
+                return mOtherXmlDescriptors;
             case DESCRIPTOR_RESOURCES:
                 // FIXME: since it's hard-coded the Resources Descriptors are not platform dependent.
-                return ResourcesDescriptors.getInstance();
+                return ValuesDescriptors.getInstance();
             case DESCRIPTOR_PREFERENCES:
-                return mXmlDescriptors.getPreferencesProvider();
+                return mOtherXmlDescriptors.getPreferencesProvider();
             case DESCRIPTOR_APPWIDGET_PROVIDER:
-                return mXmlDescriptors.getAppWidgetProvider();
+                return mOtherXmlDescriptors.getAppWidgetProvider();
             case DESCRIPTOR_SEARCHABLE:
-                return mXmlDescriptors.getSearchableProvider();
+                return mOtherXmlDescriptors.getSearchableProvider();
             case DESCRIPTOR_DRAWABLE:
                 return mDrawableDescriptors;
             case DESCRIPTOR_ANIMATOR:
@@ -225,8 +250,8 @@ public class AndroidTargetData {
     /**
      * Returns the XML descriptors
      */
-    public XmlDescriptors getXmlDescriptors() {
-        return mXmlDescriptors;
+    public OtherXmlDescriptors getXmlDescriptors() {
+        return mOtherXmlDescriptors;
     }
 
     /**

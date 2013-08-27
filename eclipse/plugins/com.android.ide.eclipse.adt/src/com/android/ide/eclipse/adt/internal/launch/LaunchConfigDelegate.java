@@ -17,13 +17,13 @@
 package com.android.ide.eclipse.adt.internal.launch;
 
 import com.android.ddmlib.AndroidDebugBridge;
+import com.android.ide.common.xml.ManifestData;
+import com.android.ide.common.xml.ManifestData.Activity;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.launch.AndroidLaunchConfiguration.TargetMode;
 import com.android.ide.eclipse.adt.internal.project.AndroidManifestHelper;
 import com.android.ide.eclipse.adt.internal.project.ProjectHelper;
-import com.android.sdklib.xml.ManifestData;
-import com.android.sdklib.xml.ManifestData.Activity;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
@@ -106,6 +106,7 @@ public class LaunchConfigDelegate extends LaunchConfigurationDelegate {
     public static final String ATTR_DEBUG_PORT =
         AdtPlugin.PLUGIN_ID + ".debugPort"; //$NON-NLS-1$
 
+    @Override
     public void launch(ILaunchConfiguration configuration, String mode,
             ILaunch launch, IProgressMonitor monitor) throws CoreException {
         // We need to check if it's a standard launch or if it's a launch

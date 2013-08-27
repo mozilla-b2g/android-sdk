@@ -15,7 +15,11 @@
  */
 package com.android.ide.eclipse.adt.internal.wizards.newproject;
 
+import static com.android.SdkConstants.FN_PROJECT_PROGUARD_FILE;
+import static com.android.SdkConstants.OS_SDK_TOOLS_LIB_FOLDER;
+
 import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.ide.eclipse.adt.AdtUtils;
 import com.android.ide.eclipse.adt.internal.wizards.newproject.NewProjectWizardState.Mode;
 
 import org.eclipse.jdt.ui.actions.OpenJavaPerspectiveAction;
@@ -25,6 +29,8 @@ import org.eclipse.jface.wizard.IWizardPage;
 import org.eclipse.jface.wizard.Wizard;
 import org.eclipse.ui.INewWizard;
 import org.eclipse.ui.IWorkbench;
+
+import java.io.File;
 
 
 /**
@@ -45,6 +51,7 @@ public class NewProjectWizard extends Wizard implements INewWizard {
     private SampleSelectionPage mSamplePage;
     private ApplicationInfoPage mPropertiesPage;
     private final Mode mMode;
+    private IStructuredSelection mSelection;
 
     /** Constructs a new wizard default project wizard */
     public NewProjectWizard() {
@@ -72,6 +79,11 @@ public class NewProjectWizard extends Wizard implements INewWizard {
 
         if (mMode != Mode.SAMPLE) {
             mNamePage = new ProjectNamePage(mValues);
+
+            if (mSelection != null) {
+                mNamePage.init(mSelection, AdtUtils.getActivePart());
+            }
+
             addPage(mNamePage);
         }
 
@@ -96,14 +108,31 @@ public class NewProjectWizard extends Wizard implements INewWizard {
         }
     }
 
+    @Override
     public void init(IWorkbench workbench, IStructuredSelection selection) {
+        mSelection = selection;
+
         setHelpAvailable(false); // TODO have help
         ImageDescriptor desc = AdtPlugin.getImageDescriptor(PROJECT_LOGO_LARGE);
         setDefaultPageImageDescriptor(desc);
+
+        // Trigger a check to see if the SDK needs to be reloaded (which will
+        // invoke onSdkLoaded asynchronously as needed).
+        AdtPlugin.getDefault().refreshSdk();
     }
 
     @Override
     public boolean performFinish() {
+        File file = new File(AdtPlugin.getOsSdkFolder(), OS_SDK_TOOLS_LIB_FOLDER + File.separator
+                + FN_PROJECT_PROGUARD_FILE);
+        if (!file.exists()) {
+            AdtPlugin.displayError("Tools Out of Date?",
+            String.format("It looks like you do not have the latest version of the "
+                    + "SDK Tools installed. Make sure you update via the SDK Manager "
+                    + "first. (Could not find %1$s)", file.getPath()));
+            return false;
+        }
+
         NewProjectCreator creator = new NewProjectCreator(mValues, getContainer());
         if (!(creator.createAndroidProjects())) {
             return false;

@@ -15,7 +15,7 @@
  */
 package com.android.ide.eclipse.adt.internal.wizards.newxmlfile;
 
-import com.android.AndroidConstants;
+import com.android.SdkConstants;
 import com.android.ide.common.resources.configuration.ResourceQualifier;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.internal.ui.ConfigurationSelector;
@@ -23,7 +23,6 @@ import com.android.ide.eclipse.adt.internal.ui.ConfigurationSelector.Configurati
 import com.android.ide.eclipse.adt.internal.ui.ConfigurationSelector.SelectorMode;
 import com.android.ide.eclipse.adt.internal.wizards.newxmlfile.NewXmlFileCreationPage.TypeInfo;
 import com.android.ide.eclipse.adt.internal.wizards.newxmlfile.NewXmlFileWizard.Values;
-import com.android.sdklib.SdkConstants;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.jface.dialogs.IMessageProvider;
@@ -77,6 +76,7 @@ public class ChooseConfigurationPage extends WizardPage {
         }
     }
 
+    @Override
     public void createControl(Composite parent) {
         // This UI is maintained with WindowBuilder.
 
@@ -114,12 +114,15 @@ public class ChooseConfigurationPage extends WizardPage {
         mWsFolderPathTextField.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
         mWsFolderPathTextField.setToolTipText(tooltip);
         mWsFolderPathTextField.addModifyListener(new ModifyListener() {
+            @Override
             public void modifyText(ModifyEvent e) {
                 onWsFolderPathUpdated();
             }
         });
 
         setControl(composite);
+
+        mConfigSelector.setConfiguration(mValues.configuration);
     }
 
     /**
@@ -159,7 +162,7 @@ public class ChooseConfigurationPage extends WizardPage {
                 wsFolderPath = wsFolderPath.substring(0, pos);
             }
 
-            String[] folderSegments = wsFolderPath.split(AndroidConstants.RES_QUALIFIER_SEP);
+            String[] folderSegments = wsFolderPath.split(SdkConstants.RES_QUALIFIER_SEP);
 
             if (folderSegments.length > 0) {
                 String folderName = folderSegments[0];
@@ -184,6 +187,7 @@ public class ChooseConfigurationPage extends WizardPage {
      * Callback called when the configuration has changed in the {@link ConfigurationSelector}.
      */
     private class ConfigurationChangeListener implements Runnable {
+        @Override
         public void run() {
             if (mInternalConfigSelectorUpdate) {
                 return;

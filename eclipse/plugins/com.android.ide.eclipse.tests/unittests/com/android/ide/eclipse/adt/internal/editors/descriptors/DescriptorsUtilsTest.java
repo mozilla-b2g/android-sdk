@@ -26,6 +26,7 @@ import junit.framework.TestCase;
 /**
  * Unit tests for DescriptorsUtils in the editors plugin
  */
+@SuppressWarnings("javadoc")
 public class DescriptorsUtilsTest extends TestCase {
 
     @Override
@@ -57,6 +58,48 @@ public class DescriptorsUtilsTest extends TestCase {
         assertEquals("The Y axis", DescriptorsUtils.prettyAttributeUiName("theYAxis"));
         assertEquals("The Z axis", DescriptorsUtils.prettyAttributeUiName("theZAxis"));
         assertEquals("The t axis", DescriptorsUtils.prettyAttributeUiName("theTAxis"));
+
+        // Special cases for "uri" and "sdk" etc
+        assertEquals("Grant URI permission",
+                DescriptorsUtils.prettyAttributeUiName("grantUriPermission"));
+        assertEquals("URI permission",
+                DescriptorsUtils.prettyAttributeUiName("uriPermission"));
+        assertEquals("Min SDK version", DescriptorsUtils.prettyAttributeUiName("minSdkVersion"));
+        assertEquals("SDK version", DescriptorsUtils.prettyAttributeUiName("sdkVersion"));
+        assertEquals("IME action method",
+                DescriptorsUtils.prettyAttributeUiName("imeActionMethod"));
+        assertEquals("VM safe mode", DescriptorsUtils.prettyAttributeUiName("vmSafeMode"));
+        assertEquals("UI options", DescriptorsUtils.prettyAttributeUiName("uiOptions"));
+    }
+
+    public void testCapitalize() {
+        assertEquals("", DescriptorsUtils.capitalize(""));
+
+        assertEquals("Max Width For View",
+                DescriptorsUtils.capitalize("maxWidthForView"));
+
+        assertEquals("Layout Width",
+                DescriptorsUtils.capitalize("layout_width"));
+
+        assertEquals("Axis X", DescriptorsUtils.capitalize("axisX"));
+        assertEquals("Axis Y", DescriptorsUtils.capitalize("axisY"));
+        assertEquals("Axis Z", DescriptorsUtils.capitalize("axisZ"));
+        assertEquals("Axis T", DescriptorsUtils.capitalize("axisT"));
+
+        assertEquals("The X Axis", DescriptorsUtils.capitalize("theXAxis"));
+        assertEquals("The Y Axis", DescriptorsUtils.capitalize("theYAxis"));
+        assertEquals("The Z Axis", DescriptorsUtils.capitalize("theZAxis"));
+        assertEquals("The T Axis", DescriptorsUtils.capitalize("theTAxis"));
+
+        // Special cases for "uri" and "sdk" etc
+        assertEquals("Grant URI Permission", DescriptorsUtils.capitalize("grantUriPermission"));
+        assertEquals("Min SDK Version", DescriptorsUtils.capitalize("minSdkVersion"));
+        assertEquals("IME Action Method", DescriptorsUtils.capitalize("imeActionMethod"));
+        assertEquals("URI Permission", DescriptorsUtils.capitalize("uriPermission"));
+        assertEquals("SDK Version", DescriptorsUtils.capitalize("sdkVersion"));
+        assertEquals("Grant IME", DescriptorsUtils.capitalize("GrantIme"));
+        assertEquals("VM Safe Mode", DescriptorsUtils.capitalize("vmSafeMode"));
+        assertEquals("UI Options", DescriptorsUtils.capitalize("uiOptions"));
     }
 
     public void testFormatTooltip() {
@@ -127,6 +170,20 @@ public class DescriptorsUtilsTest extends TestCase {
         assertEquals("@+id/button1", DescriptorsUtils.getFreeWidgetId(uiRoot, "Button"));
         assertEquals("@+id/linearLayout1",
                 DescriptorsUtils.getFreeWidgetId(uiRoot, "LinearLayout"));
+    }
+
+    public void testNeedsDefaultId() throws Exception {
+        assertTrue(DescriptorsUtils.needsDefaultId(new ElementDescriptor("Button")));
+        assertTrue(DescriptorsUtils.needsDefaultId(new ElementDescriptor("EditText")));
+        assertTrue(DescriptorsUtils.needsDefaultId(new ElementDescriptor("TextView")));
+
+        assertFalse(DescriptorsUtils.needsDefaultId(new ElementDescriptor("LinearLayout")));
+        assertFalse(DescriptorsUtils.needsDefaultId(new ElementDescriptor("GridLayout")));
+        assertFalse(DescriptorsUtils.needsDefaultId(new ElementDescriptor("RelativeLayout")));
+        assertFalse(DescriptorsUtils.needsDefaultId(new ElementDescriptor("include")));
+        assertFalse(DescriptorsUtils.needsDefaultId(new ElementDescriptor("merge")));
+        assertFalse(DescriptorsUtils.needsDefaultId(new ElementDescriptor("fragment")));
+        assertFalse(DescriptorsUtils.needsDefaultId(new ElementDescriptor("Space")));
     }
 
     private static ViewElementDescriptor createDesc(String name, String fqn, boolean hasChildren) {

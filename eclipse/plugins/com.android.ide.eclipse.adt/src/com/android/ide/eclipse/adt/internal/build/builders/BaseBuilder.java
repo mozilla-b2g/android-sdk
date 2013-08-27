@@ -16,16 +16,24 @@
 
 package com.android.ide.eclipse.adt.internal.build.builders;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.sdk.LoadStatus;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.build.BuildHelper;
 import com.android.ide.eclipse.adt.internal.build.Messages;
+import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs.BuildVerbosity;
 import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper;
 import com.android.ide.eclipse.adt.internal.project.ProjectHelper;
 import com.android.ide.eclipse.adt.internal.project.XmlErrorHandler;
 import com.android.ide.eclipse.adt.internal.project.XmlErrorHandler.XmlErrorListener;
+import com.android.ide.eclipse.adt.internal.sdk.ProjectState;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
+import com.android.ide.eclipse.adt.io.IFileWrapper;
+import com.android.io.IAbstractFile;
+import com.android.io.StreamException;
+import com.android.sdklib.BuildToolInfo;
 import com.android.sdklib.IAndroidTarget;
 
 import org.eclipse.core.resources.IContainer;
@@ -38,6 +46,7 @@ import org.eclipse.core.resources.IncrementalProjectBuilder;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.jdt.core.IJavaProject;
 import org.xml.sax.SAXException;
 
@@ -53,10 +62,18 @@ import javax.xml.parsers.SAXParserFactory;
  */
 public abstract class BaseBuilder extends IncrementalProjectBuilder {
 
-    protected final static boolean DEBUG = false;
+    protected static final boolean DEBUG_LOG = "1".equals(              //$NON-NLS-1$
+            System.getenv("ANDROID_BUILD_DEBUG"));                      //$NON-NLS-1$
 
     /** SAX Parser factory. */
     private SAXParserFactory mParserFactory;
+
+    /**
+     * The build tool to use to build. This is guaranteed to be non null after a call to
+     * {@link #abortOnBadSetup(IJavaProject, ProjectState)} since this will throw if it can't be
+     * queried.
+     */
+    protected BuildToolInfo mBuildToolInfo;
 
     /**
      * Base Resource Delta Visitor to handle XML error
@@ -122,6 +139,7 @@ public abstract class BaseBuilder extends IncrementalProjectBuilder {
          * Sent when an XML error is detected.
          * @see XmlErrorListener
          */
+        @Override
         public void errorFound() {
             mXmlError = true;
         }
@@ -227,13 +245,13 @@ public abstract class BaseBuilder extends IncrementalProjectBuilder {
     /**
      * Get the stderr output of a process and return when the process is done.
      * @param process The process to get the ouput from
-     * @param results The array to store the stderr output
+     * @param stdErr The array to store the stderr output
      * @return the process return code.
      * @throws InterruptedException
      */
     protected final int grabProcessOutput(final Process process,
-            final ArrayList<String> results) throws InterruptedException {
-        return BuildHelper.grabProcessOutput(getProject(), process, results);
+            final ArrayList<String> stdErr) throws InterruptedException {
+        return BuildHelper.grabProcessOutput(getProject(), process, stdErr);
     }
 
 
@@ -287,9 +305,11 @@ public abstract class BaseBuilder extends IncrementalProjectBuilder {
      * display any errors.
      *
      * @param javaProject The {@link IJavaProject} being compiled.
+     * @param projectState the project state, optional. will be queried if null.
      * @throws CoreException
      */
-    protected void abortOnBadSetup(IJavaProject javaProject) throws AbortBuildException {
+    protected void abortOnBadSetup(@NonNull IJavaProject javaProject,
+            @Nullable ProjectState projectState) throws AbortBuildException, CoreException {
         IProject iProject = javaProject.getProject();
         // check if we have finished loading the project target.
         Sdk sdk = Sdk.getCurrent();
@@ -297,8 +317,12 @@ public abstract class BaseBuilder extends IncrementalProjectBuilder {
             throw new AbortBuildException();
         }
 
+        if (projectState == null) {
+            projectState = Sdk.getProjectState(javaProject.getProject());
+        }
+
         // get the target for the project
-        IAndroidTarget target = sdk.getTarget(javaProject.getProject());
+        IAndroidTarget target = projectState.getTarget();
 
         if (target == null) {
             throw new AbortBuildException();
@@ -308,6 +332,20 @@ public abstract class BaseBuilder extends IncrementalProjectBuilder {
         if (sdk.checkAndLoadTargetData(target, javaProject) != LoadStatus.LOADED) {
             throw new AbortBuildException();
        }
+
+        mBuildToolInfo = projectState.getBuildToolInfo();
+        if (mBuildToolInfo == null) {
+            mBuildToolInfo = sdk.getLatestBuildTool();
+
+            if (mBuildToolInfo == null) {
+                throw new AbortBuildException();
+            } else {
+                AdtPlugin.printBuildToConsole(BuildVerbosity.VERBOSE, iProject,
+                        String.format("Using default Build Tools revision %s",
+                                mBuildToolInfo.getRevision())
+                        );
+            }
+        }
 
         // abort if there are TARGET or ADT type markers
         stopOnMarker(iProject, AdtConstants.MARKER_TARGET, IResource.DEPTH_ZERO,
@@ -338,6 +376,53 @@ public abstract class BaseBuilder extends IncrementalProjectBuilder {
             // don't stop, something's really screwed up and the build will break later with
             // a better error message.
         }
+    }
+
+    /**
+     * Handles a {@link StreamException} by logging the info and marking the project.
+     * This should generally be followed by exiting the build process.
+     *
+     * @param e the exception
+     */
+    protected void handleStreamException(StreamException e) {
+        IAbstractFile file = e.getFile();
+
+        String msg;
+
+        IResource target = getProject();
+        if (file instanceof IFileWrapper) {
+            target = ((IFileWrapper) file).getIFile();
+
+            if (e.getError() == StreamException.Error.OUTOFSYNC) {
+                msg = "File is Out of sync";
+            } else {
+                msg = "Error reading file. Read log for details";
+            }
+
+        } else {
+            if (e.getError() == StreamException.Error.OUTOFSYNC) {
+                msg = String.format("Out of sync file: %s", file.getOsLocation());
+            } else {
+                msg = String.format("Error reading file %s. Read log for details",
+                        file.getOsLocation());
+            }
+        }
+
+        AdtPlugin.logAndPrintError(e, getProject().getName(), msg);
+        BaseProjectHelper.markResource(target, AdtConstants.MARKER_ADT, msg,
+                IMarker.SEVERITY_ERROR);
+    }
+
+    /**
+     * Handles a generic {@link Throwable} by logging the info and marking the project.
+     * This should generally be followed by exiting the build process.
+     *
+     * @param t the {@link Throwable}.
+     * @param message the message to log and to associate with the marker.
+     */
+    protected void handleException(Throwable t, String message) {
+        AdtPlugin.logAndPrintError(t, getProject().getName(), message);
+        markProject(AdtConstants.MARKER_ADT, message, IMarker.SEVERITY_ERROR);
     }
 
     /**
@@ -384,5 +469,10 @@ public abstract class BaseBuilder extends IncrementalProjectBuilder {
                 rootResource.getLocation().toFile().delete();
             }
         }
+    }
+
+    protected void launchJob(Job newJob) {
+        newJob.setPriority(Job.BUILD);
+        newJob.schedule();
     }
 }

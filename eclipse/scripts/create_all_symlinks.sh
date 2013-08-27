@@ -1,21 +1,81 @@
 #!/bin/bash
+# See usage() below for the description.
 
-echo "## Running $0"
+function usage() {
+  cat <<EOF
+# This script copies the .jar files that each plugin depends on into the plugins libs folder.
+# By default, on Mac & Linux, this script creates symlinks from the libs folder to the jar file.
+# Since Windows does not support symlinks, the jar files are copied.
+#
+# Options:
+# -f : to copy files rather than creating symlinks on the Mac/Linux platforms.
+# -d : print make dependencies instead of running make; doesn't copy files.
+# -c : copy files expected after make dependencies (reported by -d) have been built.
+#
+# The purpose of -d/-c is to include the workflow in a make file:
+# - the make rule should depend on \$(shell create_all_symlinks -d)
+# - the rule body should perform   \$(shell create_all_symlinks -c [-f])
+EOF
+}
+
 # CD to the top android directory
 PROG_DIR=`dirname "$0"`
 cd "${PROG_DIR}/../../../"
 
 HOST=`uname`
+USE_COPY=""        # force copy dependent jar files rather than creating symlinks
+ONLY_SHOW_DEPS=""  # only report make dependencies but don't build them nor copy.
+ONLY_COPY_DEPS=""  # only copy dependencies built by make; uses -f as needed.
 
 function die() {
-  echo "Error: $*"
+  echo "Error: $*" >/dev/stderr
   exit 1
 }
 
-if [ "${HOST:0:6}" == "CYGWIN" ]; then
-  PLATFORM="windows-x86"
+function warn() {
+  # Only print something if not in show-deps mode
+  if [[ -z $ONLY_SHOW_DEPS ]]; then
+    echo "$*"
+  fi
+}
 
-  # We can't use symlinks under Cygwin
+## parse arguments
+while [ $# -gt 0 ]; do
+  case "$1" in
+    "-f" )
+      USE_COPY="1"
+      ;;
+    "-d" )
+      ONLY_SHOW_DEPS="1"
+      ;;
+    "-c" )
+      ONLY_COPY_DEPS="1"
+      ;;
+    * )
+      usage
+      exit 2
+  esac
+  shift
+done
+
+warn "## Running $0"
+
+if [[ "${HOST:0:6}" == "CYGWIN" || "$USE_MINGW" == "1" ]]; then
+  # This is either Cygwin or Linux/Mingw cross-compiling to Windows.
+  PLATFORM="windows-x86"
+  if [[ "${HOST:0:6}" == "CYGWIN" ]]; then
+    # We can't use symlinks under Cygwin
+    USE_COPY="1"
+  fi
+elif [[ "$HOST" == "Linux" ]]; then
+  PLATFORM="linux-x86"
+elif [[ "$HOST" == "Darwin" ]]; then
+  PLATFORM="darwin-x86"
+else
+  die "Unsupported platform ($HOST). Aborting."
+fi
+
+if [[ "$USE_COPY" == "1" ]]; then
   function cpfile { # $1=source $2=dest
     cp -fv $1 $2/
   }
@@ -24,17 +84,6 @@ if [ "${HOST:0:6}" == "CYGWIN" ]; then
     rsync -avW --delete-after $1 $2
   }
 else
-  if [ "$HOST" == "Linux" ]; then
-    PLATFORM="linux-x86"
-  elif [ "$HOST" == "Darwin" ]; then
-    PLATFORM="darwin-x86"
-  else
-    echo "Unsupported platform ($HOST). Aborting."
-    exit 1
-  fi
-
-  # For all other systems which support symlinks
-
   # computes the "reverse" path, e.g. "a/b/c" => "../../.."
   function back() {
     echo $1 | sed 's@[^/]*@..@g'
@@ -52,22 +101,40 @@ fi
 DEST="sdk/eclipse/scripts"
 
 set -e # fail early
-
 LIBS=""
 CP_FILES=""
+
+
+### BASE ###
+
+BASE_PLUGIN_DEST="sdk/eclipse/plugins/com.android.ide.eclipse.base/libs"
+BASE_PLUGIN_LIBS="common sdkstats sdklib dvlib layoutlib-api sdk-common"
+BASE_PLUGIN_PREBUILTS="\
+    prebuilts/tools/common/m2/repository/net/sf/kxml/kxml2/2.3.0/kxml2-2.3.0.jar \
+    prebuilts/tools/common/m2/repository/org/apache/commons/commons-compress/1.0/commons-compress-1.0.jar \
+    prebuilts/tools/common/m2/repository/com/google/guava/guava/13.0.1/guava-13.0.1.jar \
+    prebuilts/tools/common/m2/repository/commons-logging/commons-logging/1.1.1/commons-logging-1.1.1.jar \
+    prebuilts/tools/common/m2/repository/commons-codec/commons-codec/1.4/commons-codec-1.4.jar \
+    prebuilts/tools/common/m2/repository/org/apache/httpcomponents/httpclient/4.1.1/httpclient-4.1.1.jar \
+    prebuilts/tools/common/m2/repository/org/apache/httpcomponents/httpcore/4.1/httpcore-4.1.jar \
+    prebuilts/tools/common/m2/repository/org/apache/httpcomponents/httpmime/4.1/httpmime-4.1.jar \
+    prebuilts/tools/common/m2/repository/org/bouncycastle/bcpkix-jdk15on/1.48/bcpkix-jdk15on-1.48.jar \
+    prebuilts/tools/common/m2/repository/org/bouncycastle/bcprov-jdk15on/1.48/bcprov-jdk15on-1.48.jar"
+
+LIBS="$LIBS $BASE_PLUGIN_LIBS"
+CP_FILES="$CP_FILES @:$BASE_PLUGIN_DEST $BASE_PLUGIN_LIBS $BASE_PLUGIN_PREBUILTS"
+
 
 ### ADT ###
 
 ADT_DEST="sdk/eclipse/plugins/com.android.ide.eclipse.adt/libs"
-ADT_LIBS="sdkstats androidprefs common layoutlib_api lint_api lint_checks ide_common rule_api ninepatch sdklib sdkuilib assetstudio"
+ADT_LIBS="ant-glob asset-studio lint-api lint-checks ninepatch propertysheet rule-api sdkuilib swtmenubar manifest-merger"
 ADT_PREBUILTS="\
-    prebuilt/common/kxml2/kxml2-2.3.0.jar \
-    prebuilt/common/commons-compress/commons-compress-1.0.jar \
-    prebuilt/common/http-client/httpclient-4.1.1.jar \
-    prebuilt/common/http-client/httpcore-4.1.jar \
-    prebuilt/common/http-client/httpmime-4.1.1.jar \
-    prebuilt/common/http-client/commons-logging-1.1.1.jar \
-    prebuilt/common/http-client/commons-codec-1.4.jar"
+    prebuilts/tools/common/freemarker/freemarker-2.3.19.jar \
+    prebuilts/tools/common/m2/repository/org/ow2/asm/asm/4.0/asm-4.0.jar \
+    prebuilts/tools/common/m2/repository/org/ow2/asm/asm-tree/4.0/asm-tree-4.0.jar \
+    prebuilts/tools/common/m2/repository/org/ow2/asm/asm-analysis/4.0/asm-analysis-4.0.jar \
+    prebuilts/tools/common/lombok-ast/lombok-ast-0.2.jar"
 
 LIBS="$LIBS $ADT_LIBS"
 CP_FILES="$CP_FILES @:$ADT_DEST $ADT_LIBS $ADT_PREBUILTS"
@@ -76,12 +143,12 @@ CP_FILES="$CP_FILES @:$ADT_DEST $ADT_LIBS $ADT_PREBUILTS"
 ### DDMS ###
 
 DDMS_DEST="sdk/eclipse/plugins/com.android.ide.eclipse.ddms/libs"
-DDMS_LIBS="ddmlib ddmuilib swtmenubar"
+DDMS_LIBS="ddmlib ddmuilib swtmenubar uiautomatorviewer"
 
 DDMS_PREBUILTS="\
-    prebuilt/common/jfreechart/jcommon-1.0.12.jar \
-    prebuilt/common/jfreechart/jfreechart-1.0.9.jar \
-    prebuilt/common/jfreechart/jfreechart-1.0.9-swt.jar"
+    prebuilts/tools/common/m2/repository/jfree/jcommon/1.0.12/jcommon-1.0.12.jar \
+    prebuilts/tools/common/m2/repository/jfree/jfreechart/1.0.9/jfreechart-1.0.9.jar \
+    prebuilts/tools/common/m2/repository/jfree/jfreechart-swt/1.0.9/jfreechart-swt-1.0.9.jar"
 
 LIBS="$LIBS $DDMS_LIBS"
 CP_FILES="$CP_FILES @:$DDMS_DEST $DDMS_LIBS $DDMS_PREBUILTS"
@@ -90,8 +157,8 @@ CP_FILES="$CP_FILES @:$DDMS_DEST $DDMS_LIBS $DDMS_PREBUILTS"
 ### TEST ###
 
 TEST_DEST="sdk/eclipse/plugins/com.android.ide.eclipse.tests"
-TEST_LIBS="easymock"
-TEST_PREBUILTS="prebuilt/common/kxml2/kxml2-2.3.0.jar"
+TEST_LIBS="easymock sdktestutils"
+TEST_PREBUILTS="prebuilts/tools/common/m2/repository/net/sf/kxml/kxml2/2.3.0/kxml2-2.3.0.jar"
 
 LIBS="$LIBS $TEST_LIBS"
 CP_FILES="$CP_FILES @:$TEST_DEST $TEST_LIBS $TEST_PREBUILTS"
@@ -107,11 +174,10 @@ if [[ $PLATFORM != "windows-x86" ]]; then
 fi
 
 
-
 ### HIERARCHYVIEWER ###
 
 HV_DEST="sdk/eclipse/plugins/com.android.ide.eclipse.hierarchyviewer/libs"
-HV_LIBS="hierarchyviewerlib swtmenubar"
+HV_LIBS="hierarchyviewer2lib swtmenubar"
 
 LIBS="$LIBS $HV_LIBS"
 CP_FILES="$CP_FILES @:$HV_DEST $HV_LIBS"
@@ -126,9 +192,18 @@ LIBS="$LIBS $TV_LIBS"
 CP_FILES="$CP_FILES @:$TV_DEST $TV_LIBS"
 
 
+### MONITOR ###
+
+MONITOR_DEST="sdk/eclipse/plugins/com.android.ide.eclipse.monitor/libs"
+MONITOR_LIBS="sdkuilib"
+
+LIBS="$LIBS $MONITOR_LIBS"
+CP_FILES="$CP_FILES @:$MONITOR_DEST $MONITOR_LIBS"
+
+
 ### SDKMANAGER ###
 
-SDMAN_LIBS="swtmenubar"
+SDKMAN_LIBS="swtmenubar"
 
 LIBS="$LIBS $SDKMAN_LIBS"
 
@@ -137,33 +212,59 @@ LIBS="$LIBS $SDKMAN_LIBS"
 
 if [[ $PLATFORM != "windows-x86" ]]; then
   # liblzf doesn't build under cygwin. If necessary, this should be fixed first.
-  
+
   GLD_DEST="sdk/eclipse/plugins/com.android.ide.eclipse.gldebugger/libs"
-  GLD_LIBS="host-libprotobuf-java-2.3.0-lite liblzf sdklib ddmlib"
+  GLD_LIBS="host-libprotobuf-java-2.3.0-lite liblzf"
 
   LIBS="$LIBS $GLD_LIBS"
   CP_FILES="$CP_FILES @:$GLD_DEST $GLD_LIBS"
 fi
 
-# Make sure we have lunch sdk-<something>
-if [[ ! "$TARGET_PRODUCT" ]]; then
-    echo "## TARGET_PRODUCT is not set, running build/envsetup.sh"
-  . build/envsetup.sh
-    echo "## lunch sdk-eng"
-  lunch sdk-eng
+# If some of the libs are available in prebuilts/devtools, use link to them directly
+# instead of trying to rebuild them so remove them from the libs to build. Note that
+# they are already listed in CP_FILES so we'll adjust the source to copy later.
+
+LIBS2=""
+for LIB in $LIBS; do
+  J="prebuilts/devtools/tools/lib/$LIB.jar"
+  if [[ ! -f $J ]]; then
+    J="prebuilts/devtools/adt/lib/$LIB.jar"
+  fi
+  if [[ -f $J ]]; then
+    warn "## Using existing $J"
+  else
+    LIBS2="$LIBS2 $LIB"
+  fi
+done
+LIBS="$LIBS2"
+unset LIBS2
+
+# In the mode to only echo dependencies, output them and we're done
+if [[ -n $ONLY_SHOW_DEPS ]]; then
+  echo $LIBS
+  exit 0
 fi
 
-# Run make on all libs
+if [[ -z $ONLY_COPY_DEPS ]]; then
+  # Make sure we have lunch sdk-<something>
+  if [[ ! "$TARGET_PRODUCT" ]]; then
+    warn "## TARGET_PRODUCT is not set, running build/envsetup.sh"
+    . build/envsetup.sh
+    warn "## lunch sdk-eng"
+    lunch sdk-eng
+  fi
 
-J="4"
-[[ $(uname) == "Darwin" ]] && J=$(sysctl hw.ncpu | cut -d : -f 2 | tr -d ' ')
-[[ $(uname) == "Linux"  ]] && J=$(cat /proc/cpuinfo | grep processor | wc -l)
+  # Run make on all libs
 
-echo "## Building libs: make -j$J $LIBS"
-make -j${J} $LIBS
+  J="4"
+  [[ $(uname) == "Darwin" ]] && J=$(sysctl hw.ncpu | cut -d : -f 2 | tr -d ' ')
+  [[ $(uname) == "Linux"  ]] && J=$(cat /proc/cpuinfo | grep processor | wc -l)
+
+  warn "## Building libs: make -j$J $LIBS"
+  make -j${J} $LIBS
+fi
 
 # Copy resulting files
-
 DEST=""
 for SRC in $CP_FILES; do
   if [[ "${SRC:0:2}" == "@:" ]]; then
@@ -172,7 +273,15 @@ for SRC in $CP_FILES; do
     continue
   fi
   if [[ ! -f "$SRC" ]]; then
-    SRC="out/host/$PLATFORM/framework/$SRC.jar"
+    ORIG_SRC="$SRC"
+    # Take a prebuilts/devtools instead of a framework one if possible.
+    SRC="prebuilts/devtools/tools/lib/$SRC.jar"
+    if [[ ! -f "$SRC" ]]; then
+      SRC="prebuilts/devtools/adt/lib/$ORIG_SRC.jar"
+    fi
+    if [[ ! -f "$SRC" ]]; then
+      SRC="out/host/$PLATFORM/framework/$ORIG_SRC.jar"
+    fi
   fi
   if [[ -f "$SRC" ]]; then
     if [[ ! -d "$DEST" ]]; then
@@ -181,7 +290,7 @@ for SRC in $CP_FILES; do
 
     cpfile "$SRC" "$DEST"
   else
-    die "## Unknown file '$SRC' to copy in '$DEST'"
+    die "## Unknown source '$ORIG_SRC' to copy in '$DEST'"
   fi
 done
 

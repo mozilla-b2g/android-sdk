@@ -17,8 +17,8 @@
 package com.android.ide.eclipse.adt.internal.editors.ui.tree;
 
 import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.ide.eclipse.adt.internal.editors.IconFactory;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
-import com.android.ide.eclipse.adt.internal.editors.ui.ErrorImageComposite;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
 
 import org.eclipse.jface.viewers.ILabelProvider;
@@ -40,6 +40,7 @@ public class UiModelTreeLabelProvider implements ILabelProvider {
     /**
      * Returns the element's logo with a fallback on the android logo.
      */
+    @Override
     public Image getImage(Object element) {
         ElementDescriptor desc = null;
         UiElementNode node = null;
@@ -55,8 +56,7 @@ public class UiModelTreeLabelProvider implements ILabelProvider {
             Image img = desc.getCustomizedIcon();
             if (img != null) {
                 if (node != null && node.hasError()) {
-                    //TODO: cache image
-                    return new ErrorImageComposite(img).createImage();
+                    return IconFactory.getInstance().addErrorIcon(img);
                 } else {
                     return img;
                 }
@@ -69,6 +69,7 @@ public class UiModelTreeLabelProvider implements ILabelProvider {
     /**
      * Uses UiElementNode.shortDescription for the label for this tree item.
      */
+    @Override
     public String getText(Object element) {
         if (element instanceof ElementDescriptor) {
             ElementDescriptor desc = (ElementDescriptor) element;
@@ -80,19 +81,23 @@ public class UiModelTreeLabelProvider implements ILabelProvider {
         return element.toString();
     }
 
+    @Override
     public void addListener(ILabelProviderListener listener) {
         // pass
     }
 
+    @Override
     public void dispose() {
         // pass
     }
 
+    @Override
     public boolean isLabelProperty(Object element, String property) {
         // pass
         return false;
     }
 
+    @Override
     public void removeListener(ILabelProviderListener listener) {
         // pass
     }

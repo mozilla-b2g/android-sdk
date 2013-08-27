@@ -16,17 +16,17 @@
 
 package com.android.ide.eclipse.adt.internal.editors.uimodel;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_NS_NAME;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_CLASS;
-import static com.android.ide.common.layout.LayoutConstants.ID_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.NEW_ID_PREFIX;
-import static com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor.XMLNS;
-import static com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor.XMLNS_URI;
-import static com.android.sdklib.SdkConstants.NS_RESOURCES;
+import static com.android.SdkConstants.ANDROID_PKG_PREFIX;
+import static com.android.SdkConstants.ANDROID_SUPPORT_PKG_PREFIX;
+import static com.android.SdkConstants.ATTR_CLASS;
+import static com.android.SdkConstants.ID_PREFIX;
+import static com.android.SdkConstants.NEW_ID_PREFIX;
 
+import com.android.SdkConstants;
 import com.android.annotations.VisibleForTesting;
 import com.android.ide.common.api.IAttributeInfo.Format;
 import com.android.ide.common.resources.platform.AttributeInfo;
+import com.android.ide.common.xml.XmlAttributeSortOrder;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.AttributeDescriptor;
@@ -37,19 +37,19 @@ import com.android.ide.eclipse.adt.internal.editors.descriptors.SeparatorAttribu
 import com.android.ide.eclipse.adt.internal.editors.descriptors.TextAttributeDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.CustomViewDescriptorService;
-import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.manifest.descriptors.AndroidManifestDescriptors;
-import com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors;
+import com.android.ide.eclipse.adt.internal.editors.otherxml.descriptors.OtherXmlDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.IUiUpdateListener.UiUpdateState;
-import com.android.ide.eclipse.adt.internal.editors.xml.descriptors.XmlDescriptors;
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
 import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetData;
-import com.android.sdklib.SdkConstants;
+import com.android.utils.SdkUtils;
+import com.android.utils.XmlUtils;
 
-import org.eclipse.core.resources.IProject;
+import org.eclipse.jface.text.TextUtilities;
 import org.eclipse.jface.viewers.StyledString;
 import org.eclipse.ui.views.properties.IPropertyDescriptor;
 import org.eclipse.ui.views.properties.IPropertySource;
+import org.eclipse.wst.sse.core.internal.provisional.text.IStructuredDocument;
 import org.eclipse.wst.xml.core.internal.document.ElementImpl;
 import org.w3c.dom.Attr;
 import org.w3c.dom.Document;
@@ -64,6 +64,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
@@ -127,7 +128,7 @@ public class UiElementNode implements IPropertySource {
     private Map<String, AttributeDescriptor> mCachedHiddenAttributes;
     /** An optional list of {@link IUiUpdateListener}. Most element nodes will not have any
      *  listeners attached, so the list is only created on demand and can be null. */
-    private ArrayList<IUiUpdateListener> mUiUpdateListeners;
+    private List<IUiUpdateListener> mUiUpdateListeners;
     /** A provider that knows how to create {@link ElementDescriptor} from unmapped XML names.
      *  The default is to have one that creates new {@link ElementDescriptor}. */
     private IUnknownDescriptorProvider mUnknownDescProvider;
@@ -250,23 +251,23 @@ public class UiElementNode implements IPropertySource {
                 attr = _Element_getAttributeNS(elem,
                                 SdkConstants.NS_RESOURCES,
                                 AndroidManifestDescriptors.ANDROID_LABEL_ATTR);
-            } else if (mXmlNode.getNodeName().equals(LayoutDescriptors.VIEW_FRAGMENT)) {
+            } else if (mXmlNode.getNodeName().equals(SdkConstants.VIEW_FRAGMENT)) {
                 attr = attr.substring(attr.lastIndexOf('.') + 1);
             }
             if (attr == null || attr.length() == 0) {
                 attr = _Element_getAttributeNS(elem,
                                 SdkConstants.NS_RESOURCES,
-                                XmlDescriptors.PREF_KEY_ATTR);
+                                OtherXmlDescriptors.PREF_KEY_ATTR);
             }
             if (attr == null || attr.length() == 0) {
                 attr = _Element_getAttributeNS(elem,
                                 null, // no namespace
-                                ResourcesDescriptors.NAME_ATTR);
+                                SdkConstants.ATTR_NAME);
             }
             if (attr == null || attr.length() == 0) {
                 attr = _Element_getAttributeNS(elem,
                                 SdkConstants.NS_RESOURCES,
-                                LayoutDescriptors.ID_ATTR);
+                                SdkConstants.ATTR_ID);
 
                 if (attr != null && attr.length() > 0) {
                     for (String prefix : ID_PREFIXES) {
@@ -297,7 +298,7 @@ public class UiElementNode implements IPropertySource {
         // Special case: for <view>, show the class attribute value instead.
         // This is done here rather than in the descriptor since this depends on
         // node instance data.
-        if (LayoutDescriptors.VIEW_VIEWTAG.equals(uiName) && mXmlNode instanceof Element) {
+        if (SdkConstants.VIEW_TAG.equals(uiName) && mXmlNode instanceof Element) {
             Element element = (Element) mXmlNode;
             String cls = element.getAttribute(ATTR_CLASS);
             if (cls != null) {
@@ -310,7 +311,7 @@ public class UiElementNode implements IPropertySource {
         if (attr != null) {
             // Don't append the two when it's a repeat, e.g. Button01 (Button),
             // only when the ui name is not part of the attribute
-            if (attr.toLowerCase().indexOf(uiName.toLowerCase()) == -1) {
+            if (attr.toLowerCase(Locale.US).indexOf(uiName.toLowerCase(Locale.US)) == -1) {
                 styledString.append(attr);
                 styledString.append(String.format(" (%1$s)", uiName),
                         StyledString.DECORATIONS_STYLER);
@@ -335,7 +336,7 @@ public class UiElementNode implements IPropertySource {
      * <p/>
      * Note: This is a wrapper around {@link Element#getAttributeNS(String, String)}.
      * In some versions of webtools, the getAttributeNS implementation crashes with an NPE.
-     * This wrapper will return null instead.
+     * This wrapper will return an empty string instead.
      *
      * @see Element#getAttributeNS(String, String)
      * @see <a href="https://bugs.eclipse.org/bugs/show_bug.cgi?id=318108">https://bugs.eclipse.org/bugs/show_bug.cgi?id=318108</a>
@@ -691,6 +692,7 @@ public class UiElementNode implements IPropertySource {
                  * The default is to create a new ElementDescriptor wrapping
                  * the unknown XML local name and reuse previously created descriptors.
                  */
+                @Override
                 public ElementDescriptor getDescriptor(String xmlLocalName) {
 
                     ElementDescriptor desc = mMap.get(xmlLocalName);
@@ -1029,7 +1031,14 @@ public class UiElementNode implements IPropertySource {
         }
 
         // Insert indent text node before the new element
-        Text indentNode = doc.createTextNode("\n" + indent); //$NON-NLS-1$
+        IStructuredDocument document = editor.getStructuredDocument();
+        String newLine;
+        if (document != null) {
+            newLine = TextUtilities.getDefaultLineDelimiter(document);
+        } else {
+            newLine = SdkUtils.getLineSeparator();
+        }
+        Text indentNode = doc.createTextNode(newLine + indent);
         parentXmlNode.insertBefore(indentNode, xmlNextSibling);
 
         // Insert the element itself
@@ -1039,7 +1048,7 @@ public class UiElementNode implements IPropertySource {
         // a tag into an area where there was no whitespace before
         // (e.g. a new child of <LinearLayout></LinearLayout>).
         if (insertAfter != null) {
-            Text sep = doc.createTextNode("\n" + insertAfter); //$NON-NLS-1$
+            Text sep = doc.createTextNode(newLine + insertAfter);
             parentXmlNode.insertBefore(sep, xmlNextSibling);
         }
 
@@ -1051,7 +1060,7 @@ public class UiElementNode implements IPropertySource {
         for (AttributeDescriptor attrDesc : getAttributeDescriptors()) {
             if (attrDesc instanceof XmlnsAttributeDescriptor) {
                 XmlnsAttributeDescriptor desc = (XmlnsAttributeDescriptor) attrDesc;
-                Attr attr = doc.createAttributeNS(XmlnsAttributeDescriptor.XMLNS_URI,
+                Attr attr = doc.createAttributeNS(SdkConstants.XMLNS_URI,
                         desc.getXmlNsName());
                 attr.setValue(desc.getValue());
                 attr.setPrefix(desc.getXmlNsPrefix());
@@ -1161,10 +1170,19 @@ public class UiElementNode implements IPropertySource {
             if (xmlChild.getNodeType() == Node.ELEMENT_NODE) {
                 String elementName = xmlChild.getNodeName();
                 UiElementNode uiNode = null;
+                CustomViewDescriptorService service = CustomViewDescriptorService.getInstance();
                 if (mUiChildren.size() <= uiIndex) {
                     // A new node is being added at the end of the list
                     ElementDescriptor desc = mDescriptor.findChildrenDescriptor(elementName,
                             false /* recursive */);
+                    if (desc == null && elementName.indexOf('.') != -1 &&
+                            (!elementName.startsWith(ANDROID_PKG_PREFIX)
+                                    || elementName.startsWith(ANDROID_SUPPORT_PKG_PREFIX))) {
+                        AndroidXmlEditor editor = getEditor();
+                        if (editor != null && editor.getProject() != null) {
+                            desc = service.getDescriptor(editor.getProject(), elementName);
+                        }
+                    }
                     if (desc == null) {
                         // Unknown node. Create a temporary descriptor for it.
                         // We'll add unknown attributes to it later.
@@ -1223,11 +1241,12 @@ public class UiElementNode implements IPropertySource {
                         // Inserting new node
                         ElementDescriptor desc = mDescriptor.findChildrenDescriptor(elementName,
                                 false /* recursive */);
-                        if (desc == null && elementName.indexOf('.') != -1) {
-                            IProject project = getEditor().getProject();
-                            if (project != null) {
-                                desc = CustomViewDescriptorService.getInstance().getDescriptor(
-                                        project, elementName);
+                        if (desc == null && elementName.indexOf('.') != -1 &&
+                                (!elementName.startsWith(ANDROID_PKG_PREFIX)
+                                        || elementName.startsWith(ANDROID_SUPPORT_PKG_PREFIX))) {
+                            AndroidXmlEditor editor = getEditor();
+                            if (editor != null && editor.getProject() != null) {
+                                desc = service.getDescriptor(editor.getProject(), elementName);
                             }
                         }
                         if (desc == null) {
@@ -1478,10 +1497,8 @@ public class UiElementNode implements IPropertySource {
         // Create a new unknown attribute of format string
         TextAttributeDescriptor desc = new TextAttributeDescriptor(
                 xmlAttrLocalName,           // xml name
-                xmlFullName,                // ui name
-                xmlNsUri,                   // NS uri
-                "Unknown XML attribute",    // tooltip, translatable
-                new AttributeInfo(xmlAttrLocalName, new Format[] { Format.STRING } )
+                xmlNsUri,                // ui name
+                new AttributeInfo(xmlAttrLocalName, Format.STRING_SET)
                 );
         UiAttributeNode uiAttr = desc.createUiNode(this);
         mUnknownUiAttributes.add(uiAttr);
@@ -1560,7 +1577,7 @@ public class UiElementNode implements IPropertySource {
                         attr = (Attr) attrMap.getNamedItemNS(attrNsUri, attrLocalName);
                         if (attr == null) {
                             attr = doc.createAttributeNS(attrNsUri, attrLocalName);
-                            attr.setPrefix(lookupNamespacePrefix(element, attrNsUri));
+                            attr.setPrefix(XmlUtils.lookupNamespacePrefix(element, attrNsUri));
                             attrMap.setNamedItemNS(attr);
                         }
                     } else {
@@ -1636,12 +1653,20 @@ public class UiElementNode implements IPropertySource {
                 return result;
             }
 
-            String firstName = dirtyAttributes.get(0).getDescriptor().getXmlLocalName();
+            AttributeDescriptor descriptor = dirtyAttributes.get(0).getDescriptor();
+            String firstName = descriptor.getXmlLocalName();
+            String firstNamePrefix = null;
+            String namespaceUri = descriptor.getNamespaceUri();
+            if (namespaceUri != null) {
+                firstNamePrefix = XmlUtils.lookupNamespacePrefix(element, namespaceUri);
+            }
             NamedNodeMap attributes = ((Element) element).getAttributes();
             List<Attr> move = new ArrayList<Attr>();
             for (int i = 0, n = attributes.getLength(); i < n; i++) {
                 Attr attribute = (Attr) attributes.item(i);
-                if (UiAttributeNode.compareAttributes(attribute.getLocalName(), firstName) > 0) {
+                if (XmlAttributeSortOrder.compareAttributes(
+                        attribute.getPrefix(), attribute.getLocalName(),
+                        firstNamePrefix, firstName) > 0) {
                     move.add(attribute);
                 }
             }
@@ -1675,7 +1700,7 @@ public class UiElementNode implements IPropertySource {
 
                         String domAttributeName = domAttribute.getLocalName();
                         String uiAttributeName = uiAttribute.getDescriptor().getXmlLocalName();
-                        compare = UiAttributeNode.compareAttributes(domAttributeName,
+                        compare = XmlAttributeSortOrder.compareAttributes(domAttributeName,
                                 uiAttributeName);
                     } else {
                         compare = 1;
@@ -1710,91 +1735,6 @@ public class UiElementNode implements IPropertySource {
         }
 
         return result;
-    }
-
-    /**
-     * Returns the namespace prefix matching the requested namespace URI.
-     * If no such declaration is found, returns the default "android" prefix.
-     *
-     * @param node The current node. Must not be null.
-     * @param nsUri The namespace URI of which the prefix is to be found,
-     *              e.g. SdkConstants.NS_RESOURCES
-     * @return The first prefix declared or the default "android" prefix.
-     */
-    public static String lookupNamespacePrefix(Node node, String nsUri) {
-        // Note: Node.lookupPrefix is not implemented in wst/xml/core NodeImpl.java
-        // The following code emulates this simple call:
-        //   String prefix = node.lookupPrefix(SdkConstants.NS_RESOURCES);
-
-        // if the requested URI is null, it denotes an attribute with no namespace.
-        if (nsUri == null) {
-            return null;
-        }
-
-        // per XML specification, the "xmlns" URI is reserved
-        if (XMLNS_URI.equals(nsUri)) {
-            return XMLNS;
-        }
-
-        HashSet<String> visited = new HashSet<String>();
-        Document doc = node == null ? null : node.getOwnerDocument();
-
-        // Ask the document about it. This method may not be implemented by the Document.
-        String nsPrefix = null;
-        try {
-            nsPrefix = doc != null ? doc.lookupPrefix(nsUri) : null;
-            if (nsPrefix != null) {
-                return nsPrefix;
-            }
-        } catch (Throwable t) {
-            // ignore
-        }
-
-        // If that failed, try to look it up manually.
-        // This also gathers prefixed in use in the case we want to generate a new one below.
-        for (; node != null && node.getNodeType() == Node.ELEMENT_NODE;
-               node = node.getParentNode()) {
-            NamedNodeMap attrs = node.getAttributes();
-            for (int n = attrs.getLength() - 1; n >= 0; --n) {
-                Node attr = attrs.item(n);
-                if (XMLNS.equals(attr.getPrefix())) {
-                    String uri = attr.getNodeValue();
-                    nsPrefix = attr.getLocalName();
-                    // Is this the URI we are looking for? If yes, we found its prefix.
-                    if (nsUri.equals(uri)) {
-                        return nsPrefix;
-                    }
-                    visited.add(nsPrefix);
-                }
-            }
-        }
-
-        // Failed the find a prefix. Generate a new sensible default prefix.
-        //
-        // We need to make sure the prefix is not one that was declared in the scope
-        // visited above. Use a default namespace prefix "android" for the Android resource
-        // NS and use "ns" for all other custom namespaces.
-        String prefix = NS_RESOURCES.equals(nsUri) ? ANDROID_NS_NAME : "ns"; //$NON-NLS-1$
-        String base = prefix;
-        for (int i = 1; visited.contains(prefix); i++) {
-            prefix = base + Integer.toString(i);
-        }
-        // Also create & define this prefix/URI in the XML document as an attribute in the
-        // first element of the document.
-        if (doc != null) {
-            node = doc.getFirstChild();
-            while (node != null && node.getNodeType() != Node.ELEMENT_NODE) {
-                node = node.getNextSibling();
-            }
-            if (node != null) {
-                Attr attr = doc.createAttributeNS(XMLNS_URI, prefix);
-                attr.setValue(nsUri);
-                attr.setPrefix(XMLNS);
-                node.getAttributes().setNamedItemNS(attr);
-            }
-        }
-
-        return prefix;
     }
 
     /**
@@ -1924,6 +1864,7 @@ public class UiElementNode implements IPropertySource {
 
     // ------ IPropertySource methods
 
+    @Override
     public Object getEditableValue() {
         return null;
     }
@@ -1935,6 +1876,7 @@ public class UiElementNode implements IPropertySource {
      * Returns the property descriptor for this node. Since the descriptors are not linked to the
      * data, the AttributeDescriptor are used directly.
      */
+    @Override
     public IPropertyDescriptor[] getPropertyDescriptors() {
         List<IPropertyDescriptor> propDescs = new ArrayList<IPropertyDescriptor>();
 
@@ -1968,6 +1910,7 @@ public class UiElementNode implements IPropertySource {
      * Returns the value of a given property. The id is the result of IPropertyDescriptor.getId(),
      * which return the AttributeDescriptor itself.
      */
+    @Override
     public Object getPropertyValue(Object id) {
         HashMap<AttributeDescriptor, UiAttributeNode> attributeMap = getInternalUiAttributes();
 
@@ -1991,6 +1934,7 @@ public class UiElementNode implements IPropertySource {
      *
      * Returns whether the property is set. In our case this is if the string is non empty.
      */
+    @Override
     public boolean isPropertySet(Object id) {
         HashMap<AttributeDescriptor, UiAttributeNode> attributeMap = getInternalUiAttributes();
 
@@ -2016,6 +1960,7 @@ public class UiElementNode implements IPropertySource {
      *
      * Reset the property to its default value. For now we simply empty it.
      */
+    @Override
     public void resetPropertyValue(Object id) {
         HashMap<AttributeDescriptor, UiAttributeNode> attributeMap = getInternalUiAttributes();
 
@@ -2043,6 +1988,7 @@ public class UiElementNode implements IPropertySource {
      * Set the property value. id is the result of IPropertyDescriptor.getId(), which is the
      * AttributeDescriptor itself. Value should be a String.
      */
+    @Override
     public void setPropertyValue(Object id, Object value) {
         HashMap<AttributeDescriptor, UiAttributeNode> attributeMap = getInternalUiAttributes();
 
@@ -2071,6 +2017,7 @@ public class UiElementNode implements IPropertySource {
             final UiAttributeNode fAttribute = attribute;
             AndroidXmlEditor editor = getEditor();
             editor.wrapEditXmlModel(new Runnable() {
+                @Override
                 public void run() {
                     commitAttributeToXml(fAttribute, newValue);
                 }

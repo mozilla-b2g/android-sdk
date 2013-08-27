@@ -15,10 +15,13 @@
  */
 package com.android.ide.common.layout;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ATTR_ID;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.api.IDragElement;
+import com.android.ide.common.api.INode;
 import com.android.ide.common.api.Rect;
 
 import java.util.ArrayList;
@@ -99,7 +102,8 @@ public class TestDragElement implements IDragElement {
 
     // ==== IDragElement ====
 
-    public IDragAttribute getAttribute(String uri, String localName) {
+    @Override
+    public IDragAttribute getAttribute(@Nullable String uri, @NonNull String localName) {
         if (mAttributes == null) {
             return new TestAttribute(uri, localName, "");
         }
@@ -107,19 +111,23 @@ public class TestDragElement implements IDragElement {
         return mAttributes.get(uri + localName);
     }
 
-    public IDragAttribute[] getAttributes() {
+    @Override
+    public @NonNull IDragAttribute[] getAttributes() {
         return mAttributes.values().toArray(new IDragAttribute[mAttributes.size()]);
     }
 
-    public Rect getBounds() {
+    @Override
+    public @NonNull Rect getBounds() {
         return mRect;
     }
 
-    public String getFqcn() {
+    @Override
+    public @NonNull String getFqcn() {
         return mFqcn;
     }
 
-    public IDragElement[] getInnerElements() {
+    @Override
+    public @NonNull IDragElement[] getInnerElements() {
         if (mChildren == null) {
             return new IDragElement[0];
         }
@@ -127,10 +135,12 @@ public class TestDragElement implements IDragElement {
         return mChildren.toArray(new IDragElement[mChildren.size()]);
     }
 
-    public Rect getParentBounds() {
+    @Override
+    public @NonNull Rect getParentBounds() {
         return mParent != null ? mParent.getBounds() : null;
     }
 
+    @Override
     public String getParentFqcn() {
         return mParent != null ? mParent.getFqcn() : null;
     }
@@ -141,5 +151,8 @@ public class TestDragElement implements IDragElement {
                 + mRect + "]";
     }
 
-
+    @Override
+    public boolean isSame(INode node) {
+        return node.getBounds().equals(getBounds());
+    }
 }

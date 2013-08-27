@@ -16,6 +16,8 @@
 
 package com.android.ide.eclipse.adt.internal.resources.manager;
 
+import com.android.SdkConstants;
+import com.android.annotations.NonNull;
 import com.android.ide.common.rendering.api.ResourceValue;
 import com.android.ide.common.resources.IntArrayWrapper;
 import com.android.ide.common.resources.ResourceFolder;
@@ -25,6 +27,7 @@ import com.android.ide.common.resources.configuration.FolderConfiguration;
 import com.android.ide.eclipse.adt.internal.sdk.ProjectState;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.ide.eclipse.adt.io.IFolderWrapper;
+import com.android.io.IAbstractFolder;
 import com.android.resources.ResourceType;
 import com.android.util.Pair;
 
@@ -32,7 +35,6 @@ import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IProject;
 
 import java.util.EnumMap;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -48,6 +50,7 @@ import java.util.Map.Entry;
  *       on the fly.</li>
  *</ul>
  */
+@SuppressWarnings("deprecation")
 public class ProjectResources extends ResourceRepository {
     // project resources are defined as 0x7FXX#### where XX is the resource type (layout, drawable,
     // etc...). Using FF as the type allows for 255 resource types before we get a collision
@@ -61,23 +64,22 @@ public class ProjectResources extends ResourceRepository {
     /** Map of (int[], name) for styleable resources coming from R.java */
     private Map<IntArrayWrapper, String> mStyleableValueToNameMap;
 
-    /**
-     * This list is used by {@link #getResourceId(String, String)} when the resource
-     * query is an ID that doesn't exist (for example for ID automatically generated in
-     * layout files that are not saved yet).
-     */
-    private final Map<String, Integer> mDynamicIds = new HashMap<String, Integer>();
-    private final Map<Integer, String> mRevDynamicIds = new HashMap<Integer, String>();
-    private int mDynamicSeed = DYNAMIC_ID_SEED_START;
-
+    private final DynamicIdMap mDynamicIdMap = new DynamicIdMap(DYNAMIC_ID_SEED_START);
+    private final IntArrayWrapper mWrapper = new IntArrayWrapper(null);
     private final IProject mProject;
+
+    public static ProjectResources create(IProject project) {
+        IFolder resFolder = project.getFolder(SdkConstants.FD_RESOURCES);
+
+        return new ProjectResources(project, new IFolderWrapper(resFolder));
+    }
 
     /**
      * Makes a ProjectResources for a given <var>project</var>.
      * @param project the project.
      */
-    public ProjectResources(IProject project) {
-        super(false /*isFrameworkRepository*/);
+    private ProjectResources(IProject project, IAbstractFolder resFolder) {
+        super(resFolder, false /*isFrameworkRepository*/);
         mProject = project;
     }
 
@@ -89,8 +91,10 @@ public class ProjectResources extends ResourceRepository {
      * @return a map with guaranteed to contain an entry for each {@link ResourceType}
      */
     @Override
+    @NonNull
     public Map<ResourceType, Map<String, ResourceValue>> getConfiguredResources(
-            FolderConfiguration referenceConfig) {
+            @NonNull FolderConfiguration referenceConfig) {
+        ensureInitialized();
 
         Map<ResourceType, Map<String, ResourceValue>> resultMap =
             new EnumMap<ResourceType, Map<String, ResourceValue>>(ResourceType.class);
@@ -182,9 +186,8 @@ public class ProjectResources extends ResourceRepository {
         }
 
         if (result == null) {
-            String name = mRevDynamicIds.get(id);
-            if (name != null) {
-                result = Pair.of(ResourceType.ID, name);
+            synchronized (mDynamicIdMap) {
+                result = mDynamicIdMap.resolveId(id);
             }
         }
 
@@ -218,8 +221,10 @@ public class ProjectResources extends ResourceRepository {
             }
         }
 
-        if (result == null && ResourceType.ID == type) {
-            result = getDynamicId(name);
+        if (result == null) {
+            synchronized (mDynamicIdMap) {
+                result = mDynamicIdMap.getId(type, name);
+            }
         }
 
         return result;
@@ -233,38 +238,15 @@ public class ProjectResources extends ResourceRepository {
      * change.
      */
     public void resetDynamicIds() {
-        synchronized (mDynamicIds) {
-            mDynamicIds.clear();
-            mRevDynamicIds.clear();
-            mDynamicSeed = DYNAMIC_ID_SEED_START;
+        synchronized (mDynamicIdMap) {
+            mDynamicIdMap.reset(DYNAMIC_ID_SEED_START);
         }
     }
 
     @Override
-    protected ResourceItem createResourceItem(String name) {
+    @NonNull
+    protected ResourceItem createResourceItem(@NonNull String name) {
         return new ResourceItem(name);
-    }
-
-    /**
-     * Returns a dynamic integer for the given resource name, creating it if it doesn't
-     * already exist.
-     *
-     * @param name the name of the resource
-     * @return an integer.
-     *
-     * @see #resetDynamicIds()
-     */
-    private Integer getDynamicId(String name) {
-        synchronized (mDynamicIds) {
-            Integer value = mDynamicIds.get(name);
-            if (value == null) {
-                value = Integer.valueOf(++mDynamicSeed);
-                mDynamicIds.put(name, value);
-                mRevDynamicIds.put(value, name);
-            }
-
-            return value;
-        }
     }
 
     /**
@@ -283,5 +265,7 @@ public class ProjectResources extends ResourceRepository {
         mResourceValueMap = resourceValueMap;
         mResIdValueToNameMap = resIdValueToNameMap;
         mStyleableValueToNameMap = styleableValueMap;
+
+        resetDynamicIds();
     }
 }

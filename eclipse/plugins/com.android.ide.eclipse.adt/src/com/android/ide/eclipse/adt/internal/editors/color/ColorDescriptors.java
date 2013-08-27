@@ -15,8 +15,8 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.color;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_NS_NAME;
-import static com.android.sdklib.SdkConstants.NS_RESOURCES;
+import static com.android.SdkConstants.ANDROID_NS_NAME;
+import static com.android.SdkConstants.ANDROID_URI;
 
 import com.android.ide.common.api.IAttributeInfo.Format;
 import com.android.ide.common.resources.platform.AttributeInfo;
@@ -28,7 +28,6 @@ import com.android.ide.eclipse.adt.internal.editors.descriptors.IDescriptorProvi
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ReferenceAttributeDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor;
 import com.android.resources.ResourceType;
-import com.android.sdklib.SdkConstants;
 
 import java.util.Map;
 
@@ -45,11 +44,12 @@ public class ColorDescriptors implements IDescriptorProvider {
             SELECTOR_TAG, "Selector",
             "Required. This must be the root element. Contains one or more <item> elements.",
             SDK_URL,
-            new AttributeDescriptor[] { new XmlnsAttributeDescriptor(ANDROID_NS_NAME,
-                    NS_RESOURCES) },
+            new AttributeDescriptor[] {
+                    new XmlnsAttributeDescriptor(ANDROID_NS_NAME, ANDROID_URI) },
             null /*children: added later*/, true /*mandatory*/);
 
     /** @return the root descriptor. */
+    @Override
     public ElementDescriptor getDescriptor() {
         if (mDescriptor == null) {
             mDescriptor = new ElementDescriptor("", getRootElementDescriptors()); //$NON-NLS-1$
@@ -58,6 +58,7 @@ public class ColorDescriptors implements IDescriptorProvider {
         return mDescriptor;
     }
 
+    @Override
     public ElementDescriptor[] getRootElementDescriptors() {
         return new ElementDescriptor[] { mDescriptor };
     }
@@ -74,18 +75,18 @@ public class ColorDescriptors implements IDescriptorProvider {
                  + "its attributes. Must be a child of a <selector> element.",
             SDK_URL,
             new ReferenceAttributeDescriptor(
-                    ResourceType.COLOR, ATTR_COLOR, ATTR_COLOR,
-                    SdkConstants.NS_RESOURCES,
-                    "Hexadeximal color. Required. The color is specified with an RGB value and "
-                        + "optional alpha channel.\n"
-                        + "The value always begins with a pound (#) character and then "
-                        + "followed by the Alpha-Red-Green-Blue information in one of "
-                        + "the following formats:\n"
-                        + "* RGB\n"
-                        + "* ARGB\n"
-                        + "* RRGGBB\n"
-                        + "* AARRGGBB",
-                    new AttributeInfo("drawable", new Format[] { Format.COLOR })),
+                    ResourceType.COLOR, ATTR_COLOR,
+                    ANDROID_URI,
+                    new AttributeInfo(ATTR_COLOR, Format.COLOR_SET)).setTooltip(
+                "Hexadeximal color. Required. The color is specified with an RGB value and "
+                    + "optional alpha channel.\n"
+                    + "The value always begins with a pound (#) character and then "
+                    + "followed by the Alpha-Red-Green-Blue information in one of "
+                    + "the following formats:\n"
+                    + "* RGB\n"
+                    + "* ARGB\n"
+                    + "* RRGGBB\n"
+                    + "* AARRGGBB"),
             null, /* This is wrong -- we can now embed any above drawable
                         (but without xmlns as extra) */
             false /*mandatory*/);

@@ -24,8 +24,8 @@ import static org.eclipse.wst.xml.core.internal.regions.DOMRegionContext.XML_TAG
 
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.AdtUtils;
-import com.android.ide.eclipse.adt.internal.editors.formatting.XmlFormatPreferences;
-import com.android.util.Pair;
+import com.android.ide.eclipse.adt.internal.editors.formatting.EclipseXmlFormatPreferences;
+import com.android.utils.Pair;
 
 import org.eclipse.jface.text.BadLocationException;
 import org.eclipse.jface.text.DocumentCommand;
@@ -74,6 +74,7 @@ import org.eclipse.wst.sse.core.internal.provisional.text.ITextRegionList;
 @SuppressWarnings("restriction") // XML model
 public class AndroidXmlAutoEditStrategy implements IAutoEditStrategy {
 
+    @Override
     public void customizeDocumentCommand(IDocument document, DocumentCommand c) {
         if (!isSmartInsertMode()) {
             return;
@@ -147,7 +148,7 @@ public class AndroidXmlAutoEditStrategy implements IAutoEditStrategy {
 
                         StringBuilder sb = new StringBuilder(c.text);
                         sb.append(lineIndent);
-                        String oneIndentUnit = XmlFormatPreferences.create().getOneIndentUnit();
+                        String oneIndentUnit = EclipseXmlFormatPreferences.create().getOneIndentUnit();
                         if (addIndent) {
                             sb.append(oneIndentUnit);
                         }
@@ -275,7 +276,7 @@ public class AndroidXmlAutoEditStrategy implements IAutoEditStrategy {
                                     }
 
                                     if (addIndent) {
-                                        sb.append(XmlFormatPreferences.create()
+                                        sb.append(EclipseXmlFormatPreferences.create()
                                                 .getOneIndentUnit());
                                     }
                                     c.text = sb.toString();

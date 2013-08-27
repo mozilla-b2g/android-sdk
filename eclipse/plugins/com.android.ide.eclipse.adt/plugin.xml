@@ -57,6 +57,50 @@
         <super type="org.eclipse.core.resources.textmarker" />
         <persistent value="true" />
     </extension>
+    <extension
+        id="com.android.ide.eclipse.adt.manifMergerProblem"
+        name="Android Manifest Merger Problem"
+        point="org.eclipse.core.resources.markers">
+        <super type="org.eclipse.core.resources.problemmarker" />
+        <super type="org.eclipse.core.resources.textmarker" />
+        <persistent value="true" />
+    </extension>
+    <extension
+        id="com.android.ide.eclipse.adt.adtProblem"
+        name="Android ADT Problem"
+        point="org.eclipse.core.resources.markers">
+        <super type="org.eclipse.core.resources.problemmarker" />
+        <super type="org.eclipse.core.resources.textmarker" />
+        <persistent value="true" />
+    </extension>
+    <extension
+        id="com.android.ide.eclipse.adt.targetProblem"
+        name="Android Target Problem"
+        point="org.eclipse.core.resources.markers">
+        <super type="org.eclipse.core.resources.problemmarker" />
+        <persistent value="false" />
+    </extension>
+    <extension
+        id="com.android.ide.eclipse.adt.buildToolsProblem"
+        name="Android Build Tools Problem"
+        point="org.eclipse.core.resources.markers">
+        <super type="org.eclipse.core.resources.problemmarker" />
+        <persistent value="false" />
+    </extension>
+    <extension
+        id="com.android.ide.eclipse.adt.dependencyProblem"
+        name="Android Dependency Problem"
+        point="org.eclipse.core.resources.markers">
+        <super type="org.eclipse.core.resources.problemmarker" />
+        <persistent value="false" />
+    </extension>
+    <extension
+        id="com.android.ide.eclipse.adt.packagingProblem"
+        name="Android Packaging Problem"
+        point="org.eclipse.core.resources.markers">
+        <super type="org.eclipse.core.resources.problemmarker" />
+        <persistent value="true" />
+    </extension>
     <extension point="org.eclipse.ui.ide.markerResolution">
         <markerResolutionGenerator
             markerType="com.android.ide.eclipse.adt.lintProblem"
@@ -108,6 +152,24 @@
             <run class="com.android.ide.eclipse.adt.internal.project.ExportNature" />
         </runtime>
     </extension>
+    <extension
+        point="org.eclipse.ui.importWizards">
+        <category
+            id="com.android.ide.eclipse.wizards.category"
+            name="Android" />
+        <wizard
+            canFinishEarly="false"
+            category="com.android.ide.eclipse.wizards.category"
+            class="com.android.ide.eclipse.adt.internal.wizards.newproject.ImportProjectWizard"
+            finalPerspective="org.eclipse.jdt.ui.JavaPerspective"
+            hasPages="true"
+            icon="icons/new_adt_project.png"
+            id="com.android.ide.eclipse.adt.project.ImportProjectWizard"
+            name="Existing Android Code Into Workspace"
+            preferredPerspectives="org.eclipse.jdt.ui.JavaPerspective"
+            project="true">
+        </wizard>
+    </extension>
     <extension point="org.eclipse.ui.newWizards">
         <category
             id="com.android.ide.eclipse.wizards.category"
@@ -115,25 +177,32 @@
         <wizard
             canFinishEarly="false"
             category="com.android.ide.eclipse.wizards.category"
-            class="com.android.ide.eclipse.adt.internal.wizards.newproject.NewProjectWizard"
+            class="com.android.ide.eclipse.adt.internal.wizards.templates.NewProjectWizard"
             finalPerspective="org.eclipse.jdt.ui.JavaPerspective"
             hasPages="true"
             icon="icons/new_adt_project.png"
             id="com.android.ide.eclipse.adt.project.NewProjectWizard"
-            name="Android Project"
+            name="Android Application Project"
             preferredPerspectives="org.eclipse.jdt.ui.JavaPerspective"
-            project="true" />
+            project="true" >
+            <description>
+               Create an Android Application Project
+            </description>
+        </wizard>
         <wizard
             canFinishEarly="false"
             category="com.android.ide.eclipse.wizards.category"
             class="com.android.ide.eclipse.adt.internal.wizards.newproject.NewTestProjectWizard"
             finalPerspective="org.eclipse.jdt.ui.JavaPerspective"
             hasPages="true"
-            icon="icons/androidjunit.png"
+            icon="icons/newJunit.png"
             id="com.android.ide.eclipse.adt.project.NewTestProjectWizard"
             name="Android Test Project"
             preferredPerspectives="org.eclipse.jdt.ui.JavaPerspective"
             project="true">
+            <description>
+               Create an Android Test Project
+            </description>
         </wizard>
         <wizard
             canFinishEarly="false"
@@ -146,6 +215,24 @@
             name="Android Sample Project"
             preferredPerspectives="org.eclipse.jdt.ui.JavaPerspective"
             project="true">
+            <description>
+               Create an Android Sample Project
+            </description>
+        </wizard>
+        <wizard
+            canFinishEarly="false"
+            category="com.android.ide.eclipse.wizards.category"
+            class="com.android.ide.eclipse.adt.internal.wizards.newproject.ImportProjectWizard"
+            finalPerspective="org.eclipse.jdt.ui.JavaPerspective"
+            hasPages="true"
+            icon="icons/new_adt_project.png"
+            id="com.android.ide.eclipse.adt.project.ImportProjectWizard.NewPrj"
+            name="Android Project from Existing Code"
+            preferredPerspectives="org.eclipse.jdt.ui.JavaPerspective"
+            project="true">
+            <description>
+               Create one or more Android projects from existing code
+            </description>
         </wizard>
         <wizard
             canFinishEarly="false"
@@ -158,6 +245,9 @@
             name="Android XML File"
             preferredPerspectives="org.eclipse.jdt.ui.JavaPerspective"
             project="false">
+            <description>
+               Create an Android resource XML file
+            </description>
         </wizard>
         <wizard
             canFinishEarly="false"
@@ -170,6 +260,9 @@
             name="Android XML Layout File"
             preferredPerspectives="org.eclipse.jdt.ui.JavaPerspective"
             project="false">
+            <description>
+               Create an Android layout XML file
+            </description>
         </wizard>
         <wizard
             canFinishEarly="false"
@@ -182,7 +275,57 @@
             name="Android XML Values File"
             preferredPerspectives="org.eclipse.jdt.ui.JavaPerspective"
             project="false">
+            <description>
+               Create an Android XML values file such as strings.xml
+            </description>
         </wizard>
+        <wizard
+            canFinishEarly="false"
+            category="com.android.ide.eclipse.wizards.category"
+            class="com.android.ide.eclipse.adt.internal.wizards.templates.NewActivityWizard"
+            finalPerspective="org.eclipse.jdt.ui.JavaPerspective"
+            hasPages="true"
+            icon="icons/new_adt_project.png"
+            id="com.android.ide.eclipse.editors.wizards.NewActivityWizard"
+            name="Android Activity"
+            preferredPerspectives="org.eclipse.jdt.ui.JavaPerspective"
+            project="false" >
+            <description>
+               Create an Android Activity
+            </description>
+        </wizard>
+        <wizard
+            canFinishEarly="false"
+            category="com.android.ide.eclipse.wizards.category"
+            class="com.android.ide.eclipse.adt.internal.wizards.templates.NewActivityWizard$OtherWizard"
+            finalPerspective="org.eclipse.jdt.ui.JavaPerspective"
+            hasPages="true"
+            icon="icons/newCustomView.png"
+            id="com.android.ide.eclipse.editors.wizards.NewActivityWizard.OtherWizard"
+            name="Android Object"
+            preferredPerspectives="org.eclipse.jdt.ui.JavaPerspective"
+            project="false" >
+            <description>
+               Create an Android object such as a Service, an Activity, a Broadcast Receiver, a Notification, etc.
+            </description>
+        </wizard>
+        <!-- Available through generic object list above
+        <wizard
+            canFinishEarly="false"
+            category="com.android.ide.eclipse.wizards.category"
+            class="com.android.ide.eclipse.adt.internal.wizards.templates.NewTemplateWizard$NewCustomViewWizard"
+            finalPerspective="org.eclipse.jdt.ui.JavaPerspective"
+            hasPages="true"
+            icon="icons/newCustomView.png"
+            id="com.android.ide.eclipse.editors.wizards.NewTemplateWizard.CustomView"
+            name="Android Custom View"
+            preferredPerspectives="org.eclipse.jdt.ui.JavaPerspective"
+            project="false" >
+            <description>
+               Create an Android custom view
+            </description>
+        </wizard>
+        -->
         <wizard
             canFinishEarly="false"
             category="com.android.ide.eclipse.wizards.category"
@@ -192,6 +335,23 @@
             icon="icons/new_asset_set.png"
             id="com.android.ide.eclipse.adt.internal.assetstudio.CreateAssetSetWizard"
             name="Android Icon Set"
+            preferredPerspectives="org.eclipse.jdt.ui.JavaPerspective"
+            project="false" >
+            <description>
+               Create an Android icon set
+            </description>
+        </wizard>
+
+        <!-- During development only: Support for testing templates -->
+        <wizard
+            canFinishEarly="false"
+            category="com.android.ide.eclipse.wizards.category"
+            class="com.android.ide.eclipse.adt.internal.wizards.templates.TemplateTestWizard"
+            finalPerspective="org.eclipse.jdt.ui.JavaPerspective"
+            hasPages="true"
+            icon="icons/androidjunit.png"
+            id="com.android.ide.eclipse.editors.wizards.TemplateTestWizard"
+            name="Template Development Wizard"
             preferredPerspectives="org.eclipse.jdt.ui.JavaPerspective"
             project="false" />
     </extension>
@@ -233,12 +393,24 @@
                     <with variable="selection">
                         <count value="1" />
                         <iterate>
-                            <and>
-                                <test property="org.eclipse.jdt.launching.isContainer" />
-                                <test
-                                    property="org.eclipse.jdt.launching.hasProjectNature"
-                                    args="com.android.ide.eclipse.adt.AndroidNature" />
-                            </and>
+                            <or>
+                                <adapt type="org.eclipse.core.resources.IFile">
+                                    <and>
+                                        <test
+                                            property="org.eclipse.core.resources.contentTypeId"
+                                            value="org.eclipse.core.runtime.xml" />
+                                        <test
+                                            property="org.eclipse.core.resources.projectNature"
+                                            value="com.android.ide.eclipse.adt.AndroidNature" />
+                                    </and>
+                                </adapt>
+                                <and>
+                                    <test property="org.eclipse.jdt.launching.isContainer" />
+                                    <test
+                                        property="org.eclipse.jdt.launching.hasProjectNature"
+                                        args="com.android.ide.eclipse.adt.AndroidNature" />
+                                </and>
+                            </or>
                         </iterate>
                     </with>
                 </enablement>
@@ -313,11 +485,11 @@
                 label="Fix Project Properties"
                 menubarPath="com.android.ide.eclipse.adt.AndroidTools/group3" />
             <action
-                class="com.android.ide.eclipse.adt.internal.actions.AddCompatibilityJarAction"
+                class="com.android.ide.eclipse.adt.internal.actions.AddSupportJarAction"
                 enablesFor="1"
                 icon="icons/android.png"
                 id="com.android.ide.eclipse.adt.wizards.actions.AddCompatibilityJarAction"
-                label="Add Compatibility Library..."
+                label="Add Support Library..."
                 menubarPath="com.android.ide.eclipse.adt.AndroidTools/group3"
                 tooltip="Add the Compatibility Library to the project">
             </action>
@@ -365,12 +537,6 @@
             name="Launch" />
         <page
             category="com.android.ide.eclipse.preferences.main"
-            class="com.android.ide.eclipse.adt.internal.preferences.UsagePreferencePage"
-            id="com.android.ide.eclipse.common.preferences.UsagePreferencePage"
-            name="Usage Stats">
-        </page>
-        <page
-            category="com.android.ide.eclipse.preferences.main"
             class="com.android.ide.eclipse.adt.internal.preferences.EditorsPage"
             id="com.android.ide.eclipse.adt.preferences.EditorsPage"
             name="Editors">
@@ -385,33 +551,14 @@
     <extension point="org.eclipse.core.runtime.preferences">
         <initializer class="com.android.ide.eclipse.adt.internal.preferences.AdtPrefs" />
     </extension>
-    <extension
-        id="com.android.ide.eclipse.adt.adtProblem"
-        name="Android ADT Problem"
-        point="org.eclipse.core.resources.markers">
-        <super type="org.eclipse.core.resources.problemmarker" />
-        <super type="org.eclipse.core.resources.textmarker" />
-        <persistent value="true" />
-    </extension>
-    <extension
-        id="com.android.ide.eclipse.adt.targetProblem"
-        name="Android Target Problem"
-        point="org.eclipse.core.resources.markers">
-        <super type="org.eclipse.core.resources.problemmarker" />
-        <persistent value="false" />
-    </extension>
-    <extension
-        id="com.android.ide.eclipse.adt.packagingProblem"
-        name="Android Packaging Problem"
-        point="org.eclipse.core.resources.markers">
-        <super type="org.eclipse.core.resources.problemmarker" />
-        <persistent value="true" />
-    </extension>
     <extension point="org.eclipse.ui.perspectiveExtensions">
         <perspectiveExtension targetID="org.eclipse.jdt.ui.JavaPerspective">
             <newWizardShortcut id="com.android.ide.eclipse.adt.project.NewProjectWizard" />
-            <newWizardShortcut id="com.android.ide.eclipse.editors.wizards.NewXmlFileWizard">
-            </newWizardShortcut>
+            <newWizardShortcut id="com.android.ide.eclipse.editors.wizards.NewXmlFileWizard" />
+            <actionSet id="adt.actionSet.wizards" />
+            <actionSet id="adt.actionSet.avdManager" />
+            <actionSet id="adt.actionSet.lint" />
+            <actionSet id="adt.actionSet.refactorings" />
         </perspectiveExtension>
         <perspectiveExtension targetID="org.eclipse.debug.ui.DebugPerspective">
             <viewShortcut id="com.android.ide.eclipse.ddms.views.LogCatView" />
@@ -425,20 +572,13 @@
             natureId="com.android.ide.eclipse.adt.AndroidNature">
         </image>
     </extension>
-    <extension point="org.eclipse.ui.ide.projectNatureImages">
-        <image
-            icon="icons/android_project.png"
-            id="com.android.ide.eclipse.adt.AndroidNature.image"
-            natureId="com.android.ide.eclipse.adt.AndroidExportNature">
-        </image>
-    </extension>
     <extension point="org.eclipse.jdt.core.classpathContainerInitializer">
         <classpathContainerInitializer
             class="com.android.ide.eclipse.adt.internal.project.AndroidClasspathContainerInitializer"
             id="com.android.ide.eclipse.adt.ANDROID_FRAMEWORK">
         </classpathContainerInitializer>
         <classpathContainerInitializer
-            class="com.android.ide.eclipse.adt.internal.project.AndroidClasspathContainerInitializer"
+            class="com.android.ide.eclipse.adt.internal.project.LibraryClasspathContainerInitializer"
             id="com.android.ide.eclipse.adt.LIBRARIES">
         </classpathContainerInitializer>
     </extension>
@@ -490,14 +630,6 @@
     </extension>
     <extension point="org.eclipse.ui.editors">
         <editor
-            class="com.android.ide.eclipse.adt.internal.editors.manifest.ManifestEditor"
-            default="true"
-            filenames="AndroidManifest.xml"
-            icon="icons/android_file.png"
-            id="com.android.ide.eclipse.editors.manifest.ManifestEditor"
-            name="Android Manifest Editor">
-        </editor>
-        <editor
             class="com.android.ide.eclipse.adt.internal.editors.export.ExportEditor"
             default="true"
             filenames="export.properties"
@@ -505,64 +637,91 @@
             id="com.android.ide.eclipse.editors.export.ExportEditor"
             name="Android Export Editor">
         </editor>
+
         <editor
-            class="com.android.ide.eclipse.adt.internal.editors.resources.ResourcesEditor"
-            default="false"
-            extensions="xml"
+            class="com.android.ide.eclipse.adt.internal.editors.manifest.ManifestEditor"
+            default="true"
+            filenames="AndroidManifest.xml"
             icon="icons/android_file.png"
-            id="com.android.ide.eclipse.editors.resources.ResourcesEditor"
-            name="Android Resource Editor">
+            id="com.android.ide.eclipse.editors.manifest.ManifestEditor"
+            name="Android Manifest Editor">
         </editor>
+
+        <!--
+        This is the new generic multi-purpose single XML editor used by ADT.
+        It is designed to replace all the other XML editors (layout, manifest, drawable,
+        animation, color, values, xml) and does so by using a single common Editor class
+        that defers to multiple delegate handlers.
+        -->
         <editor
-            class="com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor"
-            contributorClass="com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorActionContributor"
+              class="com.android.ide.eclipse.adt.internal.editors.common.CommonXmlEditor"
+              contributorClass="com.android.ide.eclipse.adt.internal.editors.common.CommonActionContributor"
+              default="true"
+              extensions="xml"
+              icon="icons/android_file.png"
+              id="com.android.ide.eclipse.editors.CommonXmlEditor"
+              matchingStrategy="com.android.ide.eclipse.adt.internal.editors.common.CommonMatchingStrategy"
+              name="Android Common XML Editor">
+        </editor>
+
+        <!--
+        For compatibilit with existing ADT installs, we still need to keep the editor
+        IDs of the previously defined editors. E.g. for the color editor note that the
+        id remains the same but class name changes to the new class. This will make
+        Eclipse not complain upon startup of an existing workspace.
+        -->
+        <editor
+            class="com.android.ide.eclipse.adt.internal.editors.common.CommonXmlEditor"
+            contributorClass="com.android.ide.eclipse.adt.internal.editors.common.CommonActionContributor"
             default="false"
-            extensions="xml"
             icon="icons/android_file.png"
             id="com.android.ide.eclipse.editors.layout.LayoutEditor"
-            matchingStrategy="com.android.ide.eclipse.adt.internal.editors.layout.MatchingStrategy"
-            name="Android Layout Editor">
+            matchingStrategy="com.android.ide.eclipse.adt.internal.editors.common.CommonMatchingStrategy"
+            name="Legacy Android Layout Editor">
+        </editor>
+       <editor
+            class="com.android.ide.eclipse.adt.internal.editors.common.CommonXmlEditor"
+            default="false"
+            icon="icons/android_file.png"
+            id="com.android.ide.eclipse.editors.resources.ResourcesEditor"
+            name="Legacy Android Resource Editor">
         </editor>
         <editor
-            class="com.android.ide.eclipse.adt.internal.editors.menu.MenuEditor"
+            class="com.android.ide.eclipse.adt.internal.editors.common.CommonXmlEditor"
             default="false"
-            extensions="xml"
             icon="icons/android_file.png"
             id="com.android.ide.eclipse.editors.menu.MenuEditor"
-            name="Android Menu Editor">
+            name="Legacy Android Menu Editor">
         </editor>
         <editor
-            class="com.android.ide.eclipse.adt.internal.editors.xml.XmlEditor"
+            class="com.android.ide.eclipse.adt.internal.editors.common.CommonXmlEditor"
             default="false"
-            extensions="xml"
             icon="icons/android_file.png"
             id="com.android.ide.eclipse.editors.xml.XmlEditor"
-            name="Android Xml Resources Editor">
+            name="Legacy Android Xml Resources Editor">
         </editor>
         <editor
-            class="com.android.ide.eclipse.adt.internal.editors.animator.AnimationEditor"
+            class="com.android.ide.eclipse.adt.internal.editors.common.CommonXmlEditor"
             default="false"
-            extensions="xml"
             icon="icons/android_file.png"
             id="com.android.ide.eclipse.editors.animator.AnimationEditor"
-            name="Android Animation Editor">
+            name="Legacy Android Animation Editor">
         </editor>
         <editor
-            class="com.android.ide.eclipse.adt.internal.editors.drawable.DrawableEditor"
+            class="com.android.ide.eclipse.adt.internal.editors.common.CommonXmlEditor"
             default="false"
-            extensions="xml"
             icon="icons/android_file.png"
             id="com.android.ide.eclipse.editors.drawable.DrawableEditor"
-            name="Android Drawable Editor">
+            name="Legacy Android Drawable Editor">
         </editor>
         <editor
-            class="com.android.ide.eclipse.adt.internal.editors.color.ColorEditor"
+            class="com.android.ide.eclipse.adt.internal.editors.common.CommonXmlEditor"
             default="false"
-            extensions="xml"
             icon="icons/android_file.png"
             id="com.android.ide.eclipse.editors.color.ColorEditor"
-            name="Android Color Editor">
+            name="Legacy Android Color Editor">
         </editor>
+
         <editor
             class="com.android.ide.eclipse.adt.internal.editors.binaryxml.BinaryXMLMultiPageEditorPart"
             contributorClass="org.eclipse.wst.xml.ui.internal.tabletree.XMLMultiPageEditorActionBarContributor"
@@ -597,33 +756,18 @@
             target="com.android.ide.eclipse.editors.manifest.ManifestEditor">
         </sourceViewerConfiguration>
         <sourceViewerConfiguration
-            class="com.android.ide.eclipse.adt.internal.editors.resources.ResourcesSourceViewerConfig"
-            target="com.android.ide.eclipse.editors.resources.ResourcesEditor">
+            class="com.android.ide.eclipse.adt.internal.editors.common.CommonSourceViewerConfig"
+            target="com.android.ide.eclipse.editors.CommonXmlEditor">
         </sourceViewerConfiguration>
-        <sourceViewerConfiguration
-            class="com.android.ide.eclipse.adt.internal.editors.layout.LayoutSourceViewerConfig"
-            target="com.android.ide.eclipse.editors.layout.LayoutEditor">
-        </sourceViewerConfiguration>
-        <sourceViewerConfiguration
-            class="com.android.ide.eclipse.adt.internal.editors.menu.MenuSourceViewerConfig"
-            target="com.android.ide.eclipse.editors.menu.MenuEditor">
-        </sourceViewerConfiguration>
-        <sourceViewerConfiguration
-            class="com.android.ide.eclipse.adt.internal.editors.xml.XmlSourceViewerConfig"
-            target="com.android.ide.eclipse.editors.xml.XmlEditor">
-        </sourceViewerConfiguration>
-        <sourceViewerConfiguration
-            class="com.android.ide.eclipse.adt.internal.editors.animator.AnimationSourceViewerConfig"
-            target="com.android.ide.eclipse.editors.animator.AnimationEditor">
-        </sourceViewerConfiguration>
-        <sourceViewerConfiguration
-            class="com.android.ide.eclipse.adt.internal.editors.drawable.DrawableSourceViewerConfig"
-            target="com.android.ide.eclipse.editors.drawable.DrawableEditor">
-        </sourceViewerConfiguration>
-        <sourceViewerConfiguration
-            class="com.android.ide.eclipse.adt.internal.editors.color.ColorSourceViewerConfig"
-            target="com.android.ide.eclipse.editors.color.ColorEditor">
-        </sourceViewerConfiguration>
+        <quickOutlineConfiguration
+            class="com.android.ide.eclipse.adt.internal.editors.AndroidQuickOutlineConfiguration"
+            target="org.eclipse.core.runtime.xml" />
+        <contentOutlineConfiguration
+            class="com.android.ide.eclipse.adt.internal.editors.AndroidOutlineConfiguration"
+            target="org.eclipse.core.runtime.xml" />
+        <doubleClickStrategy
+            class="com.android.ide.eclipse.adt.internal.editors.AndroidDoubleClickStrategy"
+            target="org.eclipse.wst.xml.XML_DEFAULT" />
         <provisionalConfiguration
             type="org.eclipse.jface.text.quickassist.IQuickAssistProcessor"
             class="com.android.ide.eclipse.adt.internal.editors.formatting.XmlQuickAssistManager"
@@ -684,40 +828,21 @@
             description="Android Wizards"
             id="adt.actionSet.wizards"
             label="Android Wizards"
-            visible="true">
+            visible="false">
             <action
                 class="com.android.ide.eclipse.adt.internal.wizards.actions.NewXmlFileAction"
                 icon="icons/new_xml.png"
                 id="com.android.ide.eclipse.adt.wizards.actions.NewXmlFileAction"
                 label="New Android XML File"
                 style="push"
-                toolbarPath="android_project"
-                tooltip="Opens a wizard to help create a new Android XML file">
-            </action>
-            <action
-                class="com.android.ide.eclipse.adt.internal.wizards.actions.NewTestProjectAction"
-                icon="icons/androidjunit.png"
-                id="com.android.ide.eclipse.adt.wizards.actions.NewTestProjectAction"
-                label="New Android Test Project"
-                style="push"
-                toolbarPath="android_project"
-                tooltip="Opens a wizard to help create a new Android Test Project">
-            </action>
-            <action
-                class="com.android.ide.eclipse.adt.internal.wizards.actions.NewProjectAction"
-                icon="icons/new_adt_project.png"
-                id="com.android.ide.eclipse.adt.wizards.actions.NewProjectAction"
-                label="New Android Project"
-                style="push"
-                toolbarPath="android_project"
-                tooltip="Opens a wizard to help create a new Android project">
+                toolbarPath="android_project">
             </action>
         </actionSet>
         <actionSet
             description="Refactorings for Android"
             id="adt.actionSet.refactorings"
             label="Android Refactorings"
-            visible="true">
+            visible="false">
 
          <!-- This duplicates the Refactoring Menu definition from the jdt.ui plugin.xml,
               which allows us to insert our contribution even if the JDT is not loaded.
@@ -815,16 +940,15 @@
             description="Android AVD and SDK Manager"
             id="adt.actionSet.avdManager"
             label="Android SDK and AVD Manager"
-            visible="true">
+            visible="false">
             <action
                 class="com.android.ide.eclipse.adt.internal.actions.AvdManagerAction"
                 icon="icons/avd_manager.png"
                 id="com.android.ide.eclipse.adt.ui.avdmanager"
-                label="AVD Manager"
+                label="Android Virtual Device Manager"
                 menubarPath="Window/additions"
                 style="push"
-                toolbarPath="android_project"
-                tooltip="Opens the Android Virtual Device Manager">
+                toolbarPath="android_project">
             </action>
             <action
                 class="com.android.ide.eclipse.adt.internal.actions.SdkManagerAction"
@@ -833,24 +957,22 @@
                 label="Android SDK Manager"
                 menubarPath="Window/additions"
                 style="push"
-                toolbarPath="android_project"
-                tooltip="Opens the Android SDK Manager">
+                toolbarPath="android_project">
             </action>
         </actionSet>
         <actionSet
             description="Android Lint"
             id="adt.actionSet.lint"
             label="Android Lint"
-            visible="true">
+            visible="false">
             <action
                 class="com.android.ide.eclipse.adt.internal.lint.RunLintAction"
+                style="pulldown"
                 icon="icons/lintrun.png"
                 id="com.android.ide.eclipse.adt.ui.lintrunner"
                 label="Run Android Lint"
                 menubarPath="Window/additions"
-                style="push"
-                toolbarPath="android_project"
-                tooltip="Runs Android Lint">
+                toolbarPath="android_project">
             </action>
         </actionSet>
     </extension>
@@ -1027,7 +1149,7 @@
     </extension>
     <extension point="org.eclipse.ltk.core.refactoring.renameParticipants">
         <renameParticipant
-            class="com.android.ide.eclipse.adt.internal.refactoring.core.AndroidTypeRenameParticipant"
+            class="com.android.ide.eclipse.adt.internal.refactorings.core.AndroidTypeRenameParticipant"
             id="com.android.ide.eclipse.adt.internal.refactoring.core.AndroidTypeRenameParticipant"
             name="Android Rename Type Participant">
             <enablement>
@@ -1043,7 +1165,26 @@
             </enablement>
         </renameParticipant>
         <renameParticipant
-            class="com.android.ide.eclipse.adt.internal.refactoring.core.AndroidPackageRenameParticipant"
+            class="com.android.ide.eclipse.adt.internal.refactorings.core.RenameResourceParticipant"
+            id="com.android.ide.eclipse.adt.internal.refactorings.core.RenameResourceParticipant"
+            name="Android Rename Resource Participant">
+            <enablement>
+                <with variable="element">
+                    <or>
+                        <instanceof value="org.eclipse.jdt.core.IField"/>
+                        <instanceof value="org.eclipse.core.resources.IResource" />
+                        <instanceof value="java.lang.String" />
+                    </or>
+                </with>
+                <with variable="affectedNatures">
+                    <iterate operator="or">
+                        <equals value="com.android.ide.eclipse.adt.AndroidNature" />
+                    </iterate>
+                </with>
+            </enablement>
+        </renameParticipant>
+        <renameParticipant
+            class="com.android.ide.eclipse.adt.internal.refactorings.core.AndroidPackageRenameParticipant"
             id="com.android.ide.eclipse.adt.internal.refactoring.core.AndroidPackageRenameParticipant"
             name="Android Rename Package Participant">
             <enablement>
@@ -1061,7 +1202,7 @@
     </extension>
     <extension point="org.eclipse.ltk.core.refactoring.moveParticipants">
         <moveParticipant
-            class="com.android.ide.eclipse.adt.internal.refactoring.core.AndroidTypeMoveParticipant"
+            class="com.android.ide.eclipse.adt.internal.refactorings.core.AndroidTypeMoveParticipant"
             id="com.android.ide.eclipse.adt.internal.refactoring.core.androidTypeMoveParticipant"
             name="Android Move Type Participant">
             <enablement>
@@ -1086,13 +1227,13 @@
     </extension>
     <extension point="org.eclipse.ui.workbench.texteditor.hyperlinkDetectors">
         <hyperlinkDetector
-            class="com.android.ide.eclipse.adt.internal.editors.xml.Hyperlinks$XmlResolver"
+            class="com.android.ide.eclipse.adt.internal.editors.Hyperlinks$XmlResolver"
             id="com.android.ide.eclipse.xmlCodeResolver"
             name="Android XML Hyperlink Detector"
             targetId="com.android.ide.eclipse.xmlCode">
         </hyperlinkDetector>
         <hyperlinkDetector
-            class="com.android.ide.eclipse.adt.internal.editors.xml.Hyperlinks$JavaResolver"
+            class="com.android.ide.eclipse.adt.internal.editors.Hyperlinks$JavaResolver"
             id="com.android.ide.eclipse.javaCodeResolver"
             name="Android Java Hyperlink Detector"
             targetId="org.eclipse.jdt.ui.javaCode">
@@ -1105,7 +1246,7 @@
       action. The second registration adds a quick bypass for that.
       -->
         <hyperlinkDetector
-            class="com.android.ide.eclipse.adt.internal.editors.xml.Hyperlinks$JavaResolver"
+            class="com.android.ide.eclipse.adt.internal.editors.Hyperlinks$JavaResolver"
             id="com.android.ide.eclipse.javaCodeResolver2"
             modifierKeys="M1+M2+M3"
             name="Android Java Hyperlink Detector (Extra Modifier Key)"

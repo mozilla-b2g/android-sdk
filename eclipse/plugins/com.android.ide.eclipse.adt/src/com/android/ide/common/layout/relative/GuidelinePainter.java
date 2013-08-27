@@ -15,14 +15,15 @@
  */
 package com.android.ide.common.layout.relative;
 
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_MARGIN_BOTTOM;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_MARGIN_LEFT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_MARGIN_RIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_MARGIN_TOP;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.ID_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.NEW_ID_PREFIX;
+import static com.android.SdkConstants.ATTR_LAYOUT_MARGIN_BOTTOM;
+import static com.android.SdkConstants.ATTR_LAYOUT_MARGIN_LEFT;
+import static com.android.SdkConstants.ATTR_LAYOUT_MARGIN_RIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_MARGIN_TOP;
+import static com.android.SdkConstants.ATTR_LAYOUT_RESOURCE_PREFIX;
+import static com.android.SdkConstants.ID_PREFIX;
+import static com.android.SdkConstants.NEW_ID_PREFIX;
 
+import com.android.annotations.NonNull;
 import com.android.ide.common.api.DrawingStyle;
 import com.android.ide.common.api.DropFeedback;
 import com.android.ide.common.api.IFeedbackPainter;
@@ -44,7 +45,8 @@ import java.util.Set;
  */
 public final class GuidelinePainter implements IFeedbackPainter {
     // ---- Implements IFeedbackPainter ----
-    public void paint(IGraphics gc, INode node, DropFeedback feedback) {
+    @Override
+    public void paint(@NonNull IGraphics gc, @NonNull INode node, @NonNull DropFeedback feedback) {
         GuidelineHandler state = (GuidelineHandler) feedback.userData;
 
         for (INode dragged : state.mDraggedNodes) {
@@ -151,11 +153,12 @@ public final class GuidelinePainter implements IFeedbackPainter {
         // usually not a prefix of the value (for example, 'layout_alignBottom=@+id/foo').
         String constraint = m.getConstraint(false /* generateId */);
         String description = constraint.replace(NEW_ID_PREFIX, "").replace(ID_PREFIX, "");
-        if (description.startsWith(ATTR_LAYOUT_PREFIX)) {
-            description = description.substring(ATTR_LAYOUT_PREFIX.length());
+        if (description.startsWith(ATTR_LAYOUT_RESOURCE_PREFIX)) {
+            description = description.substring(ATTR_LAYOUT_RESOURCE_PREFIX.length());
         }
         if (margin > 0) {
-            description = String.format("%1$s, margin=%2$d dp", description, margin);
+            int dp = state.getRulesEngine().pxToDp(margin);
+            description = String.format("%1$s, margin=%2$d dp", description, dp);
         }
         strings.add(description);
     }

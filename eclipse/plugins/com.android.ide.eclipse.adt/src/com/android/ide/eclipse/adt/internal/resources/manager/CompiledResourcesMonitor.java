@@ -16,7 +16,11 @@
 
 package com.android.ide.eclipse.adt.internal.resources.manager;
 
+import com.android.SdkConstants;
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.resources.IntArrayWrapper;
+import com.android.ide.common.xml.ManifestData;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.project.AndroidManifestHelper;
@@ -24,7 +28,6 @@ import com.android.ide.eclipse.adt.internal.project.ProjectHelper;
 import com.android.ide.eclipse.adt.internal.resources.manager.GlobalProjectMonitor.IFileListener;
 import com.android.ide.eclipse.adt.internal.resources.manager.GlobalProjectMonitor.IProjectListener;
 import com.android.resources.ResourceType;
-import com.android.sdklib.xml.ManifestData;
 import com.android.util.Pair;
 
 import org.eclipse.core.resources.IFile;
@@ -79,10 +82,17 @@ public final class CompiledResourcesMonitor implements IFileListener, IProjectLi
      *
      * @see IFileListener#fileChanged
      */
-    public void fileChanged(IFile file, IMarkerDelta[] markerDeltas, int kind) {
+    @Override
+    public void fileChanged(@NonNull IFile file, @NonNull IMarkerDelta[] markerDeltas,
+            int kind, @Nullable String extension, int flags, boolean isAndroidProject) {
+        if (!isAndroidProject || flags == IResourceDelta.MARKERS) {
+            // Not Android or only the markers changed: not relevant
+            return;
+        }
+
         IProject project = file.getProject();
 
-        if (file.getName().equals(AdtConstants.FN_COMPILED_RESOURCE_CLASS)) {
+        if (file.getName().equals(SdkConstants.FN_COMPILED_RESOURCE_CLASS)) {
             // create the classname
             String className = getRClassName(project);
             if (className == null) {
@@ -109,7 +119,7 @@ public final class CompiledResourcesMonitor implements IFileListener, IProjectLi
      */
     private boolean packagePathMatches(String path, String packageName) {
         // First strip the ".class" off the end of the path
-        String pathWithoutExtension = path.substring(0, path.indexOf(AdtConstants.DOT_CLASS));
+        String pathWithoutExtension = path.substring(0, path.indexOf(SdkConstants.DOT_CLASS));
 
         // then split the components of each path by their separators
         String [] pathArray = pathWithoutExtension.split(Pattern.quote(File.separator));
@@ -134,6 +144,7 @@ public final class CompiledResourcesMonitor implements IFileListener, IProjectLi
     /**
      * Processes project close event.
      */
+    @Override
     public void projectClosed(IProject project) {
         // the ProjectResources object will be removed by the ResourceManager.
     }
@@ -141,6 +152,7 @@ public final class CompiledResourcesMonitor implements IFileListener, IProjectLi
     /**
      * Processes project delete event.
      */
+    @Override
     public void projectDeleted(IProject project) {
         // the ProjectResources object will be removed by the ResourceManager.
     }
@@ -148,11 +160,13 @@ public final class CompiledResourcesMonitor implements IFileListener, IProjectLi
     /**
      * Processes project open event.
      */
+    @Override
     public void projectOpened(IProject project) {
         // when the project is opened, we get an ADDED event for each file, so we don't
         // need to do anything here.
     }
 
+    @Override
     public void projectRenamed(IProject project, IPath from) {
         // renamed projects also trigger delete/open event,
         // so nothing to be done here.
@@ -161,6 +175,7 @@ public final class CompiledResourcesMonitor implements IFileListener, IProjectLi
     /**
      * Processes existing project at init time.
      */
+    @Override
     public void projectOpenedWithWorkspace(IProject project) {
         try {
             // check this is an android project
@@ -180,6 +195,12 @@ public final class CompiledResourcesMonitor implements IFileListener, IProjectLi
             // pass
         }
     }
+
+    @Override
+    public void allProjectsOpenedWithWorkspace() {
+        // nothing to do.
+    }
+
 
     private void loadAndParseRClass(IProject project, String className) {
         try {
@@ -246,7 +267,7 @@ public final class CompiledResourcesMonitor implements IFileListener, IProjectLi
                     for (Field f : inner.getDeclaredFields()) {
                         // only process static final fields.
                         int modifiers = f.getModifiers();
-                        if (Modifier.isStatic(modifiers) && Modifier.isFinal(modifiers)) {
+                        if (Modifier.isStatic(modifiers)) {
                             Class<?> type = f.getType();
                             if (type.isArray() && type.getComponentType() == int.class) {
                                 // if the object is an int[] we put it in the styleable map

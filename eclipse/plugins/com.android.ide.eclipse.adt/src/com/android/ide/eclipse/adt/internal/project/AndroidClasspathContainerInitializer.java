@@ -16,6 +16,7 @@
 
 package com.android.ide.eclipse.adt.internal.project;
 
+import com.android.SdkConstants;
 import com.android.ide.common.sdk.LoadStatus;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
@@ -23,25 +24,19 @@ import com.android.ide.eclipse.adt.internal.sdk.ProjectState;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.sdklib.AndroidVersion;
 import com.android.sdklib.IAndroidTarget;
-import com.android.sdklib.SdkConstants;
 import com.android.sdklib.IAndroidTarget.IOptionalLibrary;
+import com.google.common.collect.Maps;
+import com.google.common.io.Closeables;
 
-import org.eclipse.core.resources.IMarker;
 import org.eclipse.core.resources.IProject;
-import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.IWorkspaceRoot;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.FileLocator;
 import org.eclipse.core.runtime.IPath;
-import org.eclipse.core.runtime.IProgressMonitor;
-import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.core.runtime.Path;
 import org.eclipse.core.runtime.Platform;
-import org.eclipse.core.runtime.Status;
-import org.eclipse.core.runtime.jobs.Job;
-import org.eclipse.jdt.core.ClasspathContainerInitializer;
 import org.eclipse.jdt.core.IAccessRule;
 import org.eclipse.jdt.core.IClasspathAttribute;
 import org.eclipse.jdt.core.IClasspathContainer;
@@ -58,15 +53,17 @@ import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.net.URLConnection;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
  * Classpath container initializer responsible for binding {@link AndroidClasspathContainer} to
  * {@link IProject}s. This removes the hard-coded path to the android.jar.
  */
-public class AndroidClasspathContainerInitializer extends ClasspathContainerInitializer {
+public class AndroidClasspathContainerInitializer extends BaseClasspathContainerInitializer {
 
     public static final String NULL_API_URL = "<null>"; //$NON-NLS-1$
 
@@ -127,7 +124,7 @@ public class AndroidClasspathContainerInitializer extends ClasspathContainerInit
      * @param androidProjects the projects to update.
      * @return <code>true</code> if success, <code>false</code> otherwise.
      */
-    public static boolean updateProjects(IJavaProject[] androidProjects) {
+    static boolean updateProjects(IJavaProject[] androidProjects) {
         try {
             // Allocate a new AndroidClasspathContainer, and associate it to the android framework
             // container id for each projects.
@@ -222,7 +219,8 @@ public class AndroidClasspathContainerInitializer extends ClasspathContainerInit
                         // this is the case where there is a hashString but the SDK is not yet
                         // loaded and therefore we can't get the target yet.
                         // We check if there is a cache of the needed information.
-                        AndroidClasspathContainer container = getContainerFromCache(iProject, target);
+                        AndroidClasspathContainer container = getContainerFromCache(iProject,
+                                target);
 
                         if (container == null) {
                             // either the cache was wrong (ie folder does not exists anymore), or
@@ -253,87 +251,29 @@ public class AndroidClasspathContainerInitializer extends ClasspathContainerInit
                 // It'll be replaced by the real when if/when the target is resolved if/when the
                 // SDK finishes loading.
                 return new IClasspathContainer() {
+                    @Override
                     public IClasspathEntry[] getClasspathEntries() {
                         return new IClasspathEntry[0];
                     }
 
+                    @Override
                     public String getDescription() {
                         return "Unable to get system library for the project";
                     }
 
+                    @Override
                     public int getKind() {
                         return IClasspathContainer.K_DEFAULT_SYSTEM;
                     }
 
+                    @Override
                     public IPath getPath() {
                         return null;
                     }
                 };
             }
         } finally {
-            if (markerMessage != null) {
-                // log the error and put the marker on the project if we can.
-                if (outputToConsole) {
-                    AdtPlugin.printErrorToConsole(iProject, markerMessage);
-                }
-
-                try {
-                    BaseProjectHelper.markProject(iProject, AdtConstants.MARKER_TARGET,
-                            markerMessage, IMarker.SEVERITY_ERROR, IMarker.PRIORITY_HIGH);
-                } catch (CoreException e) {
-                    // In some cases, the workspace may be locked for modification when we
-                    // pass here.
-                    // We schedule a new job to put the marker after.
-                    final String fmessage = markerMessage;
-                    Job markerJob = new Job("Android SDK: Resolving error markers") {
-                        @Override
-                        protected IStatus run(IProgressMonitor monitor) {
-                            try {
-                                BaseProjectHelper.markProject(iProject,
-                                        AdtConstants.MARKER_TARGET,
-                                        fmessage, IMarker.SEVERITY_ERROR,
-                                        IMarker.PRIORITY_HIGH);
-                            } catch (CoreException e2) {
-                                return e2.getStatus();
-                            }
-
-                            return Status.OK_STATUS;
-                        }
-                    };
-
-                    // build jobs are run after other interactive jobs
-                    markerJob.setPriority(Job.BUILD);
-                    markerJob.schedule();
-                }
-            } else {
-                // no error, remove potential MARKER_TARGETs.
-                try {
-                    if (iProject.exists()) {
-                        iProject.deleteMarkers(AdtConstants.MARKER_TARGET, true,
-                                IResource.DEPTH_INFINITE);
-                    }
-                } catch (CoreException ce) {
-                    // In some cases, the workspace may be locked for modification when we pass
-                    // here, so we schedule a new job to put the marker after.
-                    Job markerJob = new Job("Android SDK: Resolving error markers") {
-                        @Override
-                        protected IStatus run(IProgressMonitor monitor) {
-                            try {
-                                iProject.deleteMarkers(AdtConstants.MARKER_TARGET, true,
-                                        IResource.DEPTH_INFINITE);
-                            } catch (CoreException e2) {
-                                return e2.getStatus();
-                            }
-
-                            return Status.OK_STATUS;
-                        }
-                    };
-
-                    // build jobs are run after other interactive jobs
-                    markerJob.setPriority(Job.BUILD);
-                    markerJob.schedule();
-                }
-            }
+           processError(iProject, markerMessage, AdtConstants.MARKER_TARGET, outputToConsole);
         }
     }
 
@@ -590,22 +530,36 @@ public class AndroidClasspathContainerInitializer extends ClasspathContainerInit
         return androidSourceProperty;
     }
 
+    /**
+     * Cache results for testURL: Some are expensive to compute, and this is
+     * called repeatedly (perhaps for each open project)
+     */
+    private static final Map<String, Boolean> sRecentUrlValidCache =
+            Maps.newHashMapWithExpectedSize(4);
+
+    @SuppressWarnings("resource") // Eclipse does not handle Closeables#closeQuietly
     private static boolean testURL(String androidApiURL) {
+        Boolean cached = sRecentUrlValidCache.get(androidApiURL);
+        if (cached != null) {
+            return cached.booleanValue();
+        }
         boolean valid = false;
         InputStream is = null;
         try {
             URL testURL = new URL(androidApiURL);
-            is = testURL.openStream();
+            URLConnection connection = testURL.openConnection();
+            // Only try for 5 seconds (though some implementations ignore this flag)
+            connection.setConnectTimeout(5000);
+            connection.setReadTimeout(5000);
+            is = connection.getInputStream();
             valid = true;
         } catch (Exception ignore) {
         } finally {
-            if (is != null) {
-                try {
-                    is.close();
-                } catch (IOException ignore) {
-                }
-            }
+            Closeables.closeQuietly(is);
         }
+
+        sRecentUrlValidCache.put(androidApiURL, valid);
+
         return valid;
     }
 
@@ -632,7 +586,8 @@ public class AndroidClasspathContainerInitializer extends ClasspathContainerInit
             // project that have been resolved before the sdk was loaded
             // will have a ProjectState where the IAndroidTarget is null
             // so we load the target now that the SDK is loaded.
-            IAndroidTarget target = currentSdk.loadTarget(Sdk.getProjectState(iProject));
+            IAndroidTarget target = currentSdk.loadTargetAndBuildTools(
+                    Sdk.getProjectState(iProject));
             if (target == null) {
                 // this is really not supposed to happen. This would mean there are cached paths,
                 // but project.properties was deleted. Keep the project in the list to force
@@ -858,5 +813,4 @@ public class AndroidClasspathContainerInitializer extends ClasspathContainerInit
             updateProjects(affected);
         }
     }
-
 }

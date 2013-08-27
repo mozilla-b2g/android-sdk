@@ -16,8 +16,8 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.refactoring;
 
-import static com.android.AndroidConstants.FD_RES_LAYOUT;
-import static com.android.sdklib.SdkConstants.FD_RES;
+import static com.android.SdkConstants.FD_RES;
+import static com.android.SdkConstants.FD_RES_LAYOUT;
 
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
@@ -48,8 +48,7 @@ public class RefactoringAssistantTest extends AdtProjectTest {
     }
 
     public void testAssistant4() throws Exception {
-        // Negative test: ensure that we don't offer extract string on a value that is
-        // already a resource (should list all but extract string)
+        // Check for resource rename refactoring (and don't offer extract string)
         checkFixes("sample1a.xml", "android:id=\"@+id/Linea^rLayout2\"");
     }
 
@@ -81,14 +80,17 @@ public class RefactoringAssistantTest extends AdtProjectTest {
         final ISourceViewer viewer = layoutEditor.getStructuredSourceViewer();
 
         IQuickAssistInvocationContext invocationContext = new IQuickAssistInvocationContext() {
+            @Override
             public int getLength() {
                 return 0;
             }
 
+            @Override
             public int getOffset() {
                 return offset;
             }
 
+            @Override
             public ISourceViewer getSourceViewer() {
                 return viewer;
             }

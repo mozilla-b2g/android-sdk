@@ -15,9 +15,10 @@
  */
 package com.android.ide.common.layout;
 
+import com.android.annotations.NonNull;
 import com.android.ide.common.api.IDragElement.IDragAttribute;
 import com.android.ide.common.api.INode.IAttribute;
-import com.android.ide.eclipse.adt.internal.editors.uimodel.UiAttributeNode;
+import com.android.ide.common.xml.XmlAttributeSortOrder;
 
 /** Test/mock implementation of {@link IAttribute} and {@link IDragAttribute} */
 public class TestAttribute implements IAttribute, IDragAttribute {
@@ -34,15 +35,18 @@ public class TestAttribute implements IAttribute, IDragAttribute {
         this.mValue = mValue;
     }
 
-    public String getName() {
+    @Override
+    public @NonNull String getName() {
         return mName;
     }
 
-    public String getUri() {
+    @Override
+    public @NonNull String getUri() {
         return mUri;
     }
 
-    public String getValue() {
+    @Override
+    public @NonNull String getValue() {
         return mValue;
     }
 
@@ -52,6 +56,6 @@ public class TestAttribute implements IAttribute, IDragAttribute {
     }
 
     public int compareTo(IDragAttribute o) {
-        return UiAttributeNode.compareAttributes(mName, o.getName());
+        return XmlAttributeSortOrder.compareAttributes(mName, o.getName());
     }
 }

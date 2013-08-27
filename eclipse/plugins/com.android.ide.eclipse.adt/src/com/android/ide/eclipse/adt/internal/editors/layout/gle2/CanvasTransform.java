@@ -15,6 +15,8 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
+import static com.android.ide.eclipse.adt.internal.editors.layout.gle2.ImageUtils.SHADOW_SIZE;
+
 import org.eclipse.swt.events.SelectionAdapter;
 import org.eclipse.swt.events.SelectionEvent;
 import org.eclipse.swt.widgets.ScrollBar;
@@ -37,6 +39,9 @@ public class CanvasTransform {
 
     /** Canvas image size (original, before zoom), in pixels. */
     private int mImgSize;
+
+    /** Full size being scrolled (after zoom), in pixels */
+    private int mFullSize;;
 
     /** Client size, in pixels. */
     private int mClientSize;
@@ -81,6 +86,11 @@ public class CanvasTransform {
         }
     }
 
+    /** Recomputes the scrollbar and view port settings */
+    public void refresh() {
+        resizeScrollbar();
+    }
+
     /**
      * Returns current scaling factor.
      *
@@ -104,18 +114,21 @@ public class CanvasTransform {
      *
      * @return The scaled image size in pixels.
      */
-    public int getScalledImgSize() {
+    public int getScaledImgSize() {
         return (int) (mImgSize * mScale);
     }
 
-    /** Changes the size of the canvas image and the client size. Recomputes scrollbars. */
-    public void setSize(int imgSize, int clientSize) {
+    /**
+     * Changes the size of the canvas image and the client size. Recomputes
+     * scrollbars.
+     *
+     * @param imgSize the size of the image being scaled
+     * @param fullSize the size of the full view area being scrolled
+     * @param clientSize the size of the view port
+     */
+    public void setSize(int imgSize, int fullSize, int clientSize) {
         mImgSize = imgSize;
-        setClientSize(clientSize);
-    }
-
-    /** Changes the size of the client size. Recomputes scrollbars. */
-    public void setClientSize(int clientSize) {
+        mFullSize = fullSize;
         mClientSize = clientSize;
         mScrollbar.setPageIncrement(clientSize);
         resizeScrollbar();
@@ -123,7 +136,7 @@ public class CanvasTransform {
 
     private void resizeScrollbar() {
         // scaled image size
-        int sx = (int) (mImgSize * mScale);
+        int sx = (int) (mScale * mFullSize);
 
         // Adjust margin such that for zoomed out views
         // we don't waste space (unless the viewport is
@@ -133,8 +146,24 @@ public class CanvasTransform {
             mMargin = 0;
         } else if (delta < 2 * DEFAULT_MARGIN) {
             mMargin = delta / 2;
+
+            ImageOverlay imageOverlay = mCanvas.getImageOverlay();
+            if (imageOverlay != null && imageOverlay.getShowDropShadow()
+                    && delta >= SHADOW_SIZE / 2) {
+                mMargin -= SHADOW_SIZE / 2;
+                // Add a little padding on the top too, if there's room. The shadow assets
+                // include enough padding on the bottom to not make this look clipped.
+                if (mMargin < 4) {
+                    mMargin += 4;
+                }
+            }
         } else {
             mMargin = DEFAULT_MARGIN;
+        }
+
+        if (mCanvas.getPreviewManager().hasPreviews()) {
+            // Make more room for the previews
+            mMargin = 2;
         }
 
         // actual client area is always reduced by the margins
@@ -178,5 +207,9 @@ public class CanvasTransform {
 
     public int inverseTranslate(int screenX) {
         return (int) ((screenX - mMargin + mTranslate) / mScale);
+    }
+
+    public int inverseScale(int canwasW) {
+        return (int) (canwasW / mScale);
     }
 }

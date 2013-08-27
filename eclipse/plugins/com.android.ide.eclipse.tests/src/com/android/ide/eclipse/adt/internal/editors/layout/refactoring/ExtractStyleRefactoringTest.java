@@ -13,9 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package com.android.ide.eclipse.adt.internal.editors.layout.refactoring;
 
-import com.android.util.Pair;
+import com.android.utils.Pair;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.runtime.IPath;
@@ -134,7 +135,7 @@ public class ExtractStyleRefactoringTest extends RefactoringTest {
 
         IFile file = getLayoutFile(getProject(), basename);
         TestContext info = setupTestContext(file, basename);
-        TestLayoutEditor layoutEditor = info.mLayoutEditor;
+        TestLayoutEditorDelegate layoutEditor = info.mLayoutEditorDelegate;
         List<Element> selectedElements = getElements(info.mElement, ids);
 
         // Open the file such that ModelManager.getExistingModelForRead() in DomUtilities
@@ -161,7 +162,7 @@ public class ExtractStyleRefactoringTest extends RefactoringTest {
         int endOffset = getCaretOffset(file, endCaretLocation);
 
         TestContext info = setupTestContext(file, basename);
-        TestLayoutEditor layoutEditor = info.mLayoutEditor;
+        TestLayoutEditorDelegate layoutEditor = info.mLayoutEditorDelegate;
 
         // Open the file such that ModelManager.getExistingModelForRead() in DomUtilities
         // will succeed
@@ -196,6 +197,7 @@ public class ExtractStyleRefactoringTest extends RefactoringTest {
         List<Attr> chosenAttributes = new ArrayList<Attr>();
         for (List<Attr> list : availableAttributes.values()) {
             Collections.sort(list, new Comparator<Attr>() {
+                @Override
                 public int compare(Attr a1, Attr a2) {
                     return a1.getValue().compareTo(a2.getValue());
                 }

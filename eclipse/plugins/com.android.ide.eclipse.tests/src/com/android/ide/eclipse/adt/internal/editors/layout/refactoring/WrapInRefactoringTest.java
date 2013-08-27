@@ -15,8 +15,8 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.layout.refactoring;
 
-import static com.android.ide.common.layout.LayoutConstants.FQCN_GESTURE_OVERLAY_VIEW;
-import static com.android.ide.common.layout.LayoutConstants.FQCN_LINEAR_LAYOUT;
+import static com.android.SdkConstants.FQCN_GESTURE_OVERLAY_VIEW;
+import static com.android.SdkConstants.FQCN_LINEAR_LAYOUT;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.runtime.NullProgressMonitor;
@@ -47,7 +47,7 @@ public class WrapInRefactoringTest extends RefactoringTest {
 
         IFile file = getLayoutFile(getProject(), basename);
         TestContext info = setupTestContext(file, basename);
-        TestLayoutEditor layoutEditor = info.mLayoutEditor;
+        TestLayoutEditorDelegate layoutEditor = info.mLayoutEditorDelegate;
         List<Element> selectedElements = getElements(info.mElement, ids);
 
         WrapInRefactoring refactoring = new WrapInRefactoring(selectedElements,

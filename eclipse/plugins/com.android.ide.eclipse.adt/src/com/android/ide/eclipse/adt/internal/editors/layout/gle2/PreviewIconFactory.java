@@ -16,12 +16,14 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
-import static com.android.ide.common.layout.LayoutConstants.FQCN_DATE_PICKER;
-import static com.android.ide.common.layout.LayoutConstants.FQCN_EXPANDABLE_LIST_VIEW;
-import static com.android.ide.common.layout.LayoutConstants.FQCN_LIST_VIEW;
-import static com.android.ide.common.layout.LayoutConstants.FQCN_TIME_PICKER;
-import static com.android.ide.eclipse.adt.AdtConstants.DOT_PNG;
+import static com.android.SdkConstants.DOT_PNG;
+import static com.android.SdkConstants.FQCN_DATE_PICKER;
+import static com.android.SdkConstants.FQCN_EXPANDABLE_LIST_VIEW;
+import static com.android.SdkConstants.FQCN_LIST_VIEW;
+import static com.android.SdkConstants.FQCN_TIME_PICKER;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.rendering.LayoutLibrary;
 import com.android.ide.common.rendering.api.Capability;
 import com.android.ide.common.rendering.api.RenderSession;
@@ -33,7 +35,7 @@ import com.android.ide.common.resources.ResourceResolver;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.DocumentDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.PaletteMetadataDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.ViewMetadataRepository;
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.ViewMetadataRepository.RenderMode;
@@ -42,7 +44,7 @@ import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
 import com.android.ide.eclipse.adt.internal.resources.ResourceHelper;
 import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetData;
 import com.android.sdklib.IAndroidTarget;
-import com.android.util.Pair;
+import com.android.utils.Pair;
 
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IStatus;
@@ -206,7 +208,7 @@ public class PreviewIconFactory {
         File imageDir = getImageDir(true);
 
         GraphicalEditorPart editor = mPalette.getEditor();
-        LayoutEditor layoutEditor = editor.getLayoutEditor();
+        LayoutEditorDelegate layoutEditorDelegate = editor.getEditorDelegate();
         LayoutLibrary layoutLibrary = editor.getLayoutLibrary();
         Integer overrideBgColor = null;
         if (layoutLibrary != null) {
@@ -229,7 +231,7 @@ public class PreviewIconFactory {
         }
 
         // Construct UI model from XML
-        AndroidTargetData data = layoutEditor.getTargetData();
+        AndroidTargetData data = layoutEditorDelegate.getEditor().getTargetData();
         DocumentDescriptor documentDescriptor;
         if (data == null) {
             documentDescriptor = new DocumentDescriptor("temp", null/*children*/);//$NON-NLS-1$
@@ -237,7 +239,7 @@ public class PreviewIconFactory {
             documentDescriptor = data.getLayoutDescriptors().getDescriptor();
         }
         UiDocumentNode model = (UiDocumentNode) documentDescriptor.createUiNode();
-        model.setEditor(layoutEditor);
+        model.setEditor(layoutEditorDelegate.getEditor());
         model.setUnknownDescriptorProvider(editor.getModel().getUnknownDescriptorProvider());
 
         Element documentElement = document.getDocumentElement();
@@ -263,7 +265,7 @@ public class PreviewIconFactory {
 
                 session = RenderService.create(editor)
                     .setModel(model)
-                    .setSize(width, height)
+                    .setOverrideRenderSize(width, height)
                     .setRenderingMode(RenderingMode.FULL_EXPAND)
                     .setLog(new RenderLogger("palette"))
                     .setOverrideBgColor(overrideBgColor)
@@ -363,6 +365,8 @@ public class PreviewIconFactory {
             }
         }
 
+        mPalette.getEditor().recomputeLayout();
+
         return true;
     }
 
@@ -373,11 +377,15 @@ public class PreviewIconFactory {
      *
      * @return a pair of possibly null color descriptions
      */
+    @NonNull
     private Pair<RGB, RGB> getColorsFromTheme() {
         RGB background = null;
         RGB foreground = null;
 
         ResourceResolver resources = mPalette.getEditor().getResourceResolver();
+        if (resources == null) {
+            return Pair.of(background, foreground);
+        }
         StyleResourceValue theme = resources.getCurrentTheme();
         if (theme != null) {
             background = resolveThemeColor(resources, "windowBackground"); //$NON-NLS-1$
@@ -432,7 +440,7 @@ public class PreviewIconFactory {
         ResourceResolver resources = editor.getResourceResolver();
         ResourceValue resourceValue = resources.findItemInTheme(themeItemName);
         BufferedImage image = RenderService.create(editor)
-            .setSize(100, 100)
+            .setOverrideRenderSize(100, 100)
             .renderDrawable(resourceValue);
         if (image != null) {
             // Use the middle pixel as the color since that works better for gradients;
@@ -475,10 +483,15 @@ public class PreviewIconFactory {
     /**
      * Cleans up a name by removing punctuation and whitespace etc to make
      * it a better filename
-     * @param name
-     * @return
+     * @param name the name to clean
+     * @return a cleaned up name
      */
-    private static String cleanup(String name) {
+    @NonNull
+    private static String cleanup(@Nullable String name) {
+        if (name == null) {
+            return "";
+        }
+
         // Extract just the characters (no whitespace, parentheses, punctuation etc)
         // to ensure that the filename is pretty portable
         StringBuilder sb = new StringBuilder(name.length());
@@ -514,8 +527,11 @@ public class PreviewIconFactory {
             if (themeName.startsWith(themeNamePrefix)) {
                 themeName = themeName.substring(themeNamePrefix.length());
             }
-            String dirName = String.format("palette-preview-r16-%s-%s-%s", cleanup(targetName),
-                    cleanup(themeName), cleanup(mPalette.getCurrentDevice()));
+            targetName = cleanup(targetName);
+            themeName = cleanup(themeName);
+            String deviceName = cleanup(mPalette.getCurrentDevice());
+            String dirName = String.format("palette-preview-r16b-%s-%s-%s", targetName,
+                    themeName, deviceName);
             IPath dirPath = pluginState.append(dirName);
 
             mImageDir = new File(dirPath.toOSString());

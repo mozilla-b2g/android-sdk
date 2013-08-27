@@ -23,10 +23,12 @@ import static com.android.ide.common.api.SegmentType.CENTER_VERTICAL;
 import static com.android.ide.common.api.SegmentType.LEFT;
 import static com.android.ide.common.api.SegmentType.RIGHT;
 import static com.android.ide.common.api.SegmentType.TOP;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
+import static com.android.SdkConstants.ATTR_ID;
+
 import static java.lang.Math.abs;
 
+import com.android.SdkConstants;
+import static com.android.SdkConstants.ANDROID_URI;
 import com.android.ide.common.api.DropFeedback;
 import com.android.ide.common.api.IClientRulesEngine;
 import com.android.ide.common.api.IDragElement;
@@ -48,8 +50,15 @@ import java.util.List;
  * edges, and so on -- and picks the best among these.
  */
 public class MoveHandler extends GuidelineHandler {
-    public int mDraggedBaseline;
+    private int mDraggedBaseline;
 
+    /**
+     * Creates a new {@link MoveHandler}.
+     *
+     * @param layout the layout element the handler is operating on
+     * @param elements the elements being dragged in the move operation
+     * @param rulesEngine the corresponding {@link IClientRulesEngine}
+     */
     public MoveHandler(INode layout, IDragElement[] elements, IClientRulesEngine rulesEngine) {
         super(layout, rulesEngine);
 
@@ -158,6 +167,15 @@ public class MoveHandler extends GuidelineHandler {
         }
     }
 
+    /**
+     * Updates the handler for the given mouse move
+     *
+     * @param feedback the feedback handler
+     * @param elements the elements being dragged
+     * @param offsetX the new mouse X coordinate
+     * @param offsetY the new mouse Y coordinate
+     * @param modifierMask the keyboard modifiers pressed during the drag
+     */
     public void updateMove(DropFeedback feedback, IDragElement[] elements,
             int offsetX, int offsetY, int modifierMask) {
         mSnap = (modifierMask & DropFeedback.MODIFIER2) == 0;

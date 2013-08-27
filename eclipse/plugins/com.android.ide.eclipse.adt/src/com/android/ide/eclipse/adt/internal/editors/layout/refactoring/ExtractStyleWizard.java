@@ -19,10 +19,10 @@ package com.android.ide.eclipse.adt.internal.editors.layout.refactoring;
 import static org.eclipse.jface.viewers.StyledString.DECORATIONS_STYLER;
 import static org.eclipse.jface.viewers.StyledString.QUALIFIER_STYLER;
 
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.resources.ResourceNameValidator;
 import com.android.resources.ResourceType;
-import com.android.util.Pair;
+import com.android.utils.Pair;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.jface.viewers.CheckStateChangedEvent;
@@ -56,7 +56,7 @@ import java.util.Map;
 import java.util.Set;
 
 class ExtractStyleWizard extends VisualRefactoringWizard {
-    public ExtractStyleWizard(ExtractStyleRefactoring ref, LayoutEditor editor) {
+    public ExtractStyleWizard(ExtractStyleRefactoring ref, LayoutEditorDelegate editor) {
         super(ref, editor);
         setDefaultPageTitle(ref.getName());
     }
@@ -64,7 +64,7 @@ class ExtractStyleWizard extends VisualRefactoringWizard {
     @Override
     protected void addUserInputPages() {
         String initialName = "styleName";
-        addPage(new InputPage(mEditor.getProject(), initialName));
+        addPage(new InputPage(mDelegate.getEditor().getProject(), initialName));
     }
 
     /**
@@ -79,7 +79,7 @@ class ExtractStyleWizard extends VisualRefactoringWizard {
         private Button mRemoveExtracted;
         private Button mSetStyle;
         private Button mRemoveAll;
-        private Button mExtend;;
+        private Button mExtend;
         private CheckboxTableViewer mCheckedView;
 
         private String mParentStyle;
@@ -89,6 +89,7 @@ class ExtractStyleWizard extends VisualRefactoringWizard {
         private Map<Attr, Integer> mFrequencyCount;
         private Set<Attr> mShown;
         private List<Attr> mInitialChecked;
+        private List<Attr> mAllChecked;
         private List<Map.Entry<String, List<Attr>>> mRoot;
         private Map<String, List<Attr>> mAvailableAttributes;
 
@@ -98,6 +99,7 @@ class ExtractStyleWizard extends VisualRefactoringWizard {
             mSuggestedName = suggestedName;
         }
 
+        @Override
         public void createControl(Composite parent) {
             initialize();
 
@@ -160,6 +162,7 @@ class ExtractStyleWizard extends VisualRefactoringWizard {
             mCheckedView.setCheckedElements(initialSelection);
 
             mCheckedView.addCheckStateListener(new ICheckStateListener() {
+                @Override
                 public void checkStateChanged(CheckStateChangedEvent event) {
                     // Try to disable other elements that conflict with this
                     boolean isChecked = event.getChecked();
@@ -190,7 +193,8 @@ class ExtractStyleWizard extends VisualRefactoringWizard {
                 @Override
                 public void widgetSelected(SelectionEvent e) {
                     // Select "all" (but not conflicting settings)
-                    mCheckedView.setCheckedElements(initialSelection);
+                    mCheckedView.setCheckedElements(mAllChecked.toArray());
+                    validatePage();
                 }
             });
             Button uncheckAllButton = new Button(buttonForm, SWT.FLAT);
@@ -199,6 +203,7 @@ class ExtractStyleWizard extends VisualRefactoringWizard {
                 @Override
                 public void widgetSelected(SelectionEvent e) {
                     mCheckedView.setAllChecked(false);
+                    validatePage();
                 }
             });
 
@@ -238,6 +243,7 @@ class ExtractStyleWizard extends VisualRefactoringWizard {
             // Sort the items by attribute name -- the attribute name is the key
             // in the entry set above.
             Collections.sort(mRoot, new Comparator<Map.Entry<String, List<Attr>>>() {
+                @Override
                 public int compare(Map.Entry<String, List<Attr>> e1,
                         Map.Entry<String, List<Attr>> e2) {
                     return e1.getKey().compareTo(e2.getKey());
@@ -254,6 +260,10 @@ class ExtractStyleWizard extends VisualRefactoringWizard {
             // The list of initially checked attributes.
             mInitialChecked = new ArrayList<Attr>();
 
+            // The list of attributes to be checked if "Select All" is chosen (this is not
+            // the same as *all* attributes, since we need to exclude any conflicts)
+            mAllChecked = new ArrayList<Attr>();
+
             // All attributes.
             mAllAttributes = new ArrayList<Attr>();
 
@@ -267,6 +277,7 @@ class ExtractStyleWizard extends VisualRefactoringWizard {
                 // wizard.
                 List<Attr> attrList = entry.getValue();
                 Collections.sort(attrList, new Comparator<Attr>() {
+                    @Override
                     public int compare(Attr a1, Attr a2) {
                         return a1.getValue().compareTo(a2.getValue());
                     }
@@ -299,6 +310,7 @@ class ExtractStyleWizard extends VisualRefactoringWizard {
                 // Sort the values by frequency (and for equal frequencies, alphabetically
                 // by value)
                 Collections.sort(uniqueValueAttrs, new Comparator<Attr>() {
+                    @Override
                     public int compare(Attr a1, Attr a2) {
                         Integer f1 = mFrequencyCount.get(a1);
                         Integer f2 = mFrequencyCount.get(a2);
@@ -322,6 +334,7 @@ class ExtractStyleWizard extends VisualRefactoringWizard {
                 mAllAttributes.addAll(uniqueValueAttrs);
                 mShown.addAll(uniqueValueAttrs);
                 Attr first = uniqueValueAttrs.get(0);
+                mAllChecked.add(first);
                 if (mInSelection.contains(first)) {
                     mInitialChecked.add(first);
                 }
@@ -406,6 +419,7 @@ class ExtractStyleWizard extends VisualRefactoringWizard {
             public ArgumentContentProvider() {
             }
 
+            @Override
             public Object[] getElements(Object inputElement) {
                 if (inputElement == mRoot) {
                     return mAllAttributes.toArray();
@@ -414,9 +428,11 @@ class ExtractStyleWizard extends VisualRefactoringWizard {
                 return new Object[0];
             }
 
+            @Override
             public void dispose() {
             }
 
+            @Override
             public void inputChanged(Viewer viewer, Object oldInput, Object newInput) {
             }
         }

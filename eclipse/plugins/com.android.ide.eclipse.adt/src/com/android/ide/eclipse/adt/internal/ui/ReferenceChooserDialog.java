@@ -19,6 +19,7 @@ package com.android.ide.eclipse.adt.internal.ui;
 import com.android.ide.common.resources.ResourceItem;
 import com.android.ide.common.resources.ResourceRepository;
 import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.ide.eclipse.adt.internal.editors.layout.properties.PropertyFactory;
 import com.android.ide.eclipse.adt.internal.refactorings.extractstring.ExtractStringRefactoring;
 import com.android.ide.eclipse.adt.internal.refactorings.extractstring.ExtractStringWizard;
 import com.android.resources.ResourceType;
@@ -135,10 +136,17 @@ public class ReferenceChooserDialog extends SelectionStatusDialog {
         createFilteredTree(top);
 
         // setup the initial selection
-        setupInitialSelection();
+        if (mCurrentResource != null) {
+            setupInitialSelection();
+        }
 
         // create the "New Resource" button
         createNewResButtons(top);
+
+        Composite workaround = PropertyFactory.addWorkaround(top);
+        if (workaround != null) {
+            workaround.setLayoutData(new GridData(SWT.LEFT, SWT.TOP, false, false, 1, 1));
+        }
 
         return top;
     }
@@ -171,10 +179,12 @@ public class ReferenceChooserDialog extends SelectionStatusDialog {
         Tree tree = mTreeViewer.getTree();
 
         tree.addSelectionListener(new SelectionListener() {
+            @Override
             public void widgetDefaultSelected(SelectionEvent e) {
                 handleDoubleClick();
             }
 
+            @Override
             public void widgetSelected(SelectionEvent e) {
                 handleSelection();
             }

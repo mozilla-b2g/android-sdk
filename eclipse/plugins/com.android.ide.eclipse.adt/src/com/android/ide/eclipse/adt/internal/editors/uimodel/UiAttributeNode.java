@@ -16,22 +16,13 @@
 
 package com.android.ide.eclipse.adt.internal.editors.uimodel;
 
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_HEIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_WIDTH;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_NAME;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_STYLE;
-import static com.android.ide.eclipse.adt.internal.editors.color.ColorDescriptors.ATTR_COLOR;
-
+import com.android.ide.common.xml.XmlAttributeSortOrder;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.AttributeDescriptor;
 
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.ui.forms.IManagedForm;
 import org.w3c.dom.Node;
-
-import java.util.Comparator;
 
 /**
  * Represents an XML attribute that can be modified by the XML editor's user interface.
@@ -174,70 +165,10 @@ public abstract class UiAttributeNode implements Comparable<UiAttributeNode> {
     public abstract void commit();
 
     // ---- Implements Comparable ----
+
+    @Override
     public int compareTo(UiAttributeNode o) {
-        return compareAttributes(mDescriptor.getXmlLocalName(), o.mDescriptor.getXmlLocalName());
-    }
-
-    /**
-     * Returns {@link Comparator} values for ordering attributes in the following
-     * order:
-     * <ul>
-     *   <li> id
-     *   <li> style
-     *   <li> layout_width
-     *   <li> layout_height
-     *   <li> other layout params, sorted alphabetically
-     *   <li> other attributes, sorted alphabetically
-     * </ul>
-     *
-     * @param name1 the first attribute name to compare
-     * @param name2 the second attribute name to compare
-     * @return a negative number if name1 should be ordered before name2
-     */
-    public static int compareAttributes(String name1, String name2) {
-      int priority1 = getAttributePriority(name1);
-      int priority2 = getAttributePriority(name2);
-      if (priority1 != priority2) {
-          return priority1 - priority2;
-      }
-
-      // Sort remaining attributes alphabetically
-      return name1.compareTo(name2);
-    }
-
-    /** Returns a sorting priority for the given attribute name */
-    private static int getAttributePriority(String name) {
-        if (ATTR_ID.equals(name)) {
-            return 10;
-        }
-
-        if (ATTR_NAME.equals(name)) {
-            return 15;
-        }
-
-        if (ATTR_STYLE.equals(name)) {
-            return 20;
-        }
-
-        if (name.startsWith(ATTR_LAYOUT_PREFIX)) {
-            // Width and height are special cased because we (a) want width and height
-            // before the other layout attributes, and (b) we want width to sort before height
-            // even though it comes after it alphabetically.
-            if (name.equals(ATTR_LAYOUT_WIDTH)) {
-                return 30;
-            }
-            if (name.equals(ATTR_LAYOUT_HEIGHT)) {
-                return 40;
-            }
-
-            return 50;
-        }
-
-        // "color" sorts to the end
-        if (ATTR_COLOR.equals(name)) {
-            return 100;
-        }
-
-        return 60;
+        return XmlAttributeSortOrder.compareAttributes(mDescriptor.getXmlLocalName(),
+                o.mDescriptor.getXmlLocalName());
     }
 }

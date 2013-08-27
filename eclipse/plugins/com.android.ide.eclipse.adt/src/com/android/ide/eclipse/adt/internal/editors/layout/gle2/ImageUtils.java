@@ -15,14 +15,23 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
-import static com.android.ide.eclipse.adt.AdtConstants.DOT_9PNG;
-import static com.android.ide.eclipse.adt.AdtConstants.DOT_BMP;
-import static com.android.ide.eclipse.adt.AdtConstants.DOT_GIF;
-import static com.android.ide.eclipse.adt.AdtConstants.DOT_JPG;
-import static com.android.ide.eclipse.adt.AdtConstants.DOT_PNG;
-import static com.android.ide.eclipse.adt.AdtUtils.endsWithIgnoreCase;
+import static com.android.SdkConstants.DOT_9PNG;
+import static com.android.SdkConstants.DOT_BMP;
+import static com.android.SdkConstants.DOT_GIF;
+import static com.android.SdkConstants.DOT_JPG;
+import static com.android.SdkConstants.DOT_PNG;
+import static com.android.utils.SdkUtils.endsWithIgnoreCase;
+import static java.awt.RenderingHints.KEY_ANTIALIASING;
+import static java.awt.RenderingHints.KEY_INTERPOLATION;
+import static java.awt.RenderingHints.KEY_RENDERING;
+import static java.awt.RenderingHints.VALUE_ANTIALIAS_ON;
+import static java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR;
+import static java.awt.RenderingHints.VALUE_RENDER_QUALITY;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.api.Rect;
+import com.android.ide.eclipse.adt.AdtPlugin;
 
 import org.eclipse.swt.graphics.RGB;
 import org.eclipse.swt.graphics.Rectangle;
@@ -31,11 +40,14 @@ import java.awt.AlphaComposite;
 import java.awt.Color;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
-import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.Iterator;
 import java.util.List;
+
+import javax.imageio.ImageIO;
 
 /**
  * Utilities related to image processing.
@@ -124,8 +136,29 @@ public class ImageUtils {
      * @return a cropped version of the source image, or null if the whole image was blank
      *         and cropping completely removed everything
      */
-    public static BufferedImage cropBlank(BufferedImage image, Rect initialCrop) {
+    @Nullable
+    public static BufferedImage cropBlank(
+            @NonNull BufferedImage image,
+            @Nullable Rect initialCrop) {
+        return cropBlank(image, initialCrop, image.getType());
+    }
+
+    /**
+     * Crops blank pixels from the edges of the image and returns the cropped result. We
+     * crop off pixels that are blank (meaning they have an alpha value = 0). Note that
+     * this is not the same as pixels that aren't opaque (an alpha value other than 255).
+     *
+     * @param image the image to be cropped
+     * @param initialCrop If not null, specifies a rectangle which contains an initial
+     *            crop to continue. This can be used to crop an image where you already
+     *            know about margins in the image
+     * @param imageType the type of {@link BufferedImage} to create
+     * @return a cropped version of the source image, or null if the whole image was blank
+     *         and cropping completely removed everything
+     */
+    public static BufferedImage cropBlank(BufferedImage image, Rect initialCrop, int imageType) {
         CropFilter filter = new CropFilter() {
+            @Override
             public boolean crop(BufferedImage bufferedImage, int x, int y) {
                 int rgb = bufferedImage.getRGB(x, y);
                 return (rgb & 0xFF000000) == 0x00000000;
@@ -133,7 +166,7 @@ public class ImageUtils {
                 // visual results -- e.g. check <= 0x80000000
             }
         };
-        return crop(image, filter, initialCrop);
+        return crop(image, filter, initialCrop, imageType);
     }
 
     /**
@@ -149,14 +182,37 @@ public class ImageUtils {
      * @return a cropped version of the source image, or null if the whole image was blank
      *         and cropping completely removed everything
      */
+    @Nullable
+    public static BufferedImage cropColor(
+            @NonNull BufferedImage image,
+            final int blankArgb,
+            @Nullable Rect initialCrop) {
+        return cropColor(image, blankArgb, initialCrop, image.getType());
+    }
+
+    /**
+     * Crops pixels of a given color from the edges of the image and returns the cropped
+     * result.
+     *
+     * @param image the image to be cropped
+     * @param blankArgb the color considered to be blank, as a 32 pixel integer with 8
+     *            bits of alpha, red, green and blue
+     * @param initialCrop If not null, specifies a rectangle which contains an initial
+     *            crop to continue. This can be used to crop an image where you already
+     *            know about margins in the image
+     * @param imageType the type of {@link BufferedImage} to create
+     * @return a cropped version of the source image, or null if the whole image was blank
+     *         and cropping completely removed everything
+     */
     public static BufferedImage cropColor(BufferedImage image,
-            final int blankArgb, Rect initialCrop) {
+            final int blankArgb, Rect initialCrop, int imageType) {
         CropFilter filter = new CropFilter() {
+            @Override
             public boolean crop(BufferedImage bufferedImage, int x, int y) {
                 return blankArgb == bufferedImage.getRGB(x, y);
             }
         };
-        return crop(image, filter, initialCrop);
+        return crop(image, filter, initialCrop, imageType);
     }
 
     /**
@@ -175,7 +231,8 @@ public class ImageUtils {
         boolean crop(BufferedImage image, int x, int y);
     }
 
-    private static BufferedImage crop(BufferedImage image, CropFilter filter, Rect initialCrop) {
+    private static BufferedImage crop(BufferedImage image, CropFilter filter, Rect initialCrop,
+            int imageType) {
         if (image == null) {
             return null;
         }
@@ -263,7 +320,13 @@ public class ImageUtils {
         int height = y2 - y1;
 
         // Now extract the sub-image
-        BufferedImage cropped = new BufferedImage(width, height, image.getType());
+        if (imageType == -1) {
+            imageType = image.getType();
+        }
+        if (imageType == BufferedImage.TYPE_CUSTOM) {
+            imageType = BufferedImage.TYPE_INT_ARGB;
+        }
+        BufferedImage cropped = new BufferedImage(width, height, imageType);
         Graphics g = cropped.getGraphics();
         g.drawImage(image, 0, 0, width, height, x1, y1, x2, y2, null);
 
@@ -275,6 +338,9 @@ public class ImageUtils {
     /**
      * Creates a drop shadow of a given image and returns a new image which shows the
      * input image on top of its drop shadow.
+     * <p>
+     * <b>NOTE: If the shape is rectangular and opaque, consider using
+     * {@link #drawRectangleShadow(Graphics, int, int, int, int)} instead.</b>
      *
      * @param source the source image to be shadowed
      * @param shadowSize the size of the shadow in pixels
@@ -382,6 +448,270 @@ public class ImageUtils {
     }
 
     /**
+     * Draws a rectangular drop shadow (of size {@link #SHADOW_SIZE} by
+     * {@link #SHADOW_SIZE} around the given source and returns a new image with
+     * both combined
+     *
+     * @param source the source image
+     * @return the source image with a drop shadow on the bottom and right
+     */
+    public static BufferedImage createRectangularDropShadow(BufferedImage source) {
+        int type = source.getType();
+        if (type == BufferedImage.TYPE_CUSTOM) {
+            type = BufferedImage.TYPE_INT_ARGB;
+        }
+
+        int width = source.getWidth();
+        int height = source.getHeight();
+        BufferedImage image = new BufferedImage(width + SHADOW_SIZE, height + SHADOW_SIZE, type);
+        Graphics g = image.getGraphics();
+        g.drawImage(source, 0, 0, width, height, null);
+        ImageUtils.drawRectangleShadow(image, 0, 0, width, height);
+        g.dispose();
+
+        return image;
+    }
+
+    /**
+     * Draws a drop shadow for the given rectangle into the given context. It
+     * will not draw anything if the rectangle is smaller than a minimum
+     * determined by the assets used to draw the shadow graphics.
+     * The size of the shadow is {@link #SHADOW_SIZE}.
+     *
+     * @param image the image to draw the shadow into
+     * @param x the left coordinate of the left hand side of the rectangle
+     * @param y the top coordinate of the top of the rectangle
+     * @param width the width of the rectangle
+     * @param height the height of the rectangle
+     */
+    public static final void drawRectangleShadow(BufferedImage image,
+            int x, int y, int width, int height) {
+        Graphics gc = image.getGraphics();
+        try {
+            drawRectangleShadow(gc, x, y, width, height);
+        } finally {
+            gc.dispose();
+        }
+    }
+
+    /**
+     * Draws a small drop shadow for the given rectangle into the given context. It
+     * will not draw anything if the rectangle is smaller than a minimum
+     * determined by the assets used to draw the shadow graphics.
+     * The size of the shadow is {@link #SMALL_SHADOW_SIZE}.
+     *
+     * @param image the image to draw the shadow into
+     * @param x the left coordinate of the left hand side of the rectangle
+     * @param y the top coordinate of the top of the rectangle
+     * @param width the width of the rectangle
+     * @param height the height of the rectangle
+     */
+    public static final void drawSmallRectangleShadow(BufferedImage image,
+            int x, int y, int width, int height) {
+        Graphics gc = image.getGraphics();
+        try {
+            drawSmallRectangleShadow(gc, x, y, width, height);
+        } finally {
+            gc.dispose();
+        }
+    }
+
+    /**
+     * The width and height of the drop shadow painted by
+     * {@link #drawRectangleShadow(Graphics, int, int, int, int)}
+     */
+    public static final int SHADOW_SIZE = 20; // DO NOT EDIT. This corresponds to bitmap graphics
+
+    /**
+     * The width and height of the drop shadow painted by
+     * {@link #drawSmallRectangleShadow(Graphics, int, int, int, int)}
+     */
+    public static final int SMALL_SHADOW_SIZE = 10; // DO NOT EDIT. Corresponds to bitmap graphics
+
+    /**
+     * Draws a drop shadow for the given rectangle into the given context. It
+     * will not draw anything if the rectangle is smaller than a minimum
+     * determined by the assets used to draw the shadow graphics.
+     * <p>
+     * This corresponds to
+     * {@link SwtUtils#drawRectangleShadow(org.eclipse.swt.graphics.GC, int, int, int, int)},
+     * but applied to an AWT graphics object instead, such that no image
+     * conversion has to be performed.
+     * <p>
+     * Make sure to keep changes in the visual appearance here in sync with the
+     * AWT version in
+     * {@link SwtUtils#drawRectangleShadow(org.eclipse.swt.graphics.GC, int, int, int, int)}.
+     *
+     * @param gc the graphics context to draw into
+     * @param x the left coordinate of the left hand side of the rectangle
+     * @param y the top coordinate of the top of the rectangle
+     * @param width the width of the rectangle
+     * @param height the height of the rectangle
+     */
+    public static final void drawRectangleShadow(Graphics gc,
+            int x, int y, int width, int height) {
+        if (sShadowBottomLeft == null) {
+            // Shadow graphics. This was generated by creating a drop shadow in
+            // Gimp, using the parameters x offset=10, y offset=10, blur radius=10,
+            // color=black, and opacity=51. These values attempt to make a shadow
+            // that is legible both for dark and light themes, on top of the
+            // canvas background (rgb(150,150,150). Darker shadows would tend to
+            // blend into the foreground for a dark holo screen, and lighter shadows
+            // would be hard to spot on the canvas background. If you make adjustments,
+            // make sure to check the shadow with both dark and light themes.
+            //
+            // After making the graphics, I cut out the top right, bottom left
+            // and bottom right corners as 20x20 images, and these are reproduced by
+            // painting them in the corresponding places in the target graphics context.
+            // I then grabbed a single horizontal gradient line from the middle of the
+            // right edge,and a single vertical gradient line from the bottom. These
+            // are then painted scaled/stretched in the target to fill the gaps between
+            // the three corner images.
+            //
+            // Filenames: bl=bottom left, b=bottom, br=bottom right, r=right, tr=top right
+            sShadowBottomLeft  = readImage("shadow-bl.png"); //$NON-NLS-1$
+            sShadowBottom      = readImage("shadow-b.png");  //$NON-NLS-1$
+            sShadowBottomRight = readImage("shadow-br.png"); //$NON-NLS-1$
+            sShadowRight       = readImage("shadow-r.png");  //$NON-NLS-1$
+            sShadowTopRight    = readImage("shadow-tr.png"); //$NON-NLS-1$
+            assert sShadowBottomLeft != null;
+            assert sShadowBottomRight.getWidth() == SHADOW_SIZE;
+            assert sShadowBottomRight.getHeight() == SHADOW_SIZE;
+        }
+
+        int blWidth = sShadowBottomLeft.getWidth();
+        int trHeight = sShadowTopRight.getHeight();
+        if (width < blWidth) {
+            return;
+        }
+        if (height < trHeight) {
+            return;
+        }
+
+        gc.drawImage(sShadowBottomLeft, x, y + height, null);
+        gc.drawImage(sShadowBottomRight, x + width, y + height, null);
+        gc.drawImage(sShadowTopRight, x + width, y, null);
+        gc.drawImage(sShadowBottom,
+                x + sShadowBottomLeft.getWidth(), y + height,
+                x + width, y + height + sShadowBottom.getHeight(),
+                0, 0, sShadowBottom.getWidth(), sShadowBottom.getHeight(),
+                null);
+        gc.drawImage(sShadowRight,
+                x + width, y + sShadowTopRight.getHeight(),
+                x + width + sShadowRight.getWidth(), y + height,
+                0, 0, sShadowRight.getWidth(), sShadowRight.getHeight(),
+                null);
+    }
+
+    /**
+     * Draws a small drop shadow for the given rectangle into the given context. It
+     * will not draw anything if the rectangle is smaller than a minimum
+     * determined by the assets used to draw the shadow graphics.
+     * <p>
+     *
+     * @param gc the graphics context to draw into
+     * @param x the left coordinate of the left hand side of the rectangle
+     * @param y the top coordinate of the top of the rectangle
+     * @param width the width of the rectangle
+     * @param height the height of the rectangle
+     */
+    public static final void drawSmallRectangleShadow(Graphics gc,
+            int x, int y, int width, int height) {
+        if (sShadow2BottomLeft == null) {
+            // Shadow graphics. This was generated by creating a drop shadow in
+            // Gimp, using the parameters x offset=5, y offset=%, blur radius=5,
+            // color=black, and opacity=51. These values attempt to make a shadow
+            // that is legible both for dark and light themes, on top of the
+            // canvas background (rgb(150,150,150). Darker shadows would tend to
+            // blend into the foreground for a dark holo screen, and lighter shadows
+            // would be hard to spot on the canvas background. If you make adjustments,
+            // make sure to check the shadow with both dark and light themes.
+            //
+            // After making the graphics, I cut out the top right, bottom left
+            // and bottom right corners as 20x20 images, and these are reproduced by
+            // painting them in the corresponding places in the target graphics context.
+            // I then grabbed a single horizontal gradient line from the middle of the
+            // right edge,and a single vertical gradient line from the bottom. These
+            // are then painted scaled/stretched in the target to fill the gaps between
+            // the three corner images.
+            //
+            // Filenames: bl=bottom left, b=bottom, br=bottom right, r=right, tr=top right
+            sShadow2BottomLeft  = readImage("shadow2-bl.png"); //$NON-NLS-1$
+            sShadow2Bottom      = readImage("shadow2-b.png");  //$NON-NLS-1$
+            sShadow2BottomRight = readImage("shadow2-br.png"); //$NON-NLS-1$
+            sShadow2Right       = readImage("shadow2-r.png");  //$NON-NLS-1$
+            sShadow2TopRight    = readImage("shadow2-tr.png"); //$NON-NLS-1$
+            assert sShadow2BottomLeft != null;
+            assert sShadow2TopRight != null;
+            assert sShadow2BottomRight.getWidth() == SMALL_SHADOW_SIZE;
+            assert sShadow2BottomRight.getHeight() == SMALL_SHADOW_SIZE;
+        }
+
+        int blWidth = sShadow2BottomLeft.getWidth();
+        int trHeight = sShadow2TopRight.getHeight();
+        if (width < blWidth) {
+            return;
+        }
+        if (height < trHeight) {
+            return;
+        }
+
+        gc.drawImage(sShadow2BottomLeft, x, y + height, null);
+        gc.drawImage(sShadow2BottomRight, x + width, y + height, null);
+        gc.drawImage(sShadow2TopRight, x + width, y, null);
+        gc.drawImage(sShadow2Bottom,
+                x + sShadow2BottomLeft.getWidth(), y + height,
+                x + width, y + height + sShadow2Bottom.getHeight(),
+                0, 0, sShadow2Bottom.getWidth(), sShadow2Bottom.getHeight(),
+                null);
+        gc.drawImage(sShadow2Right,
+                x + width, y + sShadow2TopRight.getHeight(),
+                x + width + sShadow2Right.getWidth(), y + height,
+                0, 0, sShadow2Right.getWidth(), sShadow2Right.getHeight(),
+                null);
+    }
+
+    /**
+     * Reads the given image from the plugin folder
+     *
+     * @param name the name of the image (including file extension)
+     * @return the corresponding image, or null if something goes wrong
+     */
+    @Nullable
+    public static BufferedImage readImage(@NonNull String name) {
+        InputStream stream = ImageUtils.class.getResourceAsStream("/icons/" + name); //$NON-NLS-1$
+        if (stream != null) {
+            try {
+                return ImageIO.read(stream);
+            } catch (IOException e) {
+                AdtPlugin.log(e, "Could not read %1$s", name);
+            } finally {
+                try {
+                    stream.close();
+                } catch (IOException e) {
+                    // Dumb API
+                }
+            }
+        }
+
+        return null;
+    }
+
+    // Normal drop shadow
+    private static BufferedImage sShadowBottomLeft;
+    private static BufferedImage sShadowBottom;
+    private static BufferedImage sShadowBottomRight;
+    private static BufferedImage sShadowRight;
+    private static BufferedImage sShadowTopRight;
+
+    // Small drop shadow
+    private static BufferedImage sShadow2BottomLeft;
+    private static BufferedImage sShadow2Bottom;
+    private static BufferedImage sShadow2BottomRight;
+    private static BufferedImage sShadow2Right;
+    private static BufferedImage sShadow2TopRight;
+
+    /**
      * Returns a bounding rectangle for the given list of rectangles. If the list is
      * empty, the bounding rectangle is null.
      *
@@ -419,7 +749,11 @@ public class ImageUtils {
     public static BufferedImage subImage(BufferedImage source, int x1, int y1, int x2, int y2) {
         int width = x2 - x1;
         int height = y2 - y1;
-        BufferedImage sub = new BufferedImage(width, height, source.getType());
+        int imageType = source.getType();
+        if (imageType == BufferedImage.TYPE_CUSTOM) {
+            imageType = BufferedImage.TYPE_INT_ARGB;
+        }
+        BufferedImage sub = new BufferedImage(width, height, imageType);
         Graphics g = sub.getGraphics();
         g.drawImage(source, 0, 0, width, height, x1, y1, x2, y2, null);
         g.dispose();
@@ -489,23 +823,125 @@ public class ImageUtils {
      * @return the scaled image
      */
     public static BufferedImage scale(BufferedImage source, double xScale, double yScale) {
+       return scale(source, xScale, yScale, 0, 0);
+    }
+
+    /**
+     * Resize the given image
+     *
+     * @param source the image to be scaled
+     * @param xScale x scale
+     * @param yScale y scale
+     * @param rightMargin extra margin to add on the right
+     * @param bottomMargin extra margin to add on the bottom
+     * @return the scaled image
+     */
+    public static BufferedImage scale(BufferedImage source, double xScale, double yScale,
+            int rightMargin, int bottomMargin) {
         int sourceWidth = source.getWidth();
         int sourceHeight = source.getHeight();
         int destWidth = Math.max(1, (int) (xScale * sourceWidth));
         int destHeight = Math.max(1, (int) (yScale * sourceHeight));
-        BufferedImage scaled = new BufferedImage(destWidth, destHeight, source.getType());
-        Graphics2D g2 = scaled.createGraphics();
-        g2.setComposite(AlphaComposite.Src);
-        g2.setColor(new Color(0, true));
-        g2.fillRect(0, 0, destWidth, destHeight);
-        g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
-                RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-        g2.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g2.drawImage(source, 0, 0, destWidth, destHeight, 0, 0, sourceWidth, sourceHeight, null);
-        g2.dispose();
+        int imageType = source.getType();
+        if (imageType == BufferedImage.TYPE_CUSTOM) {
+            imageType = BufferedImage.TYPE_INT_ARGB;
+        }
+        if (xScale > 0.5 && yScale > 0.5) {
+            BufferedImage scaled =
+                    new BufferedImage(destWidth + rightMargin, destHeight + bottomMargin, imageType);
+            Graphics2D g2 = scaled.createGraphics();
+            g2.setComposite(AlphaComposite.Src);
+            g2.setColor(new Color(0, true));
+            g2.fillRect(0, 0, destWidth + rightMargin, destHeight + bottomMargin);
+            g2.setRenderingHint(KEY_INTERPOLATION, VALUE_INTERPOLATION_BILINEAR);
+            g2.setRenderingHint(KEY_RENDERING, VALUE_RENDER_QUALITY);
+            g2.setRenderingHint(KEY_ANTIALIASING, VALUE_ANTIALIAS_ON);
+            g2.drawImage(source, 0, 0, destWidth, destHeight, 0, 0, sourceWidth, sourceHeight,
+                    null);
+            g2.dispose();
+            return scaled;
+        } else {
+            // When creating a thumbnail, using the above code doesn't work very well;
+            // you get some visible artifacts, especially for text. Instead use the
+            // technique of repeatedly scaling the image into half; this will cause
+            // proper averaging of neighboring pixels, and will typically (for the kinds
+            // of screen sizes used by this utility method in the layout editor) take
+            // about 3-4 iterations to get the result since we are logarithmically reducing
+            // the size. Besides, each successive pass in operating on much fewer pixels
+            // (a reduction of 4 in each pass).
+            //
+            // However, we may not be resizing to a size that can be reached exactly by
+            // successively diving in half. Therefore, once we're within a factor of 2 of
+            // the final size, we can do a resize to the exact target size.
+            // However, we can get even better results if we perform this final resize
+            // up front. Let's say we're going from width 1000 to a destination width of 85.
+            // The first approach would cause a resize from 1000 to 500 to 250 to 125, and
+            // then a resize from 125 to 85. That last resize can distort/blur a lot.
+            // Instead, we can start with the destination width, 85, and double it
+            // successfully until we're close to the initial size: 85, then 170,
+            // then 340, and finally 680. (The next one, 1360, is larger than 1000).
+            // So, now we *start* the thumbnail operation by resizing from width 1000 to
+            // width 680, which will preserve a lot of visual details such as text.
+            // Then we can successively resize the image in half, 680 to 340 to 170 to 85.
+            // We end up with the expected final size, but we've been doing an exact
+            // divide-in-half resizing operation at the end so there is less distortion.
 
-        return scaled;
+
+            int iterations = 0; // Number of halving operations to perform after the initial resize
+            int nearestWidth = destWidth; // Width closest to source width that = 2^x, x is integer
+            int nearestHeight = destHeight;
+            while (nearestWidth < sourceWidth / 2) {
+                nearestWidth *= 2;
+                nearestHeight *= 2;
+                iterations++;
+            }
+
+            // If we're supposed to add in margins, we need to do it in the initial resizing
+            // operation if we don't have any subsequent resizing operations.
+            if (iterations == 0) {
+                nearestWidth += rightMargin;
+                nearestHeight += bottomMargin;
+            }
+
+            BufferedImage scaled = new BufferedImage(nearestWidth, nearestHeight, imageType);
+            Graphics2D g2 = scaled.createGraphics();
+            g2.setRenderingHint(KEY_INTERPOLATION, VALUE_INTERPOLATION_BILINEAR);
+            g2.setRenderingHint(KEY_RENDERING, VALUE_RENDER_QUALITY);
+            g2.setRenderingHint(KEY_ANTIALIASING, VALUE_ANTIALIAS_ON);
+            g2.drawImage(source, 0, 0, nearestWidth, nearestHeight,
+                    0, 0, sourceWidth, sourceHeight, null);
+            g2.dispose();
+
+            sourceWidth = nearestWidth;
+            sourceHeight = nearestHeight;
+            source = scaled;
+
+            for (int iteration = iterations - 1; iteration >= 0; iteration--) {
+                int halfWidth = sourceWidth / 2;
+                int halfHeight = sourceHeight / 2;
+                if (iteration == 0) { // Last iteration: Add margins in final image
+                    scaled = new BufferedImage(halfWidth + rightMargin, halfHeight + bottomMargin,
+                            imageType);
+                } else {
+                    scaled = new BufferedImage(halfWidth, halfHeight, imageType);
+                }
+                g2 = scaled.createGraphics();
+                g2.setRenderingHint(KEY_INTERPOLATION,VALUE_INTERPOLATION_BILINEAR);
+                g2.setRenderingHint(KEY_RENDERING, VALUE_RENDER_QUALITY);
+                g2.setRenderingHint(KEY_ANTIALIASING, VALUE_ANTIALIAS_ON);
+                g2.drawImage(source, 0, 0,
+                        halfWidth, halfHeight, 0, 0,
+                        sourceWidth, sourceHeight,
+                        null);
+                g2.dispose();
+
+                sourceWidth = halfWidth;
+                sourceHeight = halfHeight;
+                source = scaled;
+                iterations--;
+            }
+            return scaled;
+        }
     }
 
     /**

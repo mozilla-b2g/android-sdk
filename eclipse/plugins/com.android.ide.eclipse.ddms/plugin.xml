@@ -5,6 +5,7 @@
    <extension-point id="debuggerConnector" name="%extension-point.name.Debugger_Connector" schema="schema/debuggerConnector.exsd"/>
    <extension-point id="sourceRevealer" name="%extension-point.name.Source_Revealer" schema="schema/sourceRevealer.exsd"/>
    <extension-point id="traceviewLauncher" name="%extension-point.name.TreeView_Laucher" schema="schema/traceviewLauncher.exsd"/>
+   <extension-point id="clientAction" name="%extension-point.name.ClientAction" schema="schema/clientAction.exsd"/>
 
    <extension
          point="org.eclipse.ui.views">
@@ -79,6 +80,32 @@
             icon="icons/heap.png"
             id="com.android.ide.eclipse.ddms.views.AllocTrackerView"
             name="%view.name.Allocation_Tracker"/>
+      <view
+            category="com.android.ide.eclipse.ddms.views.category"
+            class="com.android.ide.eclipse.ddms.views.NetworkStatisticsView"
+            icon="icons/networkstats.png"
+            id="com.android.ide.eclipse.ddms.views.NetworkStatsView"
+            name="%view.name.Network_Stats"
+            restorable="true">
+      </view>
+      <view
+            category="com.android.ide.eclipse.ddms.views.category"
+            class="com.android.ide.eclipse.ddms.views.SysInfoView"
+            id="com.android.ide.eclipse.ddms.views.SysInfoView"
+            name="%view.name.SysInfo"
+            restorable="true">
+      </view>
+   </extension>
+   <extension
+         point="org.eclipse.ui.editors">
+      <editor
+            class="com.android.ide.eclipse.ddms.editors.UiAutomatorViewer"
+            default="true"
+            extensions="uix"
+            icon="icons/uiautomator.png"
+            id="com.android.ide.eclipse.ddms.editors.UiAutomatorViewer"
+            name="UI Automator Hierarchy Viewer">
+      </editor>
    </extension>
    <extension
          point="org.eclipse.ui.perspectives">
@@ -119,5 +146,11 @@
             class="com.android.ide.eclipse.ddms.preferences.LogCatPreferencePage"
             id="com.android.ide.eclipse.ddms.preferences.LogCatPreferencePage"
             name="%page.name.LogCat"/>
+      <page
+            category="com.android.ide.eclipse.ddms.preferences.LogCatPreferencePage"
+            class="com.android.ide.eclipse.ddms.preferences.LogCatColorsPage"
+            id="com.android.ide.eclipse.ddms.preferences.LogCatColorsPage"
+            name="Colors">
+      </page>
    </extension>
 </plugin>

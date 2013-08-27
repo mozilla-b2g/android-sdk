@@ -16,8 +16,9 @@
 
 package com.android.ide.eclipse.gltrace.state;
 
+
 /** Properties that hold boolean values. */
-public final class GLBooleanProperty extends GLAbstractAtomicProperty implements IGLProperty {
+public final class GLBooleanProperty extends GLAbstractAtomicProperty {
     private final Boolean mDefaultValue;
     private Boolean mCurrentValue;
 
@@ -27,6 +28,7 @@ public final class GLBooleanProperty extends GLAbstractAtomicProperty implements
         mDefaultValue = mCurrentValue = defaultValue;
     }
 
+    @Override
     public boolean isDefault() {
         return mDefaultValue == mCurrentValue;
     }
@@ -35,6 +37,7 @@ public final class GLBooleanProperty extends GLAbstractAtomicProperty implements
         mCurrentValue = newValue;
     }
 
+    @Override
     public String getStringValue() {
         return mCurrentValue.toString();
     }
@@ -44,6 +47,7 @@ public final class GLBooleanProperty extends GLAbstractAtomicProperty implements
         return getType() + "=" + getStringValue(); //$NON-NLS-1$
     }
 
+    @Override
     public void setValue(Object value) {
         if (value instanceof Boolean) {
             mCurrentValue = (Boolean) value;
@@ -53,6 +57,7 @@ public final class GLBooleanProperty extends GLAbstractAtomicProperty implements
         }
     }
 
+    @Override
     public Object getValue() {
         return mCurrentValue;
     }

@@ -16,14 +16,14 @@
 
 package com.android.ide.common.layout;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ATTR_ID;
 
 import com.android.ide.common.api.IDragElement;
 import com.android.ide.common.api.INode;
 import com.android.ide.common.api.Rect;
 import com.android.ide.common.layout.BaseLayoutRule.AttributeFilter;
-import com.android.util.Pair;
+import com.android.utils.Pair;
 
 import java.util.Arrays;
 import java.util.HashMap;
@@ -187,6 +187,7 @@ public class BaseLayoutRuleTest extends LayoutTestBase {
                 "hidden", "hiddenvalue");
         AttributeFilter filter = new AttributeFilter() {
 
+            @Override
             public String replace(String attributeUri, String attributeName,
                     String attributeValue) {
                 if (attributeName.equals("hidden")) {

@@ -15,11 +15,14 @@
  */
 package com.android.ide.eclipse.adt.internal.lint;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.eclipse.adt.internal.editors.layout.refactoring.AdtProjectTest;
 import com.android.tools.lint.checks.DuplicateIdDetector;
 import com.android.tools.lint.checks.UnusedResourceDetector;
 import com.android.tools.lint.client.api.Configuration;
 import com.android.tools.lint.client.api.IDomParser;
+import com.android.tools.lint.client.api.IJavaParser;
 import com.android.tools.lint.client.api.LintClient;
 import com.android.tools.lint.detector.api.Context;
 import com.android.tools.lint.detector.api.Issue;
@@ -30,7 +33,6 @@ import com.android.tools.lint.detector.api.Severity;
 import org.eclipse.core.resources.IProject;
 
 import java.io.File;
-import java.util.Calendar;
 
 @SuppressWarnings("javadoc")
 public class ProjectLintConfigurationTest extends AdtProjectTest {
@@ -43,7 +45,7 @@ public class ProjectLintConfigurationTest extends AdtProjectTest {
             boolean ok = dir.mkdirs();
             assertTrue(dir.getPath(), ok);
         }
-        Project project = new Project(client, dir, dir);
+        Project project = client.getProject(dir, dir);
 
         ProjectLintConfiguration config =
                 new ProjectLintConfiguration(client, project, parent, false /*fatalOnly*/);
@@ -72,11 +74,11 @@ public class ProjectLintConfigurationTest extends AdtProjectTest {
 
         File dir = getTargetDir();
         assertTrue(dir.mkdirs());
-        Project project = new Project(client, dir, dir);
+        Project project = client.getProject(dir, dir);
 
         File otherDir = new File(dir, "otherConfig");
         assertTrue(otherDir.mkdir());
-        Project otherProject = new Project(client, otherDir, otherDir);
+        Project otherProject = client.getProject(otherDir, otherDir);
 
         ProjectLintConfiguration otherConfig =
                 new ProjectLintConfiguration(client, otherProject, parent, false);
@@ -130,7 +132,7 @@ public class ProjectLintConfigurationTest extends AdtProjectTest {
 
         File dir = getTargetDir();
         assertTrue(dir.mkdirs());
-        Project project = new Project(client, dir, dir);
+        Project project = client.getProject(dir, dir);
 
         ProjectLintConfiguration config =
                 new ProjectLintConfiguration(client, project, parent, false /*fatalOnly*/);
@@ -178,41 +180,23 @@ public class ProjectLintConfigurationTest extends AdtProjectTest {
         assertSame(config1, config2);
     }
 
-    private static File sTempDir = null;
-    @Override
-    protected File getTempDir() {
-        if (sTempDir == null) {
-            File base = new File(System.getProperty("java.io.tmpdir"));     //$NON-NLS-1$
-            String os = System.getProperty("os.name");          //$NON-NLS-1$
-            if (os.startsWith("Mac OS")) {                      //$NON-NLS-1$
-                base = new File("/tmp");
-            }
-            Calendar c = Calendar.getInstance();
-            String name = String.format("lintTests/%1$tF_%1$tT", c).replace(':', '-'); //$NON-NLS-1$
-            File tmpDir = new File(base, name);
-            if (!tmpDir.exists() && tmpDir.mkdirs()) {
-                sTempDir = tmpDir;
-            } else {
-                sTempDir = base;
-            }
-        }
-
-        return sTempDir;
-    }
-
     @Override
     protected File getTargetDir() {
-        return new File(getTempDir(), getClass().getSimpleName() + "_" + getName());
+        File targetDir = new File(getTempDir(), getClass().getSimpleName() + "_" + getName());
+        addCleanupDir(targetDir);
+        return targetDir;
     }
 
     private static class TestClient extends LintClient {
         @Override
-        public void report(Context context, Issue issue, Location location, String message,
-                Object data) {
+        public void report(@NonNull Context context, @NonNull Issue issue,
+                @NonNull Severity severity, @Nullable Location location,
+                @NonNull String message, @Nullable Object data) {
         }
 
         @Override
-        public void log(Throwable exception, String format, Object... args) {
+        public void log(@NonNull Severity severity, @Nullable Throwable exception,
+                @Nullable String format, @Nullable Object... args) {
         }
 
         @Override
@@ -221,7 +205,12 @@ public class ProjectLintConfigurationTest extends AdtProjectTest {
         }
 
         @Override
-        public String readFile(File file) {
+        public @NonNull String readFile(@NonNull File file) {
+            return null;
+        }
+
+        @Override
+        public IJavaParser getJavaParser() {
             return null;
         }
     }

@@ -16,15 +16,19 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
-import static com.android.ide.common.layout.LayoutConstants.EXPANDABLE_LIST_VIEW;
-import static com.android.ide.common.layout.LayoutConstants.FQCN_GESTURE_OVERLAY_VIEW;
-import static com.android.ide.common.layout.LayoutConstants.GRID_VIEW;
-import static com.android.ide.common.layout.LayoutConstants.LIST_VIEW;
-import static com.android.ide.common.layout.LayoutConstants.SPINNER;
-import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.VIEW_FRAGMENT;
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ATTR_ID;
+import static com.android.SdkConstants.EXPANDABLE_LIST_VIEW;
+import static com.android.SdkConstants.FQCN_GESTURE_OVERLAY_VIEW;
+import static com.android.SdkConstants.FQCN_IMAGE_VIEW;
+import static com.android.SdkConstants.FQCN_LINEAR_LAYOUT;
+import static com.android.SdkConstants.FQCN_TEXT_VIEW;
+import static com.android.SdkConstants.GRID_VIEW;
+import static com.android.SdkConstants.LIST_VIEW;
+import static com.android.SdkConstants.SPINNER;
+import static com.android.SdkConstants.VIEW_FRAGMENT;
 
+import com.android.SdkConstants;
 import com.android.ide.common.api.INode;
 import com.android.ide.common.api.IViewRule;
 import com.android.ide.common.api.RuleAction;
@@ -32,7 +36,7 @@ import com.android.ide.common.api.RuleAction.Choices;
 import com.android.ide.common.api.RuleAction.NestedAction;
 import com.android.ide.common.api.RuleAction.Toggle;
 import com.android.ide.common.layout.BaseViewRule;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.NodeFactory;
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.NodeProxy;
 import com.android.ide.eclipse.adt.internal.editors.layout.refactoring.ChangeLayoutAction;
@@ -40,6 +44,7 @@ import com.android.ide.eclipse.adt.internal.editors.layout.refactoring.ChangeVie
 import com.android.ide.eclipse.adt.internal.editors.layout.refactoring.ExtractIncludeAction;
 import com.android.ide.eclipse.adt.internal.editors.layout.refactoring.ExtractStyleAction;
 import com.android.ide.eclipse.adt.internal.editors.layout.refactoring.UnwrapAction;
+import com.android.ide.eclipse.adt.internal.editors.layout.refactoring.UseCompoundDrawableAction;
 import com.android.ide.eclipse.adt.internal.editors.layout.refactoring.WrapInAction;
 import com.android.ide.eclipse.adt.internal.editors.layout.uimodel.UiViewElementNode;
 
@@ -52,6 +57,7 @@ import org.eclipse.jface.action.IMenuListener;
 import org.eclipse.jface.action.IMenuManager;
 import org.eclipse.jface.action.MenuManager;
 import org.eclipse.jface.action.Separator;
+import org.eclipse.swt.SWT;
 import org.eclipse.swt.widgets.Event;
 import org.eclipse.swt.widgets.Menu;
 
@@ -75,9 +81,11 @@ import java.util.Set;
  * they are both linked to the current selection state of the {@link LayoutCanvas}.
  */
 class DynamicContextMenu {
+    public static String DEFAULT_ACTION_SHORTCUT = "F2"; //$NON-NLS-1$
+    public static int DEFAULT_ACTION_KEY = SWT.F2;
 
     /** The XML layout editor that contains the canvas that uses this menu. */
-    private final LayoutEditor mEditor;
+    private final LayoutEditorDelegate mEditorDelegate;
 
     /** The layout canvas that displays this context menu. */
     private final LayoutCanvas mCanvas;
@@ -89,14 +97,17 @@ class DynamicContextMenu {
      * Creates a new helper responsible for adding and managing the dynamic menu items
      * contributed by the {@link IViewRule} instances, based on the current selection
      * on the {@link LayoutCanvas}.
-     * @param editor the editor owning the menu
+     * @param editorDelegate the editor owning the menu
      * @param canvas The {@link LayoutCanvas} providing the selection, the node factory and
      *   the rules engine.
      * @param rootMenu The root of the context menu displayed. In practice this may be the
      *   context menu manager of the {@link LayoutCanvas} or the one from {@link OutlinePage}.
      */
-    public DynamicContextMenu(LayoutEditor editor, LayoutCanvas canvas, MenuManager rootMenu) {
-        mEditor = editor;
+    public DynamicContextMenu(
+            LayoutEditorDelegate editorDelegate,
+            LayoutCanvas canvas,
+            MenuManager rootMenu) {
+        mEditorDelegate = editorDelegate;
         mCanvas = canvas;
         mMenuManager = rootMenu;
 
@@ -113,6 +124,7 @@ class DynamicContextMenu {
         // them at the beginning of the menu.
         final int numStaticActions = mMenuManager.getSize();
         mMenuManager.addMenuListener(new IMenuListener() {
+            @Override
             public void menuAboutToShow(IMenuManager manager) {
 
                 // Remove any previous dynamic contributions to keep only the
@@ -189,8 +201,9 @@ class DynamicContextMenu {
         // the set of all selected nodes to that first action. Actions are required
         // to work this way to facilitate multi selection and actions which apply
         // to multiple nodes.
-        List<RuleAction> firstSelectedActions = allActions.get(nodes.get(0));
-
+        NodeProxy first = (NodeProxy) nodes.get(0);
+        List<RuleAction> firstSelectedActions = allActions.get(first);
+        String defaultId = getDefaultActionId(first);
         for (RuleAction action : firstSelectedActions) {
             if (!availableIds.contains(action.getId())
                     && !(action instanceof RuleAction.Separator)) {
@@ -198,7 +211,7 @@ class DynamicContextMenu {
                 continue;
             }
 
-            items.add(createContributionItem(action, nodes));
+            items.add(createContributionItem(action, nodes, defaultId));
         }
 
         return items;
@@ -236,17 +249,31 @@ class DynamicContextMenu {
         // Only include the menu item if you are not right clicking on a root,
         // or on an included view, or on a non-contiguous selection
         mMenuManager.insertBefore(endId, new Separator());
-        mMenuManager.insertBefore(endId, ExtractIncludeAction.create(mEditor));
-        mMenuManager.insertBefore(endId, ExtractStyleAction.create(mEditor));
-        mMenuManager.insertBefore(endId, WrapInAction.create(mEditor));
+        if (selection.size() == 1 && selection.get(0).getViewInfo() != null
+                && selection.get(0).getViewInfo().getName().equals(FQCN_LINEAR_LAYOUT)) {
+            CanvasViewInfo info = selection.get(0).getViewInfo();
+            List<CanvasViewInfo> children = info.getChildren();
+            if (children.size() == 2) {
+                String first = children.get(0).getName();
+                String second = children.get(1).getName();
+                if ((first.equals(FQCN_IMAGE_VIEW) && second.equals(FQCN_TEXT_VIEW))
+                        || (first.equals(FQCN_TEXT_VIEW) && second.equals(FQCN_IMAGE_VIEW))) {
+                    mMenuManager.insertBefore(endId, UseCompoundDrawableAction.create(
+                            mEditorDelegate));
+                }
+            }
+        }
+        mMenuManager.insertBefore(endId, ExtractIncludeAction.create(mEditorDelegate));
+        mMenuManager.insertBefore(endId, ExtractStyleAction.create(mEditorDelegate));
+        mMenuManager.insertBefore(endId, WrapInAction.create(mEditorDelegate));
         if (selection.size() == 1 && !(selection.get(0).isRoot())) {
-            mMenuManager.insertBefore(endId, UnwrapAction.create(mEditor));
+            mMenuManager.insertBefore(endId, UnwrapAction.create(mEditorDelegate));
         }
         if (selection.size() == 1 && (selection.get(0).isLayout() ||
                 selection.get(0).getViewInfo().getName().equals(FQCN_GESTURE_OVERLAY_VIEW))) {
-            mMenuManager.insertBefore(endId, ChangeLayoutAction.create(mEditor));
+            mMenuManager.insertBefore(endId, ChangeLayoutAction.create(mEditorDelegate));
         } else {
-            mMenuManager.insertBefore(endId, ChangeViewAction.create(mEditor));
+            mMenuManager.insertBefore(endId, ChangeViewAction.create(mEditorDelegate));
         }
         mMenuManager.insertBefore(endId, new Separator());
     }
@@ -347,15 +374,26 @@ class DynamicContextMenu {
     }
 
     /**
+     * Returns the default action id, or null
+     *
+     * @param node the node to look up the default action for
+     * @return the action id, or null
+     */
+    private String getDefaultActionId(NodeProxy node) {
+        return mCanvas.getRulesEngine().callGetDefaultActionId(node);
+    }
+
+    /**
      * Creates a {@link ContributionItem} for the given {@link RuleAction}.
      *
      * @param action the action to create a {@link ContributionItem} for
      * @param nodes the set of nodes the action should be applied to
+     * @param defaultId if not non null, the id of an action which should be considered default
      * @return a new {@link ContributionItem} which implements the given action
      *         on the given nodes
      */
     private ContributionItem createContributionItem(final RuleAction action,
-            final List<INode> nodes) {
+            final List<INode> nodes, final String defaultId) {
         if (action instanceof RuleAction.Separator) {
             return new Separator();
         } else if (action instanceof NestedAction) {
@@ -367,7 +405,7 @@ class DynamicContextMenu {
         } else if (action instanceof Toggle) {
             return new ActionContributionItem(createToggleAction(action, nodes));
         } else {
-            return new ActionContributionItem(createPlainAction(action, nodes));
+            return new ActionContributionItem(createPlainAction(action, nodes, defaultId));
         }
     }
 
@@ -378,7 +416,8 @@ class DynamicContextMenu {
             @Override
             public void run() {
                 String label = createActionLabel(action, nodes);
-                mEditor.wrapUndoEditXmlModel(label, new Runnable() {
+                mEditorDelegate.getEditor().wrapUndoEditXmlModel(label, new Runnable() {
+                    @Override
                     public void run() {
                         action.getCallback().action(action, nodes,
                                 null/* no valueId for a toggle */, !isChecked);
@@ -392,12 +431,14 @@ class DynamicContextMenu {
         return a;
     }
 
-    private IAction createPlainAction(final RuleAction action, final List<INode> nodes) {
+    private IAction createPlainAction(final RuleAction action, final List<INode> nodes,
+            final String defaultId) {
         IAction a = new Action(action.getTitle(), IAction.AS_PUSH_BUTTON) {
             @Override
             public void run() {
                 String label = createActionLabel(action, nodes);
-                mEditor.wrapUndoEditXmlModel(label, new Runnable() {
+                mEditorDelegate.getEditor().wrapUndoEditXmlModel(label, new Runnable() {
+                    @Override
                     public void run() {
                         action.getCallback().action(action, nodes, null,
                                 Boolean.TRUE);
@@ -406,7 +447,29 @@ class DynamicContextMenu {
                 });
             }
         };
-        a.setId(action.getId());
+
+        String id = action.getId();
+        if (defaultId != null && id.equals(defaultId)) {
+            a.setAccelerator(DEFAULT_ACTION_KEY);
+            String text = a.getText();
+            text = text + '\t' + DEFAULT_ACTION_SHORTCUT;
+            a.setText(text);
+
+        } else if (ATTR_ID.equals(id)) {
+            // Keep in sync with {@link LayoutCanvas#handleKeyPressed}
+            if (SdkConstants.CURRENT_PLATFORM == SdkConstants.PLATFORM_DARWIN) {
+                a.setAccelerator('R' | SWT.MOD1 | SWT.MOD3);
+                // Option+Command
+                a.setText(a.getText().trim() + "\t\u2325\u2318R"); //$NON-NLS-1$
+            } else if (SdkConstants.CURRENT_PLATFORM == SdkConstants.PLATFORM_LINUX) {
+                a.setAccelerator('R' | SWT.MOD2 | SWT.MOD3);
+                a.setText(a.getText() + "\tShift+Alt+R"); //$NON-NLS-1$
+            } else {
+                a.setAccelerator('R' | SWT.MOD2 | SWT.MOD3);
+                a.setText(a.getText() + "\tAlt+Shift+R"); //$NON-NLS-1$
+            }
+        }
+        a.setId(id);
         return a;
     }
 
@@ -471,7 +534,10 @@ class DynamicContextMenu {
             }
 
             Set<String> availableIds = computeApplicableActionIds(allActions);
-            List<RuleAction> firstSelectedActions = allActions.get(mNodes.get(0));
+
+            NodeProxy first = (NodeProxy) mNodes.get(0);
+            String defaultId = getDefaultActionId(first);
+            List<RuleAction> firstSelectedActions = allActions.get(first);
 
             int count = 0;
             for (RuleAction firstAction : firstSelectedActions) {
@@ -481,7 +547,7 @@ class DynamicContextMenu {
                     continue;
                 }
 
-                createContributionItem(firstAction, mNodes).fill(menu, -1);
+                createContributionItem(firstAction, mNodes, defaultId).fill(menu, -1);
                 count++;
             }
 
@@ -492,7 +558,7 @@ class DynamicContextMenu {
     }
 
     private void applyPendingChanges() {
-        LayoutCanvas canvas = mEditor.getGraphicalEditor().getCanvasControl();
+        LayoutCanvas canvas = mEditorDelegate.getGraphicalEditor().getCanvasControl();
         CanvasViewInfo root = canvas.getViewHierarchy().getRoot();
         if (root != null) {
             UiViewElementNode uiViewNode = root.getUiViewNode();
@@ -565,7 +631,8 @@ class DynamicContextMenu {
                     @Override
                     public void run() {
                         String label = createActionLabel(mParentAction, mNodes);
-                        mEditor.wrapUndoEditXmlModel(label, new Runnable() {
+                        mEditorDelegate.getEditor().wrapUndoEditXmlModel(label, new Runnable() {
+                            @Override
                             public void run() {
                                 mParentAction.getCallback().action(mParentAction, mNodes, id,
                                         Boolean.TRUE);

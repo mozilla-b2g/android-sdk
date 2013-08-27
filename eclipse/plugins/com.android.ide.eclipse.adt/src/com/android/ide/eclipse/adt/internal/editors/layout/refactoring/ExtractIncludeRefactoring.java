@@ -15,39 +15,39 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.layout.refactoring;
 
-import static com.android.AndroidConstants.FD_RES_LAYOUT;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_NS_NAME;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_HEIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_WIDTH;
-import static com.android.ide.common.layout.LayoutConstants.ID_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.NEW_ID_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_WRAP_CONTENT;
-import static com.android.ide.eclipse.adt.AdtConstants.DOT_XML;
-import static com.android.ide.eclipse.adt.AdtConstants.EXT_XML;
+import static com.android.SdkConstants.ANDROID_NS_NAME;
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ATTR_ID;
+import static com.android.SdkConstants.ATTR_LAYOUT_HEIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_RESOURCE_PREFIX;
+import static com.android.SdkConstants.ATTR_LAYOUT_WIDTH;
+import static com.android.SdkConstants.DOT_XML;
+import static com.android.SdkConstants.EXT_XML;
+import static com.android.SdkConstants.FD_RES;
+import static com.android.SdkConstants.FD_RESOURCES;
+import static com.android.SdkConstants.FD_RES_LAYOUT;
+import static com.android.SdkConstants.ID_PREFIX;
+import static com.android.SdkConstants.NEW_ID_PREFIX;
+import static com.android.SdkConstants.VALUE_WRAP_CONTENT;
+import static com.android.SdkConstants.VIEW_INCLUDE;
+import static com.android.SdkConstants.XMLNS;
+import static com.android.SdkConstants.XMLNS_PREFIX;
 import static com.android.ide.eclipse.adt.AdtConstants.WS_SEP;
-import static com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor.XMLNS;
-import static com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor.XMLNS_COLON;
 import static com.android.resources.ResourceType.LAYOUT;
-import static com.android.sdklib.SdkConstants.FD_RES;
 
-import com.android.AndroidConstants;
+import com.android.annotations.NonNull;
 import com.android.annotations.VisibleForTesting;
-import com.android.ide.eclipse.adt.AdtConstants;
+import com.android.ide.common.xml.XmlFormatStyle;
 import com.android.ide.eclipse.adt.AdtPlugin;
-import com.android.ide.eclipse.adt.internal.editors.formatting.XmlFormatPreferences;
-import com.android.ide.eclipse.adt.internal.editors.formatting.XmlFormatStyle;
-import com.android.ide.eclipse.adt.internal.editors.formatting.XmlPrettyPrinter;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
-import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors;
+import com.android.ide.eclipse.adt.internal.editors.formatting.EclipseXmlFormatPreferences;
+import com.android.ide.eclipse.adt.internal.editors.formatting.EclipseXmlPrettyPrinter;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.CanvasViewInfo;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.DomUtilities;
 import com.android.ide.eclipse.adt.internal.editors.layout.uimodel.UiViewElementNode;
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
 import com.android.ide.eclipse.adt.internal.resources.ResourceNameValidator;
-import com.android.sdklib.SdkConstants;
+import com.android.utils.XmlUtils;
 
 import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
@@ -89,6 +89,7 @@ import org.w3c.dom.Node;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -114,13 +115,16 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
         mReplaceOccurrences  = Boolean.parseBoolean(arguments.get(KEY_OCCURRENCES));
     }
 
-    public ExtractIncludeRefactoring(IFile file, LayoutEditor editor, ITextSelection selection,
+    public ExtractIncludeRefactoring(
+            IFile file,
+            LayoutEditorDelegate delegate,
+            ITextSelection selection,
             ITreeSelection treeSelection) {
-        super(file, editor, selection, treeSelection);
+        super(file, delegate, selection, treeSelection);
     }
 
     @VisibleForTesting
-    ExtractIncludeRefactoring(List<Element> selectedElements, LayoutEditor editor) {
+    ExtractIncludeRefactoring(List<Element> selectedElements, LayoutEditorDelegate editor) {
         super(selectedElements, editor);
     }
 
@@ -155,7 +159,7 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
                     UiViewElementNode uiNode = infos.get(0).getUiViewNode();
                     if (uiNode != null) {
                         Node xmlNode = uiNode.getXmlNode();
-                        if (xmlNode.getLocalName().equals(LayoutDescriptors.VIEW_INCLUDE)) {
+                        if (xmlNode.getLocalName().equals(VIEW_INCLUDE)) {
                             status.addWarning("No point in refactoring a single include tag");
                         }
                     }
@@ -216,7 +220,7 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
     // ---- Actual implementation of Extract as Include modification computation ----
 
     @Override
-    protected List<Change> computeChanges(IProgressMonitor monitor) {
+    protected @NonNull List<Change> computeChanges(IProgressMonitor monitor) {
         String extractedText = getExtractedText();
 
         String namespaceDeclarations = computeNamespaceDeclarations();
@@ -232,8 +236,11 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
         List<Change> changes = new ArrayList<Change>();
 
         String newFileName = mLayoutName + DOT_XML;
-        IProject project = mEditor.getProject();
-        IFile sourceFile = mEditor.getInputFile();
+        IProject project = mDelegate.getEditor().getProject();
+        IFile sourceFile = mDelegate.getEditor().getInputFile();
+        if (sourceFile == null) {
+            return changes;
+        }
 
         // Replace extracted elements by <include> tag
         handleIncludingFile(changes, sourceFile, mSelectionStart, mSelectionEnd,
@@ -318,13 +325,14 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
         IPath parentPath = parent.getProjectRelativePath();
         final IFile file = project.getFile(new Path(parentPath + WS_SEP + newFileName));
         TextFileChange addFile = new TextFileChange("Create new separate layout", file);
-        addFile.setTextType(AdtConstants.EXT_XML);
+        addFile.setTextType(EXT_XML);
         changes.add(addFile);
 
         String newFile = sb.toString();
         if (AdtPrefs.getPrefs().getFormatGuiXml()) {
-            newFile = XmlPrettyPrinter.prettyPrint(newFile,
-                    XmlFormatPreferences.create(), XmlFormatStyle.LAYOUT, null /*lineSeparator*/);
+            newFile = EclipseXmlPrettyPrinter.prettyPrint(newFile,
+                    EclipseXmlFormatPreferences.create(), XmlFormatStyle.LAYOUT,
+                    null /*lineSeparator*/);
         }
         addFile.setEdit(new InsertEdit(0, newFile));
 
@@ -392,10 +400,10 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
     private List<IFile> getOtherLayouts(IFile sourceFile) {
         List<IFile> layouts = new ArrayList<IFile>(100);
         IPath sourcePath = sourceFile.getProjectRelativePath();
-        IFolder resources = mProject.getFolder(SdkConstants.FD_RESOURCES);
+        IFolder resources = mProject.getFolder(FD_RESOURCES);
         try {
             for (IResource folder : resources.members()) {
-                if (folder.getName().startsWith(AndroidConstants.FD_RES_LAYOUT) &&
+                if (folder.getName().startsWith(FD_RES_LAYOUT) &&
                         folder instanceof IFolder) {
                     IFolder layoutFolder = (IFolder) folder;
                     for (IResource file : layoutFolder.members()) {
@@ -423,8 +431,9 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
             // id null check for https://bugs.eclipse.org/bugs/show_bug.cgi?id=272378
             if (id != null && (id.startsWith(ID_PREFIX) || id.startsWith(NEW_ID_PREFIX))) {
                 // Use everything following the id/, and make it lowercase since that is
-                // the convention for layouts
-                defaultName = id.substring(id.indexOf('/') + 1).toLowerCase();
+                // the convention for layouts (and use Locale.US to ensure that "Image" becomes
+                // "image" etc)
+                defaultName = id.substring(id.indexOf('/') + 1).toLowerCase(Locale.US);
 
                 IInputValidator validator = ResourceNameValidator.create(true, mProject, LAYOUT);
 
@@ -447,16 +456,17 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
             public Change perform(IProgressMonitor pm) throws CoreException {
                 Display display = AdtPlugin.getDisplay();
                 display.asyncExec(new Runnable() {
+                    @Override
                     public void run() {
                         openFile(file);
-                        mEditor.getGraphicalEditor().refreshProjectResources();
+                        mDelegate.getGraphicalEditor().refreshProjectResources();
                         // Save file to trigger include finder scanning (as well as making
                         // the
                         // actual show-include feature work since it relies on reading
                         // files from
                         // disk, not a live buffer)
-                        IWorkbenchPage page = mEditor.getEditorSite().getPage();
-                        page.saveEditor(mEditor, false);
+                        IWorkbenchPage page = mDelegate.getEditor().getEditorSite().getPage();
+                        page.saveEditor(mDelegate.getEditor(), false);
                     }
                 });
 
@@ -483,11 +493,11 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
                 String value = attributeNode.getNodeValue();
                 if (value.equals(ANDROID_URI)) {
                     androidNsPrefix = name;
-                    if (androidNsPrefix.startsWith(XMLNS_COLON)) {
-                        androidNsPrefix = androidNsPrefix.substring(XMLNS_COLON.length());
+                    if (androidNsPrefix.startsWith(XMLNS_PREFIX)) {
+                        androidNsPrefix = androidNsPrefix.substring(XMLNS_PREFIX.length());
                     }
                 }
-                sb.append(DomUtilities.toXmlAttributeValue(value));
+                sb.append(XmlUtils.toXmlAttributeValue(value));
                 sb.append('"');
             }
         }
@@ -500,7 +510,7 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
         if (namespaceDeclarations.length() == 0) {
             sb.setLength(0);
             sb.append(' ');
-            sb.append(XMLNS_COLON);
+            sb.append(XMLNS_PREFIX);
             sb.append(androidNsPrefix);
             sb.append('=').append('"');
             sb.append(ANDROID_URI);
@@ -576,7 +586,7 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
             sb.append(':');
             sb.append(ATTR_LAYOUT_WIDTH);
             sb.append('=').append('"');
-            sb.append(DomUtilities.toXmlAttributeValue(width));
+            sb.append(XmlUtils.toXmlAttributeValue(width));
             sb.append('"');
         }
         if (height != null) {
@@ -585,7 +595,7 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
             sb.append(':');
             sb.append(ATTR_LAYOUT_HEIGHT);
             sb.append('=').append('"');
-            sb.append(DomUtilities.toXmlAttributeValue(height));
+            sb.append(XmlUtils.toXmlAttributeValue(height));
             sb.append('"');
         }
 
@@ -595,7 +605,7 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
             for (int i = 0, n = attributes.getLength(); i < n; i++) {
                 Node attr = attributes.item(i);
                 String name = attr.getLocalName();
-                if (name.startsWith(ATTR_LAYOUT_PREFIX)
+                if (name.startsWith(ATTR_LAYOUT_RESOURCE_PREFIX)
                         && ANDROID_URI.equals(attr.getNamespaceURI())) {
                     if (name.equals(ATTR_LAYOUT_WIDTH) || name.equals(ATTR_LAYOUT_HEIGHT)) {
                         // Already handled
@@ -607,7 +617,7 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
                     sb.append(':');
                     sb.append(name);
                     sb.append('=').append('"');
-                    sb.append(DomUtilities.toXmlAttributeValue(attr.getNodeValue()));
+                    sb.append(XmlUtils.toXmlAttributeValue(attr.getNodeValue()));
                     sb.append('"');
                 }
             }
@@ -642,7 +652,7 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
 
     @Override
     VisualRefactoringWizard createWizard() {
-        return new ExtractIncludeWizard(this, mEditor);
+        return new ExtractIncludeWizard(this, mDelegate);
     }
 
     public static class Descriptor extends VisualRefactoringDescriptor {

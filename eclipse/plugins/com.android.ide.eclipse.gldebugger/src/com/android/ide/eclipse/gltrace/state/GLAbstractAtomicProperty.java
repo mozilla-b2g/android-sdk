@@ -16,6 +16,7 @@
 
 package com.android.ide.eclipse.gltrace.state;
 
+
 /**
  * Abstract implementation of {@link IGLProperty}. This provides the basics that can be
  * used by leaf level properties.
@@ -28,18 +29,22 @@ public abstract class GLAbstractAtomicProperty implements IGLProperty {
         mType = type;
     }
 
+    @Override
     public GLStateType getType() {
         return mType;
     }
 
+    @Override
     public IGLProperty getParent() {
         return mParent;
     }
 
+    @Override
     public void setParent(IGLProperty parent) {
         mParent = parent;
     }
 
+    @Override
     public boolean isComposite() {
         return false;
     }
@@ -51,5 +56,10 @@ public abstract class GLAbstractAtomicProperty implements IGLProperty {
         } catch (CloneNotSupportedException e) {
             return null;
         }
+    }
+
+    @Override
+    public void prettyPrint(StatePrettyPrinter pp) {
+        pp.prettyPrint(mType, getStringValue());
     }
 }

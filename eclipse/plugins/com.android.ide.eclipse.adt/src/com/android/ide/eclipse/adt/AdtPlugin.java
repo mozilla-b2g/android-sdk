@@ -16,23 +16,24 @@
 
 package com.android.ide.eclipse.adt;
 
-import com.android.AndroidConstants;
-import com.android.ddmuilib.console.DdmConsole;
-import com.android.ddmuilib.console.IDdmConsole;
-import com.android.ide.common.log.ILogger;
+import static com.android.SdkConstants.CURRENT_PLATFORM;
+import static com.android.SdkConstants.PLATFORM_DARWIN;
+import static com.android.SdkConstants.PLATFORM_LINUX;
+import static com.android.SdkConstants.PLATFORM_WINDOWS;
+
+import com.android.SdkConstants;
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.resources.ResourceFile;
 import com.android.ide.common.sdk.LoadStatus;
+import com.android.ide.eclipse.adt.AdtPlugin.CheckSdkErrorHandler.Solution;
 import com.android.ide.eclipse.adt.internal.VersionCheck;
+import com.android.ide.eclipse.adt.internal.actions.SdkManagerAction;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.IconFactory;
-import com.android.ide.eclipse.adt.internal.editors.animator.AnimationEditor;
-import com.android.ide.eclipse.adt.internal.editors.color.ColorEditor;
-import com.android.ide.eclipse.adt.internal.editors.drawable.DrawableEditor;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.common.CommonXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.IncludeFinder;
-import com.android.ide.eclipse.adt.internal.editors.menu.MenuEditor;
-import com.android.ide.eclipse.adt.internal.editors.resources.ResourcesEditor;
-import com.android.ide.eclipse.adt.internal.editors.xml.XmlEditor;
+import com.android.ide.eclipse.adt.internal.lint.LintDeltaProcessor;
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs.BuildVerbosity;
 import com.android.ide.eclipse.adt.internal.project.AndroidClasspathContainerInitializer;
@@ -40,6 +41,7 @@ import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper;
 import com.android.ide.eclipse.adt.internal.project.ProjectHelper;
 import com.android.ide.eclipse.adt.internal.resources.manager.GlobalProjectMonitor;
 import com.android.ide.eclipse.adt.internal.resources.manager.GlobalProjectMonitor.IFileListener;
+import com.android.ide.eclipse.adt.internal.resources.manager.GlobalProjectMonitor.IProjectListener;
 import com.android.ide.eclipse.adt.internal.resources.manager.ResourceManager;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk.ITargetChangeListener;
@@ -48,8 +50,10 @@ import com.android.ide.eclipse.ddms.DdmsPlugin;
 import com.android.io.StreamException;
 import com.android.resources.ResourceFolderType;
 import com.android.sdklib.IAndroidTarget;
-import com.android.sdklib.SdkConstants;
+import com.android.utils.ILogger;
+import com.google.common.io.Closeables;
 
+import org.eclipse.core.commands.Command;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IMarkerDelta;
 import org.eclipse.core.resources.IProject;
@@ -57,6 +61,7 @@ import org.eclipse.core.resources.IResourceDelta;
 import org.eclipse.core.resources.IWorkspace;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
+import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.QualifiedName;
@@ -67,8 +72,10 @@ import org.eclipse.jdt.core.IJavaElement;
 import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.JavaCore;
 import org.eclipse.jdt.ui.JavaUI;
+import org.eclipse.jface.dialogs.IDialogConstants;
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.preference.IPreferenceStore;
+import org.eclipse.jface.preference.PreferenceDialog;
 import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.jface.text.IRegion;
 import org.eclipse.jface.util.IPropertyChangeListener;
@@ -81,19 +88,22 @@ import org.eclipse.ui.IEditorDescriptor;
 import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.IWorkbench;
 import org.eclipse.ui.IWorkbenchPage;
-import org.eclipse.ui.IWorkbenchWindow;
 import org.eclipse.ui.PartInitException;
 import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.browser.IWebBrowser;
 import org.eclipse.ui.browser.IWorkbenchBrowserSupport;
+import org.eclipse.ui.commands.ICommandService;
 import org.eclipse.ui.console.ConsolePlugin;
 import org.eclipse.ui.console.IConsole;
 import org.eclipse.ui.console.IConsoleConstants;
 import org.eclipse.ui.console.MessageConsole;
 import org.eclipse.ui.console.MessageConsoleStream;
+import org.eclipse.ui.dialogs.PreferencesUtil;
+import org.eclipse.ui.handlers.IHandlerService;
 import org.eclipse.ui.ide.IDE;
-import org.eclipse.ui.part.FileEditorInput;
 import org.eclipse.ui.plugin.AbstractUIPlugin;
+import org.eclipse.ui.texteditor.AbstractTextEditor;
+import org.eclipse.wb.internal.core.DesignerPlugin;
 import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleContext;
 
@@ -118,15 +128,6 @@ import java.util.List;
  * The activator class controls the plug-in life cycle
  */
 public class AdtPlugin extends AbstractUIPlugin implements ILogger {
-    /**
-     * Temporary logging code to help track down
-     * http://code.google.com/p/android/issues/detail?id=15003
-     *
-     * Deactivated right now.
-     * TODO remove this and associated logging code once we're done with issue 15003.
-     */
-    public static final boolean DEBUG_XML_FILE_INIT = false;
-
     /** The plug-in ID */
     public static final String PLUGIN_ID = "com.android.ide.eclipse.adt"; //$NON-NLS-1$
 
@@ -149,7 +150,7 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
     private Color mRed;
 
     /** Load status of the SDK. Any access MUST be in a synchronized(mPostLoadProjects) block */
-    private LoadStatus mSdkIsLoaded = LoadStatus.LOADING;
+    private LoadStatus mSdkLoadedStatus = LoadStatus.LOADING;
     /** Project to update once the SDK is loaded.
      * Any access MUST be in a synchronized(mPostLoadProjectsToResolve) block */
     private final ArrayList<IJavaProject> mPostLoadProjectsToResolve =
@@ -162,7 +163,12 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
     private ArrayList<ITargetChangeListener> mTargetChangeListeners =
             new ArrayList<ITargetChangeListener>();
 
-    protected boolean mSdkIsLoading;
+    /**
+     * This variable indicates that the job inside parseSdkContent() is currently
+     * trying to load the SDK, to avoid re-entrance.
+     * To check whether this succeeds or not, please see {@link #getSdkLoadStatus()}.
+     */
+    private volatile boolean mParseSdkContentIsRunning;
 
     /**
      * An error handler for checkSdkLocationAndId() that will handle the generated error
@@ -170,15 +176,25 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
      * checkSdkLocationAndId.
      */
     public static abstract class CheckSdkErrorHandler {
-        /** Handle an error message during sdk location check. Returns whatever
-         * checkSdkLocationAndId() should returns.
-         */
-        public abstract boolean handleError(String message);
 
-        /** Handle a warning message during sdk location check. Returns whatever
+        public enum Solution {
+            NONE,
+            OPEN_SDK_MANAGER,
+            OPEN_ANDROID_PREFS,
+            OPEN_P2_UPDATE
+        }
+
+        /**
+         * Handle an error message during sdk location check. Returns whatever
          * checkSdkLocationAndId() should returns.
          */
-        public abstract boolean handleWarning(String message);
+        public abstract boolean handleError(Solution solution, String message);
+
+        /**
+         * Handle a warning message during sdk location check. Returns whatever
+         * checkSdkLocationAndId() should returns.
+         */
+        public abstract boolean handleWarning(Solution solution, String message);
     }
 
     /**
@@ -196,8 +212,6 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
     public void start(BundleContext context) throws Exception {
         super.start(context);
 
-        Display display = getDisplay();
-
         // set the default android console.
         mAndroidConsole = new MessageConsole("Android", null); //$NON-NLS-1$
         ConsolePlugin.getDefault().getConsoleManager().addConsoles(
@@ -206,32 +220,6 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
         // get the stream to write in the android console.
         mAndroidConsoleStream = mAndroidConsole.newMessageStream();
         mAndroidConsoleErrorStream = mAndroidConsole.newMessageStream();
-        mRed = new Color(display, 0xFF, 0x00, 0x00);
-
-        // because this can be run, in some cases, by a non ui thread, and because
-        // changing the console properties update the ui, we need to make this change
-        // in the ui thread.
-        display.asyncExec(new Runnable() {
-            public void run() {
-                mAndroidConsoleErrorStream.setColor(mRed);
-            }
-        });
-
-        // set up the ddms console to use this objects
-        DdmConsole.setConsole(new IDdmConsole() {
-            public void printErrorToConsole(String message) {
-                AdtPlugin.printErrorToConsole((String)null, message);
-            }
-            public void printErrorToConsole(String[] messages) {
-                AdtPlugin.printErrorToConsole((String)null, (Object[])messages);
-            }
-            public void printToConsole(String message) {
-                AdtPlugin.printToConsole((String)null, message);
-            }
-            public void printToConsole(String[] messages) {
-                AdtPlugin.printToConsole((String)null, (Object[])messages);
-            }
-        });
 
         // get the eclipse store
         IPreferenceStore eclipseStore = getPreferenceStore();
@@ -239,6 +227,7 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
 
         // set the listener for the preference change
         eclipseStore.addPropertyChangeListener(new IPropertyChangeListener() {
+            @Override
             public void propertyChange(PropertyChangeEvent event) {
                 // load the new preferences
                 AdtPrefs.getPrefs().loadValues(event);
@@ -263,21 +252,19 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
         // load preferences.
         AdtPrefs.getPrefs().loadValues(null /*event*/);
 
+        // initialize property-sheet library
+        DesignerPlugin.initialize(
+                this,
+                PLUGIN_ID,
+                CURRENT_PLATFORM == PLATFORM_WINDOWS,
+                CURRENT_PLATFORM == PLATFORM_DARWIN,
+                CURRENT_PLATFORM == PLATFORM_LINUX);
+
         // initialize editors
         startEditors();
 
         // Listen on resource file edits for updates to file inclusion
         IncludeFinder.start();
-
-        // Parse the SDK content.
-        // This is deferred in separate jobs to avoid blocking the bundle start.
-        final boolean isSdkLocationValid = checkSdkLocationAndId();
-        if (isSdkLocationValid) {
-            // parse the SDK resources.
-            // Wait 2 seconds before starting the job. This leaves some time to the
-            // other bundles to initialize.
-            parseSdkContent(2000 /*milliseconds*/);
-        }
     }
 
     /*
@@ -292,10 +279,42 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
         stopEditors();
         IncludeFinder.stop();
 
-        mRed.dispose();
+        DesignerPlugin.dispose();
+
+        if (mRed != null) {
+            mRed.dispose();
+            mRed = null;
+        }
+
         synchronized (AdtPlugin.class) {
             sPlugin = null;
         }
+    }
+
+    /** Called when the workbench has been started */
+    public void workbenchStarted() {
+        // Parse the SDK content.
+        // This is deferred in separate jobs to avoid blocking the bundle start.
+        final boolean isSdkLocationValid = checkSdkLocationAndId();
+        if (isSdkLocationValid) {
+            // parse the SDK resources.
+            // Wait 2 seconds before starting the job. This leaves some time to the
+            // other bundles to initialize.
+            parseSdkContent(2000 /*milliseconds*/);
+        }
+
+        Display display = getDisplay();
+        mRed = new Color(display, 0xFF, 0x00, 0x00);
+
+        // because this can be run, in some cases, by a non ui thread, and because
+        // changing the console properties update the ui, we need to make this change
+        // in the ui thread.
+        display.asyncExec(new Runnable() {
+            @Override
+            public void run() {
+                mAndroidConsoleErrorStream.setColor(mRed);
+            }
+        });
     }
 
     /**
@@ -307,16 +326,50 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
         return sPlugin;
     }
 
+    /**
+     * Returns the current display, if any
+     *
+     * @return the display
+     */
+    @NonNull
     public static Display getDisplay() {
-        IWorkbench bench = null;
         synchronized (AdtPlugin.class) {
-            bench = sPlugin.getWorkbench();
+            if (sPlugin != null) {
+                IWorkbench bench = sPlugin.getWorkbench();
+                if (bench != null) {
+                    Display display = bench.getDisplay();
+                    if (display != null) {
+                        return display;
+                    }
+                }
+            }
         }
 
-        if (bench != null) {
-            return bench.getDisplay();
+        Display display = Display.getCurrent();
+        if (display != null) {
+            return display;
         }
-        return null;
+
+        return Display.getDefault();
+    }
+
+    /**
+     * Returns the shell, if any
+     *
+     * @return the shell, if any
+     */
+    @Nullable
+    public static Shell getShell() {
+        Display display = AdtPlugin.getDisplay();
+        Shell shell = display.getActiveShell();
+        if (shell == null) {
+            Shell[] shells = display.getShells();
+            if (shells.length > 0) {
+                shell = shells[0];
+            }
+        }
+
+        return shell;
     }
 
     /** Returns the adb path relative to the sdk folder */
@@ -411,12 +464,16 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
      * @param file the file to be read
      * @return the String read from the file, or null if there was an error
      */
-    public static String readFile(IFile file) {
+    @SuppressWarnings("resource") // Eclipse doesn't understand Closeables.closeQuietly yet
+    @Nullable
+    public static String readFile(@NonNull IFile file) {
         InputStream contents = null;
+        InputStreamReader reader = null;
         try {
             contents = file.getContents();
             String charset = file.getCharset();
-            return readFile(new InputStreamReader(contents, charset));
+            reader = new InputStreamReader(contents, charset);
+            return readFile(reader);
         } catch (CoreException e) {
             // pass -- ignore files we can't read
         } catch (IOException e) {
@@ -429,13 +486,8 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
             // which is handled by this IOException catch.
 
         } finally {
-            try {
-                if (contents != null) {
-                    contents.close();
-                }
-            } catch (IOException e) {
-                // ignore
-            }
+            Closeables.closeQuietly(reader);
+            Closeables.closeQuietly(contents);
         }
 
         return null;
@@ -492,6 +544,7 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
      * @param string the string to be searched for
      * @return true if the file is found and contains the given string anywhere within it
      */
+    @SuppressWarnings("resource") // Closed by streamContains
     public static boolean fileContains(IFile file, String string) {
         InputStream contents = null;
         try {
@@ -674,18 +727,19 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
     }
 
     /**
-     * Reads the contents of an {@link InputStreamReader} and return it as a String
+     * Reads the contents of a {@link Reader} and return it as a String. This
+     * method will close the input reader.
      *
-     * @param inputStream the input stream to be read from
-     * @return the String read from the stream, or null if there was an error
+     * @param reader the reader to be read from
+     * @return the String read from reader, or null if there was an error
      */
-    public static String readFile(Reader inputStream) {
-        BufferedReader reader = null;
+    public static String readFile(Reader reader) {
+        BufferedReader bufferedReader = null;
         try {
-            reader = new BufferedReader(inputStream);
+            bufferedReader = new BufferedReader(reader);
             StringBuilder sb = new StringBuilder(2000);
             while (true) {
-                int c = reader.read();
+                int c = bufferedReader.read();
                 if (c == -1) {
                     return sb.toString();
                 } else {
@@ -696,8 +750,8 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
             // pass -- ignore files we can't read
         } finally {
             try {
-                if (reader != null) {
-                    reader.close();
+                if (bufferedReader != null) {
+                    bufferedReader.close();
                 }
             } catch (IOException e) {
                 AdtPlugin.log(e, "Can't read input stream"); //$NON-NLS-1$
@@ -718,15 +772,18 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
             InputStream is = readEmbeddedFileAsStream(filepath);
             if (is != null) {
                 BufferedReader reader = new BufferedReader(new InputStreamReader(is));
+                try {
+                    String line;
+                    StringBuilder total = new StringBuilder(reader.readLine());
+                    while ((line = reader.readLine()) != null) {
+                        total.append('\n');
+                        total.append(line);
+                    }
 
-                String line;
-                StringBuilder total = new StringBuilder(reader.readLine());
-                while ((line = reader.readLine()) != null) {
-                    total.append('\n');
-                    total.append(line);
+                    return total.toString();
+                } finally {
+                    reader.close();
                 }
-
-                return total.toString();
             }
         } catch (IOException e) {
             // we'll just return null
@@ -748,16 +805,19 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
             if (is != null) {
                 // create a buffered reader to facilitate reading.
                 BufferedInputStream stream = new BufferedInputStream(is);
+                try {
+                    // get the size to read.
+                    int avail = stream.available();
 
-                // get the size to read.
-                int avail = stream.available();
+                    // create the buffer and reads it.
+                    byte[] buffer = new byte[avail];
+                    stream.read(buffer);
 
-                // create the buffer and reads it.
-                byte[] buffer = new byte[avail];
-                stream.read(buffer);
-
-                // and return.
-                return buffer;
+                    // and return.
+                    return buffer;
+                } finally {
+                    stream.close();
+                }
             }
         } catch (IOException e) {
             // we'll just return null;.
@@ -834,6 +894,7 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
 
         // dialog box only run in ui thread..
         display.asyncExec(new Runnable() {
+            @Override
             public void run() {
                 Shell shell = display.getActiveShell();
                 MessageDialog.openError(shell, title, message);
@@ -853,6 +914,7 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
 
         // dialog box only run in ui thread..
         display.asyncExec(new Runnable() {
+            @Override
             public void run() {
                 Shell shell = display.getActiveShell();
                 MessageDialog.openWarning(shell, title, message);
@@ -874,6 +936,7 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
         // we need to ask the user what he wants to do.
         final boolean[] result = new boolean[1];
         display.syncExec(new Runnable() {
+            @Override
             public void run() {
                 Shell shell = display.getActiveShell();
                 result[0] = MessageDialog.openQuestion(shell, title, message);
@@ -1045,7 +1108,7 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
      */
     public final LoadStatus getSdkLoadStatus() {
         synchronized (Sdk.getLock()) {
-            return mSdkIsLoaded;
+            return mSdkLoadedStatus;
         }
     }
 
@@ -1072,46 +1135,187 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
     }
 
     /**
-     * Checks the location of the SDK is valid and if it is, grab the SDK API version
-     * from the SDK.
-     * @return false if the location is not correct.
+     * Checks the location of the SDK in the prefs is valid.
+     * If it is not, display a warning dialog to the user and try to display
+     * some useful link to fix the situation (setup the preferences, perform an
+     * update, etc.)
+     *
+     * @return True if the SDK location points to an SDK.
+     *  If false, the user has already been presented with a modal dialog explaining that.
      */
-    private boolean checkSdkLocationAndId() {
+    public boolean checkSdkLocationAndId() {
         String sdkLocation = AdtPrefs.getPrefs().getOsSdkFolder();
-        if (sdkLocation == null || sdkLocation.length() == 0) {
-            return false;
-        }
 
         return checkSdkLocationAndId(sdkLocation, new CheckSdkErrorHandler() {
+            private String mTitle = "Android SDK";
+
+            /**
+             * Handle an error, which is the case where the check did not find any SDK.
+             * This returns false to {@link AdtPlugin#checkSdkLocationAndId()}.
+             */
             @Override
-            public boolean handleError(String message) {
-                AdtPlugin.displayError("Android SDK Verification", message);
+            public boolean handleError(Solution solution, String message) {
+                displayMessage(solution, message, MessageDialog.ERROR);
                 return false;
             }
 
+            /**
+             * Handle an warning, which is the case where the check found an SDK
+             * but it might need to be repaired or is missing an expected component.
+             *
+             * This returns true to {@link AdtPlugin#checkSdkLocationAndId()}.
+             */
             @Override
-            public boolean handleWarning(String message) {
-                AdtPlugin.displayWarning("Android SDK Verification", message);
+            public boolean handleWarning(Solution solution, String message) {
+                displayMessage(solution, message, MessageDialog.WARNING);
                 return true;
+            }
+
+            private void displayMessage(
+                    final Solution solution,
+                    final String message,
+                    final int dialogImageType) {
+                final Display disp = getDisplay();
+                disp.asyncExec(new Runnable() {
+                    @Override
+                    public void run() {
+                        Shell shell = disp.getActiveShell();
+                        if (shell == null) {
+                            return;
+                        }
+
+                        String customLabel = null;
+                        switch(solution) {
+                        case OPEN_ANDROID_PREFS:
+                            customLabel = "Open Preferences";
+                            break;
+                        case OPEN_P2_UPDATE:
+                            customLabel = "Check for Updates";
+                            break;
+                        case OPEN_SDK_MANAGER:
+                            customLabel = "Open SDK Manager";
+                            break;
+                        }
+
+                        String btnLabels[] = new String[customLabel == null ? 1 : 2];
+                        btnLabels[0] = customLabel;
+                        btnLabels[btnLabels.length - 1] = IDialogConstants.CLOSE_LABEL;
+
+                        MessageDialog dialog = new MessageDialog(
+                                shell, // parent
+                                mTitle,
+                                null, // dialogTitleImage
+                                message,
+                                dialogImageType,
+                                btnLabels,
+                                btnLabels.length - 1);
+                        int index = dialog.open();
+
+                        if (customLabel != null && index == 0) {
+                            switch(solution) {
+                            case OPEN_ANDROID_PREFS:
+                                openAndroidPrefs();
+                                break;
+                            case OPEN_P2_UPDATE:
+                                openP2Update();
+                                break;
+                            case OPEN_SDK_MANAGER:
+                                openSdkManager();
+                                break;
+                            }
+                        }
+                    }
+                });
+            }
+
+            private void openSdkManager() {
+                // Open the standalone external SDK Manager since we know
+                // that ADT on Windows is bound to be locking some SDK folders.
+                //
+                // Also when this is invoked because SdkManagerAction.run() fails, this
+                // test will fail and we'll fallback on using the internal one.
+                if (SdkManagerAction.openExternalSdkManager()) {
+                    return;
+                }
+
+                // Otherwise open the regular SDK Manager bundled within ADT
+                if (!SdkManagerAction.openAdtSdkManager()) {
+                    // We failed because the SDK location is undefined. In this case
+                    // let's open the preferences instead.
+                    openAndroidPrefs();
+                }
+            }
+
+            private void openP2Update() {
+                Display disp = getDisplay();
+                if (disp == null) {
+                    return;
+                }
+                disp.asyncExec(new Runnable() {
+                    @Override
+                    public void run() {
+                        String cmdId = "org.eclipse.equinox.p2.ui.sdk.update";  //$NON-NLS-1$
+                        IWorkbench wb = PlatformUI.getWorkbench();
+                        if (wb == null) {
+                            return;
+                        }
+
+                        ICommandService cs = (ICommandService) wb.getService(ICommandService.class);
+                        IHandlerService is = (IHandlerService) wb.getService(IHandlerService.class);
+                        if (cs == null || is == null) {
+                            return;
+                        }
+
+                        Command cmd = cs.getCommand(cmdId);
+                        if (cmd != null && cmd.isDefined()) {
+                            try {
+                                is.executeCommand(cmdId, null/*event*/);
+                            } catch (Exception ignore) {
+                                AdtPlugin.log(ignore, "Failed to execute command %s", cmdId);
+                            }
+                        }
+                    }
+                });
+            }
+
+            private void openAndroidPrefs() {
+                PreferenceDialog dialog = PreferencesUtil.createPreferenceDialogOn(
+                        getDisplay().getActiveShell(),
+                        "com.android.ide.eclipse.preferences.main", //$NON-NLS-1$ preferencePageId
+                        null,  // displayedIds
+                        null); // data
+                dialog.open();
             }
         });
     }
 
     /**
      * Internal helper to perform the actual sdk location and id check.
+     * <p/>
+     * This is useful for callers who want to override what happens when the check
+     * fails. Otherwise consider calling {@link #checkSdkLocationAndId()} that will
+     * present a modal dialog to the user in case of failure.
      *
-     * @param osSdkLocation The sdk directory, an OS path.
+     * @param osSdkLocation The sdk directory, an OS path. Can be null.
      * @param errorHandler An checkSdkErrorHandler that can display a warning or an error.
      * @return False if there was an error or the result from the errorHandler invocation.
      */
-    public boolean checkSdkLocationAndId(String osSdkLocation, CheckSdkErrorHandler errorHandler) {
-        if (osSdkLocation.endsWith(File.separator) == false) {
+    public boolean checkSdkLocationAndId(@Nullable String osSdkLocation,
+                                         @NonNull CheckSdkErrorHandler errorHandler) {
+        if (osSdkLocation == null || osSdkLocation.trim().length() == 0) {
+            return errorHandler.handleError(
+                    Solution.OPEN_ANDROID_PREFS,
+                    "Location of the Android SDK has not been setup in the preferences.");
+        }
+
+        if (!osSdkLocation.endsWith(File.separator)) {
             osSdkLocation = osSdkLocation + File.separator;
         }
 
         File osSdkFolder = new File(osSdkLocation);
         if (osSdkFolder.isDirectory() == false) {
             return errorHandler.handleError(
+                    Solution.OPEN_ANDROID_PREFS,
                     String.format(Messages.Could_Not_Find_Folder, osSdkLocation));
         }
 
@@ -1119,6 +1323,7 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
         File toolsFolder = new File(osTools);
         if (toolsFolder.isDirectory() == false) {
             return errorHandler.handleError(
+                    Solution.OPEN_ANDROID_PREFS,
                     String.format(Messages.Could_Not_Find_Folder_In_SDK,
                             SdkConstants.FD_TOOLS, osSdkLocation));
         }
@@ -1132,13 +1337,17 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
         // check that we have both the tools component and the platform-tools component.
         String platformTools = osSdkLocation + SdkConstants.OS_SDK_PLATFORM_TOOLS_FOLDER;
         if (checkFolder(platformTools) == false) {
-            return errorHandler.handleWarning("SDK Platform Tools component is missing!\n" +
+            return errorHandler.handleWarning(
+                    Solution.OPEN_SDK_MANAGER,
+                    "SDK Platform Tools component is missing!\n" +
                     "Please use the SDK Manager to install it.");
         }
 
         String tools = osSdkLocation + SdkConstants.OS_SDK_TOOLS_FOLDER;
         if (checkFolder(tools) == false) {
-            return errorHandler.handleError("SDK Tools component is missing!\n" +
+            return errorHandler.handleError(
+                    Solution.OPEN_SDK_MANAGER,
+                    "SDK Tools component is missing!\n" +
                     "Please use the SDK Manager to install it.");
         }
 
@@ -1150,7 +1359,9 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
         };
         for (String file : filesToCheck) {
             if (checkFile(file) == false) {
-                return errorHandler.handleError(String.format(Messages.Could_Not_Find, file));
+                return errorHandler.handleError(
+                        Solution.OPEN_ANDROID_PREFS,
+                        String.format(Messages.Could_Not_Find, file));
             }
         }
 
@@ -1197,12 +1408,12 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
             protected IStatus run(IProgressMonitor monitor) {
                 try {
 
-                    if (mSdkIsLoading) {
+                    if (mParseSdkContentIsRunning) {
                         return new Status(IStatus.WARNING, PLUGIN_ID,
                                 "An Android SDK is already being loaded. Please try again later.");
                     }
 
-                    mSdkIsLoading = true;
+                    mParseSdkContentIsRunning = true;
 
                     SubMonitor progress = SubMonitor.convert(monitor,
                             "Initialize SDK Manager", 100);
@@ -1210,10 +1421,9 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
                     Sdk sdk = Sdk.loadSdk(AdtPrefs.getPrefs().getOsSdkFolder());
 
                     if (sdk != null) {
-
                         ArrayList<IJavaProject> list = new ArrayList<IJavaProject>();
                         synchronized (Sdk.getLock()) {
-                            mSdkIsLoaded = LoadStatus.LOADED;
+                            mSdkLoadedStatus = LoadStatus.LOADED;
 
                             progress.setTaskName("Check Projects");
 
@@ -1223,7 +1433,7 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
                                     // project that have been resolved before the sdk was loaded
                                     // will have a ProjectState where the IAndroidTarget is null
                                     // so we load the target now that the SDK is loaded.
-                                    sdk.loadTarget(Sdk.getProjectState(iProject));
+                                    sdk.loadTargetAndBuildTools(Sdk.getProjectState(iProject));
                                     list.add(javaProject);
                                 }
                             }
@@ -1244,7 +1454,7 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
                         if (list.size() > 0) {
                             IJavaProject[] array = list.toArray(
                                     new IJavaProject[list.size()]);
-                            AndroidClasspathContainerInitializer.updateProjects(array);
+                            ProjectHelper.updateProjects(array);
                         }
 
                         progress.worked(10);
@@ -1252,7 +1462,7 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
                         // SDK failed to Load!
                         // Sdk#loadSdk() has already displayed an error.
                         synchronized (Sdk.getLock()) {
-                            mSdkIsLoaded = LoadStatus.FAILED;
+                            mSdkLoadedStatus = LoadStatus.FAILED;
                         }
                     }
 
@@ -1266,6 +1476,7 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
                         (List<ITargetChangeListener>)mTargetChangeListeners.clone();
                     final SubMonitor progress2 = progress;
                     AdtPlugin.getDisplay().asyncExec(new Runnable() {
+                        @Override
                         public void run() {
                             for (ITargetChangeListener listener : listeners) {
                                 try {
@@ -1284,7 +1495,7 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
                             "parseSdkContent failed", t);               //$NON-NLS-1$
 
                 } finally {
-                    mSdkIsLoading = false;
+                    mParseSdkContentIsRunning = false;
                     if (monitor != null) {
                         monitor.done();
                     }
@@ -1319,8 +1530,9 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
 
         if (mResourceMonitor != null) {
             try {
-                setupDefaultEditor(mResourceMonitor);
+                setupEditors(mResourceMonitor);
                 ResourceManager.setup(mResourceMonitor);
+                LintDeltaProcessor.startListening(mResourceMonitor);
             } catch (Throwable t) {
                 log(t, "ResourceManager.setup failed"); //$NON-NLS-1$
             }
@@ -1342,11 +1554,16 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
 
         IconFactory.getInstance().dispose();
 
+        LintDeltaProcessor.stopListening(mResourceMonitor);
+
         // Remove the resource listener that handles compiled resources.
         IWorkspace ws = ResourcesPlugin.getWorkspace();
         GlobalProjectMonitor.stopMonitoring(ws);
 
-        mRed.dispose();
+        if (mRed != null) {
+            mRed.dispose();
+            mRed = null;
+        }
     }
 
     /**
@@ -1374,145 +1591,107 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
         return mResourceMonitor;
     }
 
-    private static final String UNKNOWN_EDITOR = "unknown-editor"; //$NON-NLS-1$
-
     /**
-     * Sets up the editor to register default editors for resource files when needed.
+     * Sets up the editor resource listener.
+     * <p>
+     * The listener handles:
+     * <ul>
+     * <li> Discovering newly created files, and ensuring that if they are in an Android
+     *      project, they default to the right XML editor.
+     * <li> Discovering deleted files, and closing the corresponding editors if necessary.
+     *      This is only done for XML files, since other editors such as Java editors handles
+     *      it on their own.
+     * <ul>
      *
      * This is called by the {@link AdtPlugin} during initialization.
      *
      * @param monitor The main Resource Monitor object.
      */
-    public void setupDefaultEditor(GlobalProjectMonitor monitor) {
+    public void setupEditors(GlobalProjectMonitor monitor) {
         monitor.addFileListener(new IFileListener() {
+            @Override
+            public void fileChanged(@NonNull IFile file, @NonNull IMarkerDelta[] markerDeltas,
+                    int kind, @Nullable String extension, int flags, boolean isAndroidProject) {
+                if (!isAndroidProject) {
+                    return;
+                }
+                if (flags == IResourceDelta.MARKERS || !SdkConstants.EXT_XML.equals(extension)) {
+                    // ONLY the markers changed, or not XML file: not relevant to this listener
+                    return;
+                }
 
-            /* (non-Javadoc)
-             * Sent when a file changed.
-             * @param file The file that changed.
-             * @param markerDeltas The marker deltas for the file.
-             * @param kind The change kind. This is equivalent to
-             * {@link IResourceDelta#accept(IResourceDeltaVisitor)}
-             *
-             * @see IFileListener#fileChanged
-             */
-            public void fileChanged(IFile file, IMarkerDelta[] markerDeltas, int kind) {
-                if (AdtConstants.EXT_XML.equals(file.getFileExtension())) {
-                    // The resources files must have a file path similar to
-                    //    project/res/.../*.xml
-                    // There is no support for sub folders, so the segment count must be 4
-                    if (DEBUG_XML_FILE_INIT) {
-                        AdtPlugin.log(IStatus.INFO, "fileChanged %1$s",
-                            file.getFullPath().toOSString());
-                    }
+                if (kind == IResourceDelta.REMOVED) {
+                    AdtUtils.closeEditors(file, false /*save*/);
+                    return;
+                }
 
-                    if (file.getFullPath().segmentCount() == 4) {
-                        // check if we are inside the res folder.
-                        String segment = file.getFullPath().segment(1);
-                        if (segment.equalsIgnoreCase(SdkConstants.FD_RESOURCES)) {
-                            // we are inside a res/ folder, get the ResourceFolderType of the
-                            // parent folder.
-                            String[] folderSegments = file.getParent().getName().split(
-                                    AndroidConstants.RES_QUALIFIER_SEP);
+                // The resources files must have a file path similar to
+                //    project/res/.../*.xml
+                // There is no support for sub folders, so the segment count must be 4
+                if (file.getFullPath().segmentCount() == 4) {
+                    // check if we are inside the res folder.
+                    String segment = file.getFullPath().segment(1);
+                    if (segment.equalsIgnoreCase(SdkConstants.FD_RESOURCES)) {
+                        // we are inside a res/ folder, get the ResourceFolderType of the
+                        // parent folder.
+                        String[] folderSegments = file.getParent().getName().split(
+                                SdkConstants.RES_QUALIFIER_SEP);
 
-                            // get the enum for the resource type.
-                            ResourceFolderType type = ResourceFolderType.getTypeByName(
-                                    folderSegments[0]);
+                        // get the enum for the resource type.
+                        ResourceFolderType type = ResourceFolderType.getTypeByName(
+                                folderSegments[0]);
 
-                            if (type != null) {
-                                if (kind == IResourceDelta.ADDED) {
-                                    resourceAdded(file, type);
-                                } else if (kind == IResourceDelta.CHANGED) {
-                                    resourceChanged(file, type);
-                                }
-                            } else {
-                                if (DEBUG_XML_FILE_INIT) {
-                                    AdtPlugin.log(IStatus.INFO, "  The resource folder was null");
-                                }
-
-                                // if the res folder is null, this means the name is invalid,
-                                // in this case we remove whatever android editors that was set
-                                // as the default editor.
-                                IEditorDescriptor desc = IDE.getDefaultEditor(file);
-                                String editorId = desc.getId();
-                                if (DEBUG_XML_FILE_INIT) {
-                                    AdtPlugin.log(IStatus.INFO, "Old editor id=%1$s", editorId);
-                                }
-                                if (editorId.startsWith(AdtConstants.EDITORS_NAMESPACE)) {
-                                    // reset the default editor.
-                                    IDE.setDefaultEditor(file, null);
-                                    if (DEBUG_XML_FILE_INIT) {
-                                        AdtPlugin.log(IStatus.INFO, "  Resetting editor id to default");
-                                    }
-                                }
+                        if (type != null) {
+                            if (kind == IResourceDelta.ADDED) {
+                                // A new file {@code /res/type-config/some.xml} was added.
+                                // All the /res XML files are handled by the same common editor now.
+                                IDE.setDefaultEditor(file, CommonXmlEditor.ID);
                             }
                         } else {
-                            if (DEBUG_XML_FILE_INIT) {
-                                AdtPlugin.log(IStatus.INFO, "    Not in resources/, ignoring");
+                            // if the res folder is null, this means the name is invalid,
+                            // in this case we remove whatever android editors that was set
+                            // as the default editor.
+                            IEditorDescriptor desc = IDE.getDefaultEditor(file);
+                            String editorId = desc.getId();
+                            if (editorId.startsWith(AdtConstants.EDITORS_NAMESPACE)) {
+                                // reset the default editor.
+                                IDE.setDefaultEditor(file, null);
                             }
                         }
                     }
                 }
             }
+        }, IResourceDelta.ADDED | IResourceDelta.REMOVED);
 
-            private void resourceAdded(IFile file, ResourceFolderType type) {
-                if (DEBUG_XML_FILE_INIT) {
-                    AdtPlugin.log(IStatus.INFO, "resourceAdded %1$s - type=%1$s",
-                        file.getFullPath().toOSString(), type);
-                }
-                assignEditor(file, type);
+        monitor.addProjectListener(new IProjectListener() {
+            @Override
+            public void projectClosed(IProject project) {
+                // Close any editors referencing this project
+                AdtUtils.closeEditors(project, true /*save*/);
             }
 
-            private void resourceChanged(IFile file, ResourceFolderType type) {
-                if (DEBUG_XML_FILE_INIT) {
-                    AdtPlugin.log(IStatus.INFO, "resourceChanged %1$s - type=%1$s",
-                        file.getFullPath().toOSString(), type);
-                }
-                if (type == ResourceFolderType.XML) {
-                    IEditorDescriptor ed = IDE.getDefaultEditor(file);
-                    if (ed == null || !ed.getId().equals(XmlEditor.ID)) {
-                        QualifiedName qname = new QualifiedName(
-                                AdtPlugin.PLUGIN_ID,
-                                UNKNOWN_EDITOR);
-                        String prop = getFileProperty(file, qname);
-                        if (prop != null && XmlEditor.canHandleFile(file)) {
-                            try {
-                                // remove the property & set editor
-                                setFileProperty(file, qname, null);
-
-                                // the window can be null sometimes
-                                IWorkbench wb = PlatformUI.getWorkbench();
-                                IWorkbenchWindow win = wb == null ? null :
-                                                       wb.getActiveWorkbenchWindow();
-                                IWorkbenchPage page = win == null ? null :
-                                                      win.getActivePage();
-
-                                IEditorPart oldEditor = page == null ? null :
-                                                        page.findEditor(new FileEditorInput(file));
-                                if (page != null &&
-                                        oldEditor != null &&
-                                        AdtPlugin.displayPrompt("Android XML Editor",
-                                            String.format("The file you just saved as been recognized as a file that could be better handled using the Android XML Editor. Do you want to edit '%1$s' using the Android XML editor instead?",
-                                                    file.getFullPath()))) {
-                                    IDE.setDefaultEditor(file, XmlEditor.ID);
-                                    IEditorPart newEditor = page.openEditor(
-                                            new FileEditorInput(file),
-                                            XmlEditor.ID,
-                                            true, /* activate */
-                                            IWorkbenchPage.MATCH_NONE);
-
-                                    if (newEditor != null) {
-                                        page.closeEditor(oldEditor, true /* save */);
-                                    }
-                                }
-                            } catch (CoreException e) {
-                                // page.openEditor may have failed
-                            }
-                        }
-                    }
-                }
+            @Override
+            public void projectDeleted(IProject project) {
+                // Close any editors referencing this project
+                AdtUtils.closeEditors(project, false /*save*/);
             }
 
-        }, IResourceDelta.ADDED | IResourceDelta.CHANGED);
+            @Override
+            public void projectOpenedWithWorkspace(IProject project) {
+            }
+
+            @Override
+            public void allProjectsOpenedWithWorkspace() {
+            }
+
+            @Override
+            public void projectOpened(IProject project) {
+            }
+
+            @Override
+            public void projectRenamed(IProject project, IPath from) {
+            }
+        });
     }
 
     /**
@@ -1541,6 +1720,7 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
             (List<ITargetChangeListener>)mTargetChangeListeners.clone();
 
         AdtPlugin.getDisplay().asyncExec(new Runnable() {
+            @Override
             public void run() {
                 for (ITargetChangeListener listener : listeners) {
                     try {
@@ -1562,7 +1742,12 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
         final List<ITargetChangeListener> listeners =
             (List<ITargetChangeListener>)mTargetChangeListeners.clone();
 
-        AdtPlugin.getDisplay().asyncExec(new Runnable() {
+        Display display = AdtPlugin.getDisplay();
+        if (display == null || display.isDisposed()) {
+            return;
+        }
+        display.asyncExec(new Runnable() {
+            @Override
             public void run() {
                 for (ITargetChangeListener listener : listeners) {
                     try {
@@ -1616,7 +1801,48 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
     }
 
     /**
+     * Conditionally reparses the content of the SDK if it has changed on-disk
+     * and updates opened projects.
+     * <p/>
+     * The operation is asynchronous and happens in a background eclipse job.
+     */
+    public void refreshSdk() {
+        // SDK can't have changed if we haven't loaded it yet.
+        final Sdk sdk = Sdk.getCurrent();
+        if (sdk == null) {
+            return;
+        }
+
+        Job job = new Job("Check Android SDK") {
+            @Override
+            protected IStatus run(IProgressMonitor monitor) {
+                // SDK has changed if its location path is different.
+                boolean changed = sdk.getSdkLocation() == null ||
+                                 !sdk.getSdkLocation().equals(AdtPrefs.getPrefs().getOsSdkFolder());
+                if (!changed) {
+                    // Check whether the target directories has potentially changed.
+                    changed = sdk.haveTargetsChanged();
+                }
+
+                if (changed) {
+                    monitor.setTaskName("Reload Android SDK");
+                    reparseSdk();
+                }
+
+                monitor.done();
+                return Status.OK_STATUS;
+            }
+        };
+        job.setPriority(Job.SHORT); // a short background job, not interactive.
+        job.schedule();
+    }
+
+    /**
      * Reparses the content of the SDK and updates opened projects.
+     * The operation is asynchronous and happens in a background eclipse job.
+     * <p/>
+     * This reloads the SDK all the time. To only perform this when it has potentially
+     * changed, call {@link #refreshSdk()} instead.
      */
     public void reparseSdk() {
         // add all the opened Android projects to the list of projects to be updated
@@ -1657,7 +1883,8 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
 
     // --------- ILogger methods -----------
 
-    public void error(Throwable t, String format, Object... args) {
+    @Override
+    public void error(@Nullable Throwable t, @Nullable String format, Object... args) {
         if (t != null) {
             log(t, format, args);
         } else {
@@ -1665,55 +1892,19 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
         }
     }
 
-    public void printf(String format, Object... args) {
+    @Override
+    public void info(@NonNull String format, Object... args) {
         log(IStatus.INFO, format, args);
     }
 
-    public void warning(String format, Object... args) {
-        log(IStatus.WARNING, format, args);
+    @Override
+    public void verbose(@NonNull String format, Object... args) {
+        log(IStatus.INFO, format, args);
     }
 
-    /**
-     * Assign an editor for the given {@link IFile}.
-     *
-     * @param file the file to assign
-     * @param type resource type for the file
-     */
-    public static void assignEditor(IFile file, ResourceFolderType type) {
-        // set the default editor based on the type.
-        if (type == ResourceFolderType.LAYOUT) {
-            if (DEBUG_XML_FILE_INIT) {
-                AdtPlugin.log(IStatus.INFO, "   set default editor id to layout");
-            }
-            IDE.setDefaultEditor(file, LayoutEditor.ID);
-        } else if (type == ResourceFolderType.VALUES) {
-            IDE.setDefaultEditor(file, ResourcesEditor.ID);
-        } else if (type == ResourceFolderType.MENU) {
-            IDE.setDefaultEditor(file, MenuEditor.ID);
-        } else if (type == ResourceFolderType.COLOR) {
-            IDE.setDefaultEditor(file, ColorEditor.ID);
-        } else if (type == ResourceFolderType.DRAWABLE) {
-            IDE.setDefaultEditor(file, DrawableEditor.ID);
-        } else if (type == ResourceFolderType.ANIMATOR
-                || type == ResourceFolderType.ANIM) {
-            IDE.setDefaultEditor(file, AnimationEditor.ID);
-        } else if (type == ResourceFolderType.XML) {
-            if (XmlEditor.canHandleFile(file)) {
-                if (DEBUG_XML_FILE_INIT) {
-                    AdtPlugin.log(IStatus.INFO, "   set default editor id to XmlEditor.id");
-                }
-                IDE.setDefaultEditor(file, XmlEditor.ID);
-            } else {
-                if (DEBUG_XML_FILE_INIT) {
-                    AdtPlugin.log(IStatus.INFO, "   set default editor id unknown");
-                }
-                // set a property to determine later if the XML can be handled
-                QualifiedName qname = new QualifiedName(
-                        AdtPlugin.PLUGIN_ID,
-                        UNKNOWN_EDITOR);
-                setFileProperty(file, qname, "1"); //$NON-NLS-1$
-            }
-        }
+    @Override
+    public void warning(@NonNull String format, Object... args) {
+        log(IStatus.WARNING, format, args);
     }
 
     /**
@@ -1765,6 +1956,21 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
     }
 
     /**
+     * For a stack trace entry, specifying a class, method, and optionally
+     * fileName and line number, open the corresponding line in the editor.
+     *
+     * @param fqcn the fully qualified name of the class
+     * @param method the method name
+     * @param fileName the file name, or null
+     * @param lineNumber the line number or -1
+     * @return true if the target location could be opened, false otherwise
+     */
+    public static boolean openStackTraceLine(@Nullable String fqcn,
+            @Nullable String method, @Nullable String fileName, int lineNumber) {
+        return new SourceRevealer().revealMethod(fqcn + '.' + method, fileName, lineNumber, null);
+    }
+
+    /**
      * Opens the given file and shows the given (optional) region in the editor (or
      * if no region is specified, opens the editor tab.)
      *
@@ -1776,6 +1982,8 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
     public static void openFile(IFile file, IRegion region) throws PartInitException {
         openFile(file, region, true);
     }
+
+    // TODO: Make an openEditor which does the above, and make the above pass false for showEditor
 
     /**
      * Opens the given file and shows the given (optional) region
@@ -1789,15 +1997,7 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
      */
     public static IEditorPart openFile(IFile file, IRegion region, boolean showEditorTab)
             throws PartInitException {
-        IWorkbench workbench = PlatformUI.getWorkbench();
-        if (workbench == null) {
-            return null;
-        }
-        IWorkbenchWindow activeWorkbenchWindow = workbench.getActiveWorkbenchWindow();
-        if (activeWorkbenchWindow == null) {
-            return null;
-        }
-        IWorkbenchPage page = activeWorkbenchWindow.getActivePage();
+        IWorkbenchPage page = AdtUtils.getActiveWorkbenchPage();
         if (page == null) {
             return null;
         }
@@ -1808,6 +2008,12 @@ public class AdtPlugin extends AbstractUIPlugin implements ILogger {
                 editor.show(region.getOffset(), region.getLength(), showEditorTab);
             } else if (showEditorTab) {
                 editor.setActivePage(AndroidXmlEditor.TEXT_EDITOR_ID);
+            }
+        } else if (targetEditor instanceof AbstractTextEditor) {
+            AbstractTextEditor editor = (AbstractTextEditor) targetEditor;
+            if (region != null) {
+                editor.setHighlightRange(region.getOffset(), region.getLength(),
+                        true /* moveCursor*/);
             }
         }
 

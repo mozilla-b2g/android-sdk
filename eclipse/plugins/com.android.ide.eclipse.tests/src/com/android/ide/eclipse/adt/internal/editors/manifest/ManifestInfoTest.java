@@ -22,6 +22,7 @@ import static com.android.resources.ScreenSize.XLARGE;
 import com.android.ide.eclipse.adt.internal.editors.layout.refactoring.AdtProjectTest;
 import com.android.ide.eclipse.adt.internal.resources.ResourceHelper;
 import com.android.sdklib.AndroidVersion;
+import com.android.sdklib.BuildToolInfo;
 import com.android.sdklib.IAndroidTarget;
 import com.android.sdklib.ISystemImage;
 
@@ -30,8 +31,11 @@ import org.eclipse.core.runtime.NullProgressMonitor;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
+@SuppressWarnings("javadoc")
 public class ManifestInfoTest extends AdtProjectTest {
     @Override
     protected boolean testCaseNeedsUniqueProject() {
@@ -114,10 +118,10 @@ public class ManifestInfoTest extends AdtProjectTest {
     public void testGetActivityThemes5() throws Exception {
         ManifestInfo info = getManifestInfo(
                 "<manifest xmlns:android='http://schemas.android.com/apk/res/android'\n" +
-                "    package='com.android.unittest'" +
-                "    android:theme='@style/NoBackground'>\n" +
+                "    package='com.android.unittest'>\n" +
                 "    <application\n" +
                 "        android:label='@string/app_name'\n" +
+                "        android:theme='@style/NoBackground'\n" +
                 "        android:name='.app.TestApp' android:icon='@drawable/app_icon'>\n" +
                 "\n" +
                 "        <activity\n" +
@@ -212,7 +216,41 @@ public class ManifestInfoTest extends AdtProjectTest {
         } else {
             file.create(bstream, false /* force */, new NullProgressMonitor());
         }
-        return ManifestInfo.get(getProject());
+        ManifestInfo info = ManifestInfo.get(getProject());
+        info.clear();
+        return info;
+    }
+
+    public void testGetMinSdkVersionName() throws Exception {
+        ManifestInfo info;
+
+        info = getManifestInfo(
+                "<manifest xmlns:android='http://schemas.android.com/apk/res/android'\n" +
+                "    package='com.android.unittest'>\n" +
+                "    <uses-sdk android:minSdkVersion='3' android:targetSdkVersion='4'/>\n" +
+                "</manifest>\n");
+        assertEquals(3, info.getMinSdkVersion());
+        assertEquals("3", info.getMinSdkName());
+        assertEquals(4, info.getTargetSdkVersion());
+        assertNull(info.getMinSdkCodeName());
+
+        info = getManifestInfo(
+                "<manifest xmlns:android='http://schemas.android.com/apk/res/android'\n" +
+                "    package='com.android.unittest'>\n" +
+                "    <uses-sdk android:targetSdkVersion='4'/>\n" +
+                "</manifest>\n");
+        assertEquals("1", info.getMinSdkName());
+        assertEquals(1, info.getMinSdkVersion());
+        assertEquals(4, info.getTargetSdkVersion());
+        assertNull(info.getMinSdkCodeName());
+
+        info = getManifestInfo(
+                "<manifest xmlns:android='http://schemas.android.com/apk/res/android'\n" +
+                "    package='com.android.unittest'>\n" +
+                "    <uses-sdk android:minSdkVersion='JellyBean' />\n" +
+                "</manifest>\n");
+        assertEquals("JellyBean", info.getMinSdkName());
+        assertEquals("JellyBean", info.getMinSdkCodeName());
     }
 
     private static class TestAndroidTarget implements IAndroidTarget {
@@ -222,115 +260,153 @@ public class ManifestInfoTest extends AdtProjectTest {
             mApiLevel = apiLevel;
         }
 
+        @Override
         public boolean canRunOn(IAndroidTarget target) {
             return false;
         }
 
+        @Override
         public String getClasspathName() {
             return null;
         }
 
+        @Override
         public String getDefaultSkin() {
             return null;
         }
 
+        @Override
         public String getDescription() {
             return null;
         }
 
+        @Override
         public String getFullName() {
             return null;
         }
 
+        @Override
         public ISystemImage getSystemImage(String abiType) {
             return null;
         }
 
+        @Override
         public ISystemImage[] getSystemImages() {
             return new ISystemImage[0];
         }
 
+        @Override
         public String getLocation() {
             return null;
         }
 
+        @Override
         public String getName() {
             return null;
         }
 
+        @Override
         public IOptionalLibrary[] getOptionalLibraries() {
             return null;
         }
 
+        @Override
         public IAndroidTarget getParent() {
             return null;
         }
 
+        @Override
         public String getPath(int pathId) {
             return null;
         }
 
+        @Override
         public String[] getPlatformLibraries() {
             return null;
         }
 
+        @Override
         public Map<String, String> getProperties() {
             return null;
         }
 
+        @Override
         public String getProperty(String name) {
             return null;
         }
 
+        @Override
         public Integer getProperty(String name, Integer defaultValue) {
             return null;
         }
 
+        @Override
         public Boolean getProperty(String name, Boolean defaultValue) {
             return null;
         }
 
+        @Override
         public int getRevision() {
             return 0;
         }
 
+        @Override
         public String[] getSkins() {
             return null;
         }
 
+        @Override
         public int getUsbVendorId() {
             return 0;
         }
 
+        @Override
         public String getVendor() {
             return null;
         }
 
+        @Override
         public AndroidVersion getVersion() {
             return new AndroidVersion(mApiLevel, null);
         }
 
+        @Override
         public String getVersionName() {
             return null;
         }
 
+        @Override
         public String hashString() {
             return null;
         }
 
+        @Override
         public boolean isPlatform() {
             return false;
         }
 
+        @Override
         public int compareTo(IAndroidTarget o) {
             return 0;
         }
 
+        @Override
         public boolean hasRenderingLibrary() {
             return false;
         }
 
+        @Override
         public String getShortClasspathName() {
+            return null;
+        }
+
+        @Override
+        public List<String> getBootClasspath() {
+            return new ArrayList<String>();
+        }
+
+        @Override
+        public BuildToolInfo getBuildToolInfo() {
             return null;
         }
     }

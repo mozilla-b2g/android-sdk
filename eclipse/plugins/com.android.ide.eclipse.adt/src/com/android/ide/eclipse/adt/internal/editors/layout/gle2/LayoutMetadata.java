@@ -15,35 +15,47 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_LAYOUT_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_NUM_COLUMNS;
-import static com.android.ide.common.layout.LayoutConstants.EXPANDABLE_LIST_VIEW;
-import static com.android.ide.common.layout.LayoutConstants.GRID_VIEW;
-import static com.android.ide.common.layout.LayoutConstants.LAYOUT_PREFIX;
+import static com.android.SdkConstants.ANDROID_LAYOUT_RESOURCE_PREFIX;
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ATTR_NUM_COLUMNS;
+import static com.android.SdkConstants.EXPANDABLE_LIST_VIEW;
+import static com.android.SdkConstants.GRID_VIEW;
+import static com.android.SdkConstants.LAYOUT_RESOURCE_PREFIX;
+import static com.android.SdkConstants.TOOLS_URI;
+import static com.android.SdkConstants.VALUE_AUTO_FIT;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.rendering.api.AdapterBinding;
 import com.android.ide.common.rendering.api.DataBindingItem;
 import com.android.ide.common.rendering.api.ResourceReference;
+import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.ide.eclipse.adt.AdtUtils;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.layout.ProjectCallback;
 import com.android.ide.eclipse.adt.internal.editors.layout.uimodel.UiViewElementNode;
+import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
 
-import org.eclipse.jface.text.IDocument;
-import org.eclipse.wst.sse.core.StructuredModelManager;
-import org.eclipse.wst.sse.core.internal.provisional.IModelManager;
-import org.eclipse.wst.sse.core.internal.provisional.IStructuredModel;
-import org.eclipse.wst.xml.core.internal.provisional.document.IDOMModel;
+import org.eclipse.core.resources.IFile;
+import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.IStatus;
+import org.eclipse.core.runtime.Status;
+import org.eclipse.swt.widgets.Display;
+import org.eclipse.ui.IEditorPart;
+import org.eclipse.ui.progress.WorkbenchJob;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
+import org.xmlpull.v1.XmlPullParser;
 
-import java.util.ArrayList;
-import java.util.Collections;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
-@SuppressWarnings("restriction") // XML DOM model
+/**
+ * Design-time metadata lookup for layouts, such as fragment and AdapterView bindings.
+ */
 public class LayoutMetadata {
     /** The default layout to use for list items in expandable list views */
     public static final String DEFAULT_EXPANDABLE_LIST_ITEM = "simple_expandable_list_item_2"; //$NON-NLS-1$
@@ -54,8 +66,6 @@ public class LayoutMetadata {
 
     /** The string to start metadata comments with */
     private static final String COMMENT_PROLOGUE = " Preview: ";
-    /** The string to end metadata comments with */
-    private static final String COMMENT_EPILOGUE = " ";
     /** The property key, included in comments, which references a list item layout */
     public static final String KEY_LV_ITEM = "listitem";        //$NON-NLS-1$
     /** The property key, included in comments, which references a list header layout */
@@ -64,169 +74,52 @@ public class LayoutMetadata {
     public static final String KEY_LV_FOOTER = "listfooter";    //$NON-NLS-1$
     /** The property key, included in comments, which references a fragment layout to show */
     public static final String KEY_FRAGMENT_LAYOUT = "layout";        //$NON-NLS-1$
+    // NOTE: If you add additional keys related to resources, make sure you update the
+    // ResourceRenameParticipant
 
-    /** The metadata class is a singleton for now since it has no state of its own */
-    private static final LayoutMetadata sInstance = new LayoutMetadata();
-
-    /** Do not use -- use factory instead */
+    /** Utility class, do not create instances */
     private LayoutMetadata() {
     }
 
     /**
-     * Return the {@link LayoutMetadata} instance
+     * Returns the given property specified in the <b>current</b> element being
+     * processed by the given pull parser.
      *
-     * @return the {@link LayoutMetadata} instance
+     * @param parser the pull parser, which must be in the middle of processing
+     *            the target element
+     * @param name the property name to look up
+     * @return the property value, or null if not defined
      */
-    public static LayoutMetadata get() {
-        return sInstance;
+    @Nullable
+    public static String getProperty(@NonNull XmlPullParser parser, @NonNull String name) {
+        String value = parser.getAttributeValue(TOOLS_URI, name);
+        if (value != null && value.isEmpty()) {
+            value = null;
+        }
+
+        return value;
     }
 
     /**
-     * Returns the given property of the given DOM node, or null
+     * Clears the old metadata from the given node
      *
-     * @param document the document to look up and read lock the model for
      * @param node the XML node to associate metadata with
-     * @param name the name of the property to look up
-     * @return the value stored with the given node and name, or null
+     * @deprecated this method clears metadata using the old comment-based style;
+     *             should only be used for migration at this point
      */
-    public String getProperty(IDocument document, Node node, String name) {
-        IStructuredModel model = null;
-        try {
-            if (document != null) {
-                IModelManager modelManager = StructuredModelManager.getModelManager();
-                model = modelManager.getExistingModelForRead(document);
-            }
-
-            Node comment = findComment(node);
-            if (comment != null) {
-                String text = comment.getNodeValue();
-                return getProperty(name, text);
-            }
-
-            return null;
-        } finally {
-            if (model != null) {
-                model.releaseFromRead();
-            }
-        }
-    }
-
-    /**
-     * Returns the given property specified in the given XML comment
-     *
-     * @param name the name of the property to look up
-     * @param text the comment text for an XML node
-     * @return the value stored with the given node and name, or null
-     */
-    public static String getProperty(String name, String text) {
-        assert text.startsWith(COMMENT_PROLOGUE);
-        String valuesString = text.substring(COMMENT_PROLOGUE.length());
-        String[] values = valuesString.split(","); //$NON-NLS-1$
-        if (values.length == 1) {
-            valuesString = values[0].trim();
-            if (valuesString.indexOf('\n') != -1) {
-                values = valuesString.split("\n"); //$NON-NLS-1$
-            }
-        }
-        String target = name + '=';
-        for (int j = 0; j < values.length; j++) {
-            String value = values[j].trim();
-            if (value.startsWith(target)) {
-                return value.substring(target.length()).trim();
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Sets the given property of the given DOM node to a given value, or if null clears
-     * the property.
-     *
-     * @param document the document to look up and write lock the model for
-     * @param node the XML node to associate metadata with
-     * @param name the name of the property to set
-     * @param value the value to store for the given node and name, or null to remove it
-     */
-    public void setProperty(IDocument document, Node node, String name, String value) {
-        // Reserved characters: [,-=]
-        assert name.indexOf('-') == -1;
-        assert value == null || value.indexOf('-') == -1;
-        assert name.indexOf(',') == -1;
-        assert value == null || value.indexOf(',') == -1;
-        assert name.indexOf('=') == -1;
-        assert value == null || value.indexOf('=') == -1;
-
-        IStructuredModel model = null;
-        try {
-            IModelManager modelManager = StructuredModelManager.getModelManager();
-            model = modelManager.getExistingModelForEdit(document);
-            if (model instanceof IDOMModel) {
-                IDOMModel domModel = (IDOMModel) model;
-                Document domDocument = domModel.getDocument();
-                assert node.getOwnerDocument() == domDocument;
-            }
-
-            Document doc = node.getOwnerDocument();
-            Node commentNode = findComment(node);
-
-            String commentText = null;
-            if (commentNode != null) {
-                String text = commentNode.getNodeValue();
-                assert text.startsWith(COMMENT_PROLOGUE);
-                String valuesString = text.substring(COMMENT_PROLOGUE.length());
-                String[] values = valuesString.split(","); //$NON-NLS-1$
-                if (values.length == 1) {
-                    valuesString = values[0].trim();
-                    if (valuesString.indexOf('\n') != -1) {
-                        values = valuesString.split("\n"); //$NON-NLS-1$
-                    }
-                }
-                String target = name + '=';
-                List<String> preserve = new ArrayList<String>();
-                for (int j = 0; j < values.length; j++) {
-                    String v = values[j].trim();
-                    if (v.length() == 0) {
-                        continue;
-                    }
-                    if (!v.startsWith(target)) {
-                        preserve.add(v.trim());
-                    }
-                }
-                if (value != null) {
-                    preserve.add(name + '=' + value.trim());
-                }
-                if (preserve.size() > 0) {
-                    if (preserve.size() > 1) {
-                        Collections.sort(preserve);
-                        String firstLineIndent = AndroidXmlEditor.getIndent(document, commentNode);
-                        String oneIndentLevel = "    "; //$NON-NLS-1$
-                        StringBuilder sb = new StringBuilder();
-                        sb.append(COMMENT_PROLOGUE);
-                        sb.append('\n');
-                        for (String s : preserve) {
-                            sb.append(firstLineIndent);
-                            sb.append(oneIndentLevel);
-                            sb.append(s);
-                            sb.append('\n');
-                        }
-                        sb.append(firstLineIndent);
-                        sb.append(COMMENT_EPILOGUE);
-                        commentText = sb.toString();
-                    } else {
-                        commentText = COMMENT_PROLOGUE + preserve.get(0) + COMMENT_EPILOGUE;
-                    }
-                }
-            } else if (value != null) {
-                commentText = COMMENT_PROLOGUE + name + '=' + value + COMMENT_EPILOGUE;
-            }
-
-            if (commentText == null) {
-                if (commentNode != null) {
+    @Deprecated
+    public static void clearLegacyComment(Node node) {
+        NodeList children = node.getChildNodes();
+        for (int i = 0, n = children.getLength(); i < n; i++) {
+            Node child = children.item(i);
+            if (child.getNodeType() == Node.COMMENT_NODE) {
+                String text = child.getNodeValue();
+                if (text.startsWith(COMMENT_PROLOGUE)) {
+                    Node commentNode = child;
                     // Remove the comment, along with surrounding whitespace if applicable
                     Node previous = commentNode.getPreviousSibling();
                     if (previous != null && previous.getNodeType() == Node.TEXT_NODE) {
-                        String text = previous.getNodeValue();
-                        if (text.trim().length() == 0) {
+                        if (previous.getNodeValue().trim().length() == 0) {
                             node.removeChild(previous);
                         }
                     }
@@ -234,66 +127,37 @@ public class LayoutMetadata {
                     Node first = node.getFirstChild();
                     if (first != null && first.getNextSibling() == null
                             && first.getNodeType() == Node.TEXT_NODE) {
-                        String text = first.getNodeValue();
-                        if (text.trim().length() == 0) {
+                        if (first.getNodeValue().trim().length() == 0) {
                             node.removeChild(first);
                         }
                     }
                 }
-                return;
-            }
-
-            if (commentNode != null) {
-                commentNode.setNodeValue(commentText);
-            } else {
-                commentNode = doc.createComment(commentText);
-                String firstLineIndent = AndroidXmlEditor.getIndent(document, node);
-                Node firstChild = node.getFirstChild();
-                boolean indentAfter = firstChild == null
-                        || firstChild.getNodeType() != Node.TEXT_NODE
-                        || firstChild.getNodeValue().indexOf('\n') == -1;
-                String oneIndentLevel = "    "; //$NON-NLS-1$
-                node.insertBefore(doc.createTextNode('\n' + firstLineIndent + oneIndentLevel),
-                        firstChild);
-                node.insertBefore(commentNode, firstChild);
-                if (indentAfter) {
-                    node.insertBefore(doc.createTextNode('\n' + firstLineIndent), firstChild);
-                }
-            }
-        } finally {
-            if (model != null) {
-                model.releaseFromEdit();
             }
         }
-    }
-
-    /** Finds the comment node associated with the given node, or null if not found */
-    private Node findComment(Node node) {
-        NodeList children = node.getChildNodes();
-        for (int i = 0, n = children.getLength(); i < n; i++) {
-            Node child = children.item(i);
-            if (child.getNodeType() == Node.COMMENT_NODE) {
-                String text = child.getNodeValue();
-                if (text.startsWith(COMMENT_PROLOGUE)) {
-                    return child;
-                }
-            }
-        }
-
-        return null;
     }
 
     /**
      * Returns the given property of the given DOM node, or null
      *
-     * @param editor the editor associated with the property
      * @param node the XML node to associate metadata with
      * @param name the name of the property to look up
      * @return the value stored with the given node and name, or null
      */
-    public String getProperty(AndroidXmlEditor editor, Node node, String name) {
-        IDocument document = editor.getStructuredSourceViewer().getDocument();
-        return getProperty(document, node, name);
+    @Nullable
+    public static String getProperty(
+            @NonNull Node node,
+            @NonNull String name) {
+        if (node.getNodeType() == Node.ELEMENT_NODE) {
+            Element element = (Element) node;
+            String value = element.getAttributeNS(TOOLS_URI, name);
+            if (value != null && value.isEmpty()) {
+                value = null;
+            }
+
+            return value;
+        }
+
+        return null;
     }
 
     /**
@@ -305,17 +169,124 @@ public class LayoutMetadata {
      * @param name the name of the property to set
      * @param value the value to store for the given node and name, or null to remove it
      */
-    public void setProperty(AndroidXmlEditor editor, Node node, String name, String value) {
-        IDocument document = editor.getStructuredSourceViewer().getDocument();
-        setProperty(document, node, name, value);
+    public static void setProperty(
+            @NonNull final AndroidXmlEditor editor,
+            @NonNull final Node node,
+            @NonNull final String name,
+            @Nullable final String value) {
+        // Clear out the old metadata
+        clearLegacyComment(node);
+
+        if (node.getNodeType() == Node.ELEMENT_NODE) {
+            final Element element = (Element) node;
+            final String undoLabel = "Bind View";
+            AdtUtils.setToolsAttribute(editor, element, undoLabel, name, value,
+                    false /*reveal*/, false /*append*/);
+
+            // Also apply the same layout to any corresponding elements in other configurations
+            // of this layout.
+            final IFile file = editor.getInputFile();
+            if (file != null) {
+                final List<IFile> variations = AdtUtils.getResourceVariations(file, false);
+                if (variations.isEmpty()) {
+                    return;
+                }
+                Display display = AdtPlugin.getDisplay();
+                WorkbenchJob job = new WorkbenchJob(display, "Update alternate views") {
+                    @Override
+                    public IStatus runInUIThread(IProgressMonitor monitor) {
+                        for (IFile variation : variations) {
+                            if (variation.equals(file)) {
+                                continue;
+                            }
+                            try {
+                                // If the corresponding file is open in the IDE, use the
+                                // editor version instead
+                                if (!AdtPrefs.getPrefs().isSharedLayoutEditor()) {
+                                    if (setPropertyInEditor(undoLabel, variation, element, name,
+                                            value)) {
+                                        return Status.OK_STATUS;
+                                    }
+                                }
+
+                                boolean old = editor.getIgnoreXmlUpdate();
+                                try {
+                                    editor.setIgnoreXmlUpdate(true);
+                                    setPropertyInFile(undoLabel, variation, element, name, value);
+                                } finally {
+                                    editor.setIgnoreXmlUpdate(old);
+                                }
+                            } catch (Exception e) {
+                                AdtPlugin.log(e, variation.getFullPath().toOSString());
+                            }
+                        }
+                        return Status.OK_STATUS;
+                    }
+
+                };
+                job.setSystem(true);
+                job.schedule();
+            }
+        }
+    }
+
+    private static boolean setPropertyInEditor(
+            @NonNull String undoLabel,
+            @NonNull IFile variation,
+            @NonNull final Element equivalentElement,
+            @NonNull final String name,
+            @Nullable final String value) {
+        Collection<IEditorPart> editors =
+                AdtUtils.findEditorsFor(variation, false /*restore*/);
+        for (IEditorPart part : editors) {
+            AndroidXmlEditor editor = AdtUtils.getXmlEditor(part);
+            if (editor != null) {
+                Document doc = DomUtilities.getDocument(editor);
+                if (doc != null) {
+                    Element element = DomUtilities.findCorresponding(equivalentElement, doc);
+                    if (element != null) {
+                        AdtUtils.setToolsAttribute(editor, element, undoLabel, name,
+                                value, false /*reveal*/, false /*append*/);
+                        if (part instanceof GraphicalEditorPart) {
+                            GraphicalEditorPart g = (GraphicalEditorPart) part;
+                            g.recomputeLayout();
+                            g.getCanvasControl().redraw();
+                        }
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static boolean setPropertyInFile(
+            @NonNull String undoLabel,
+            @NonNull IFile variation,
+            @NonNull final Element element,
+            @NonNull final String name,
+            @Nullable final String value) {
+        Document doc = DomUtilities.getDocument(variation);
+        if (doc != null && element.getOwnerDocument() != doc) {
+            Element other = DomUtilities.findCorresponding(element, doc);
+            if (other != null) {
+                AdtUtils.setToolsAttribute(variation, other, undoLabel,
+                        name, value, false);
+
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** Strips out @layout/ or @android:layout/ from the given layout reference */
     private static String stripLayoutPrefix(String layout) {
-        if (layout.startsWith(ANDROID_LAYOUT_PREFIX)) {
-            layout = layout.substring(ANDROID_LAYOUT_PREFIX.length());
-        } else if (layout.startsWith(LAYOUT_PREFIX)) {
-            layout = layout.substring(LAYOUT_PREFIX.length());
+        if (layout.startsWith(ANDROID_LAYOUT_RESOURCE_PREFIX)) {
+            layout = layout.substring(ANDROID_LAYOUT_RESOURCE_PREFIX.length());
+        } else if (layout.startsWith(LAYOUT_RESOURCE_PREFIX)) {
+            layout = layout.substring(LAYOUT_RESOURCE_PREFIX.length());
         }
 
         return layout;
@@ -326,76 +297,115 @@ public class LayoutMetadata {
      * has not yet chosen a target layout to use for the given AdapterView.
      *
      * @param viewObject the view object to create an adapter binding for
+     * @param map a map containing tools attribute metadata
+     * @return a binding, or null
+     */
+    @Nullable
+    public static AdapterBinding getNodeBinding(
+            @Nullable Object viewObject,
+            @NonNull Map<String, String> map) {
+        String header = map.get(KEY_LV_HEADER);
+        String footer = map.get(KEY_LV_FOOTER);
+        String layout = map.get(KEY_LV_ITEM);
+        if (layout != null || header != null || footer != null) {
+            int count = 12;
+            return getNodeBinding(viewObject, header, footer, layout, count);
+        }
+
+        return null;
+    }
+
+    /**
+     * Creates an {@link AdapterBinding} for the given view object, or null if the user
+     * has not yet chosen a target layout to use for the given AdapterView.
+     *
+     * @param viewObject the view object to create an adapter binding for
      * @param uiNode the ui node corresponding to the view object
      * @return a binding, or null
      */
-    public AdapterBinding getNodeBinding(Object viewObject, UiViewElementNode uiNode) {
-        AndroidXmlEditor editor = uiNode.getEditor();
-        if (editor != null) {
-            Node xmlNode = uiNode.getXmlNode();
+    @Nullable
+    public static AdapterBinding getNodeBinding(
+            @Nullable Object viewObject,
+            @NonNull UiViewElementNode uiNode) {
+        Node xmlNode = uiNode.getXmlNode();
 
-            String header = getProperty(editor, xmlNode, KEY_LV_HEADER);
-            String footer = getProperty(editor, xmlNode, KEY_LV_FOOTER);
-            String layout = getProperty(editor, xmlNode, KEY_LV_ITEM);
-            if (layout != null || header != null || footer != null) {
-                int count = 12;
-                // If we're dealing with a grid view, multiply the list item count
-                // by the number of columns to ensure we have enough items
-                if (xmlNode instanceof Element && xmlNode.getNodeName().endsWith(GRID_VIEW)) {
-                    Element element = (Element) xmlNode;
-                    String columns = element.getAttributeNS(ANDROID_URI, ATTR_NUM_COLUMNS);
-                    int multiplier = 2;
-                    if (columns != null && columns.length() > 0) {
+        String header = getProperty(xmlNode, KEY_LV_HEADER);
+        String footer = getProperty(xmlNode, KEY_LV_FOOTER);
+        String layout = getProperty(xmlNode, KEY_LV_ITEM);
+        if (layout != null || header != null || footer != null) {
+            int count = 12;
+            // If we're dealing with a grid view, multiply the list item count
+            // by the number of columns to ensure we have enough items
+            if (xmlNode instanceof Element && xmlNode.getNodeName().endsWith(GRID_VIEW)) {
+                Element element = (Element) xmlNode;
+                String columns = element.getAttributeNS(ANDROID_URI, ATTR_NUM_COLUMNS);
+                int multiplier = 2;
+                if (columns != null && columns.length() > 0 &&
+                        !columns.equals(VALUE_AUTO_FIT)) {
+                    try {
                         int c = Integer.parseInt(columns);
                         if (c >= 1 && c <= 10) {
                             multiplier = c;
                         }
+                    } catch (NumberFormatException nufe) {
+                        // some unexpected numColumns value: just stick with 2 columns for
+                        // preview purposes
                     }
-                    count *= multiplier;
                 }
-                AdapterBinding binding = new AdapterBinding(count);
-
-                if (header != null) {
-                    boolean isFramework = header.startsWith(ANDROID_LAYOUT_PREFIX);
-                    binding.addHeader(new ResourceReference(stripLayoutPrefix(header),
-                            isFramework));
-                }
-
-                if (footer != null) {
-                    boolean isFramework = footer.startsWith(ANDROID_LAYOUT_PREFIX);
-                    binding.addFooter(new ResourceReference(stripLayoutPrefix(footer),
-                            isFramework));
-                }
-
-                if (layout != null) {
-                    boolean isFramework = layout.startsWith(ANDROID_LAYOUT_PREFIX);
-                    if (isFramework) {
-                        layout = layout.substring(ANDROID_LAYOUT_PREFIX.length());
-                    } else if (layout.startsWith(LAYOUT_PREFIX)) {
-                        layout = layout.substring(LAYOUT_PREFIX.length());
-                    }
-
-                    binding.addItem(new DataBindingItem(layout, isFramework, 1));
-                } else if (viewObject != null) {
-                    String listFqcn = ProjectCallback.getListAdapterViewFqcn(viewObject.getClass());
-                    if (listFqcn != null) {
-                        if (listFqcn.endsWith(EXPANDABLE_LIST_VIEW)) {
-                            binding.addItem(
-                                    new DataBindingItem(DEFAULT_EXPANDABLE_LIST_ITEM,
-                                    true /* isFramework */, 1));
-                        } else {
-                            binding.addItem(
-                                    new DataBindingItem(DEFAULT_LIST_ITEM,
-                                    true /* isFramework */, 1));
-                        }
-                    }
-                } else {
-                    binding.addItem(
-                            new DataBindingItem(DEFAULT_LIST_ITEM,
-                            true /* isFramework */, 1));
-                }
-                return binding;
+                count *= multiplier;
             }
+
+            return getNodeBinding(viewObject, header, footer, layout, count);
+        }
+
+        return null;
+    }
+
+    private static AdapterBinding getNodeBinding(Object viewObject,
+            String header, String footer, String layout, int count) {
+        if (layout != null || header != null || footer != null) {
+            AdapterBinding binding = new AdapterBinding(count);
+
+            if (header != null) {
+                boolean isFramework = header.startsWith(ANDROID_LAYOUT_RESOURCE_PREFIX);
+                binding.addHeader(new ResourceReference(stripLayoutPrefix(header),
+                        isFramework));
+            }
+
+            if (footer != null) {
+                boolean isFramework = footer.startsWith(ANDROID_LAYOUT_RESOURCE_PREFIX);
+                binding.addFooter(new ResourceReference(stripLayoutPrefix(footer),
+                        isFramework));
+            }
+
+            if (layout != null) {
+                boolean isFramework = layout.startsWith(ANDROID_LAYOUT_RESOURCE_PREFIX);
+                if (isFramework) {
+                    layout = layout.substring(ANDROID_LAYOUT_RESOURCE_PREFIX.length());
+                } else if (layout.startsWith(LAYOUT_RESOURCE_PREFIX)) {
+                    layout = layout.substring(LAYOUT_RESOURCE_PREFIX.length());
+                }
+
+                binding.addItem(new DataBindingItem(layout, isFramework, 1));
+            } else if (viewObject != null) {
+                String listFqcn = ProjectCallback.getListAdapterViewFqcn(viewObject.getClass());
+                if (listFqcn != null) {
+                    if (listFqcn.endsWith(EXPANDABLE_LIST_VIEW)) {
+                        binding.addItem(
+                                new DataBindingItem(DEFAULT_EXPANDABLE_LIST_ITEM,
+                                true /* isFramework */, 1));
+                    } else {
+                        binding.addItem(
+                                new DataBindingItem(DEFAULT_LIST_ITEM,
+                                true /* isFramework */, 1));
+                    }
+                }
+            } else {
+                binding.addItem(
+                        new DataBindingItem(DEFAULT_LIST_ITEM,
+                        true /* isFramework */, 1));
+            }
+            return binding;
         }
 
         return null;

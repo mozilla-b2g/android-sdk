@@ -16,20 +16,21 @@
 
 package com.android.ide.eclipse.adt.internal.refactorings.extractstring;
 
-import static com.android.ide.common.layout.LayoutConstants.STRING_PREFIX;
+import static com.android.SdkConstants.QUOT_ENTITY;
+import static com.android.SdkConstants.STRING_PREFIX;
 
+import com.android.SdkConstants;
+import com.android.ide.common.res2.ValueXmlHelper;
+import com.android.ide.common.xml.ManifestData;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.AttributeDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ReferenceAttributeDescriptor;
-import com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiAttributeNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
 import com.android.ide.eclipse.adt.internal.project.AndroidManifestHelper;
 import com.android.resources.ResourceFolderType;
 import com.android.resources.ResourceType;
-import com.android.sdklib.SdkConstants;
-import com.android.sdklib.xml.ManifestData;
 
 import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
@@ -424,7 +425,7 @@ public class ExtractStringRefactoring extends Refactoring {
             }
 
             // Check this a Layout XML file and get the selection and its context.
-            if (mFile != null && AdtConstants.EXT_XML.equals(mFile.getFileExtension())) {
+            if (mFile != null && SdkConstants.EXT_XML.equals(mFile.getFileExtension())) {
 
                 // Currently we only support Android resource XML files, so they must have a path
                 // similar to
@@ -999,6 +1000,7 @@ public class ExtractStringRefactoring extends Refactoring {
      */
     private Iterable<IFile> findAllResXmlFiles() {
         return new Iterable<IFile>() {
+            @Override
             public Iterator<IFile> iterator() {
                 return new Iterator<IFile>() {
                     final Queue<IFile> mFiles = new LinkedList<IFile>();
@@ -1036,6 +1038,7 @@ public class ExtractStringRefactoring extends Refactoring {
                         }
                     }
 
+                    @Override
                     public boolean hasNext() {
                         if (!mFiles.isEmpty()) {
                             return true;
@@ -1064,7 +1067,7 @@ public class ExtractStringRefactoring extends Refactoring {
                             if (res.exists() && !res.isDerived() && res instanceof IFile) {
                                 IFile file = (IFile) res;
                                 // Must have an XML extension
-                                if (AdtConstants.EXT_XML.equals(file.getFileExtension())) {
+                                if (SdkConstants.EXT_XML.equals(file.getFileExtension())) {
                                     IPath p = file.getFullPath();
                                     // And not be either paths we want to filter out
                                     if ((mFilterPath1 != null && mFilterPath1.equals(p)) ||
@@ -1077,12 +1080,14 @@ public class ExtractStringRefactoring extends Refactoring {
                         }
                     }
 
+                    @Override
                     public IFile next() {
                         IFile file = mFiles.poll();
                         hasNext();
                         return file;
                     }
 
+                    @Override
                     public void remove() {
                         throw new UnsupportedOperationException(
                             "This iterator does not support removal");  //$NON-NLS-1$
@@ -1110,7 +1115,7 @@ public class ExtractStringRefactoring extends Refactoring {
             SubMonitor monitor) {
 
         TextFileChange xmlChange = new TextFileChange(getName(), targetXml);
-        xmlChange.setTextType(AdtConstants.EXT_XML);
+        xmlChange.setTextType(SdkConstants.EXT_XML);
 
         String error = "";                  //$NON-NLS-1$
         TextEdit edit = null;
@@ -1179,9 +1184,9 @@ public class ExtractStringRefactoring extends Refactoring {
 
         IModelManager modelMan = StructuredModelManager.getModelManager();
 
-        final String NODE_RESOURCES = ResourcesDescriptors.ROOT_ELEMENT;
-        final String NODE_STRING = "string";    //$NON-NLS-1$ //TODO find or create constant
-        final String ATTR_NAME = "name";        //$NON-NLS-1$ //TODO find or create constant
+        final String NODE_RESOURCES = SdkConstants.TAG_RESOURCES;
+        final String NODE_STRING = SdkConstants.TAG_STRING;
+        final String ATTR_NAME = SdkConstants.ATTR_NAME;
 
 
         // Scan the source to find the best insertion point.
@@ -1212,7 +1217,7 @@ public class ExtractStringRefactoring extends Refactoring {
         IStructuredModel smodel = null;
 
         // Single and double quotes must be escaped in the <string>value</string> declaration
-        tokenString = escapeString(tokenString);
+        tokenString = ValueXmlHelper.escapeResourceString(tokenString);
 
         try {
             IStructuredDocument sdoc = null;
@@ -1444,79 +1449,6 @@ public class ExtractStringRefactoring extends Refactoring {
     }
 
     /**
-     * Escape a string value to be placed in a string resource file such that it complies with
-     * the escaping rules described here:
-     *   http://developer.android.com/guide/topics/resources/string-resource.html
-     * More examples of the escaping rules can be found here:
-     *   http://androidcookbook.com/Recipe.seam?recipeId=2219&recipeFrom=ViewTOC
-     * This method assumes that the String is not escaped already.
-     *
-     * Rules:
-     * <ul>
-     * <li>Double quotes are needed if string starts or ends with at least one space.
-     * <li>{@code @, ?} at beginning of string have to be escaped with a backslash.
-     * <li>{@code ', ", \} have to be escaped with a backslash.
-     * <li>{@code <, >, &} have to be replaced by their predefined xml entity.
-     * <li>{@code \n, \t} have to be replaced by a backslash and the appropriate character.
-     * </ul>
-     * @param s the string to be escaped
-     * @return the escaped string as it would appear in the XML text in a values file
-     */
-    public static String escapeString(String s) {
-        int n = s.length();
-        if (n == 0) {
-            return "";
-        }
-
-        StringBuilder sb = new StringBuilder(s.length() * 2);
-        boolean hasSpace = s.charAt(0) == ' ' || s.charAt(n - 1) == ' ';
-
-        if (hasSpace) {
-            sb.append('"');
-        } else if (s.charAt(0) == '@' || s.charAt(0) == '?') {
-            sb.append('\\');
-        }
-
-        for (int i = 0; i < n; ++i) {
-            char c = s.charAt(i);
-            switch (c) {
-                case '\'':
-                    if (!hasSpace) {
-                        sb.append('\\');
-                    }
-                    sb.append(c);
-                    break;
-                case '"':
-                case '\\':
-                    sb.append('\\');
-                    sb.append(c);
-                    break;
-                case '<':
-                    sb.append("&lt;"); //$NON-NLS-1$
-                    break;
-                case '&':
-                    sb.append("&amp;"); //$NON-NLS-1$
-                    break;
-                case '\n':
-                    sb.append("\\n"); //$NON-NLS-1$
-                    break;
-                case '\t':
-                    sb.append("\\t"); //$NON-NLS-1$
-                    break;
-                default:
-                    sb.append(c);
-                    break;
-            }
-        }
-
-        if (hasSpace) {
-            sb.append('"');
-        }
-
-        return sb.toString();
-    }
-
-    /**
      * Computes the changes to be made to the source Android XML file and
      * returns a list of {@link Change}.
      * <p/>
@@ -1563,7 +1495,7 @@ public class ExtractStringRefactoring extends Refactoring {
         HashSet<IFile> files = new HashSet<IFile>();
         files.add(sourceFile);
 
-        if (allConfigurations && AdtConstants.EXT_XML.equals(sourceFile.getFileExtension())) {
+        if (allConfigurations && SdkConstants.EXT_XML.equals(sourceFile.getFileExtension())) {
             IPath path = sourceFile.getFullPath();
             if (path.segmentCount() == 4 && path.segment(1).equals(SdkConstants.FD_RESOURCES)) {
                 IProject project = sourceFile.getProject();
@@ -1739,7 +1671,7 @@ public class ExtractStringRefactoring extends Refactoring {
         }
         // If we get here, there's a mix. Opt for double-quote around and replace
         // inner double-quotes.
-        attrValue = attrValue.replace("\"", "&quot;");  //$NON-NLS-1$ //$NON-NLS-2$
+        attrValue = attrValue.replace("\"", QUOT_ENTITY);  //$NON-NLS-1$
         return '"' + attrValue + '"';
     }
 
@@ -1752,6 +1684,7 @@ public class ExtractStringRefactoring extends Refactoring {
         final IJavaProject javaProject = JavaCore.create(mProject);
 
         return new Iterable<ICompilationUnit>() {
+            @Override
             public Iterator<ICompilationUnit> iterator() {
                 return new Iterator<ICompilationUnit>() {
                     final Queue<ICompilationUnit> mUnits = new LinkedList<ICompilationUnit>();
@@ -1767,6 +1700,7 @@ public class ExtractStringRefactoring extends Refactoring {
                         }
                     }
 
+                    @Override
                     public boolean hasNext() {
                         if (!mUnits.isEmpty()) {
                             return true;
@@ -1789,12 +1723,14 @@ public class ExtractStringRefactoring extends Refactoring {
                         return false;
                     }
 
+                    @Override
                     public ICompilationUnit next() {
                         ICompilationUnit unit = mUnits.poll();
                         hasNext();
                         return unit;
                     }
 
+                    @Override
                     public void remove() {
                         throw new UnsupportedOperationException(
                                 "This iterator does not support removal");  //$NON-NLS-1$

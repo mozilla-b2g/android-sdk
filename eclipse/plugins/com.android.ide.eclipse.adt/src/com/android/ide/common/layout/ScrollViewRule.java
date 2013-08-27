@@ -16,11 +16,15 @@
 
 package com.android.ide.common.layout;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_HEIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_WIDTH;
-import static com.android.ide.common.layout.LayoutConstants.FQCN_LINEAR_LAYOUT;
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ATTR_LAYOUT_HEIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_WIDTH;
+import static com.android.SdkConstants.ATTR_ORIENTATION;
+import static com.android.SdkConstants.FQCN_LINEAR_LAYOUT;
+import static com.android.SdkConstants.VALUE_VERTICAL;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.api.DrawingStyle;
 import com.android.ide.common.api.DropFeedback;
 import com.android.ide.common.api.IDragElement;
@@ -37,7 +41,8 @@ import com.android.ide.common.api.Rect;
 public class ScrollViewRule extends FrameLayoutRule {
 
     @Override
-    public void onChildInserted(INode child, INode parent, InsertType insertType) {
+    public void onChildInserted(@NonNull INode child, @NonNull INode parent,
+            @NonNull InsertType insertType) {
         super.onChildInserted(child, parent, insertType);
 
         // The child of the ScrollView should fill in both directions
@@ -47,20 +52,22 @@ public class ScrollViewRule extends FrameLayoutRule {
     }
 
     @Override
-    public void onCreate(INode node, INode parent, InsertType insertType) {
+    public void onCreate(@NonNull INode node, @NonNull INode parent,
+            @NonNull InsertType insertType) {
         super.onCreate(node, parent, insertType);
 
         if (insertType.isCreate()) {
             // Insert a default linear layout (which will in turn be registered as
             // a child of this node and the create child method above will set its
             // fill parent attributes, its id, etc.
-            node.appendChild(FQCN_LINEAR_LAYOUT);
+            INode linear = node.appendChild(FQCN_LINEAR_LAYOUT);
+            linear.setAttribute(ANDROID_URI, ATTR_ORIENTATION, VALUE_VERTICAL);
         }
     }
 
     @Override
-    public DropFeedback onDropMove(INode targetNode, IDragElement[] elements,
-            DropFeedback feedback, Point p) {
+    public DropFeedback onDropMove(@NonNull INode targetNode, @NonNull IDragElement[] elements,
+            @Nullable DropFeedback feedback, @NonNull Point p) {
         DropFeedback f = super.onDropMove(targetNode, elements, feedback, p);
 
         // ScrollViews only allow a single child

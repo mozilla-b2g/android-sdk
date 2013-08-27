@@ -15,9 +15,11 @@
  */
 package com.android.ide.eclipse.adt.internal.wizards.newproject;
 
+import com.android.SdkConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.wizards.newproject.NewProjectWizardState.Mode;
 import com.android.sdklib.IAndroidTarget;
+import com.android.utils.Pair;
 
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Path;
@@ -43,7 +45,6 @@ import org.eclipse.swt.widgets.Table;
 import org.eclipse.swt.widgets.Text;
 
 import java.io.File;
-import java.util.regex.Pattern;
 
 /** Page where the user can select a sample to "instantiate" */
 class SampleSelectionPage extends WizardPage implements SelectionListener, ModifyListener {
@@ -68,6 +69,7 @@ class SampleSelectionPage extends WizardPage implements SelectionListener, Modif
     /**
      * Create contents of the wizard.
      */
+    @Override
     public void createControl(Composite parent) {
         Composite container = new Composite(parent, SWT.NULL);
         container.setLayout(new GridLayout(2, false));
@@ -124,21 +126,11 @@ class SampleSelectionPage extends WizardPage implements SelectionListener, Modif
 
             @Override
             public String getText(Object element) {
-                File file = (File) element;
-                String path = file.getPath();
-                int n = mValues.samplesDir.getPath().length();
-                if (path.length() > n) {
-                    path = path.substring(n);
-                    if (path.charAt(0) == File.separatorChar) {
-                        path = path.substring(1);
-                    }
-                    if (path.endsWith(File.separator)) {
-                        path = path.substring(0, path.length() - 1);
-                    }
-                    path = path.replaceAll(Pattern.quote(File.separator), " > ");
+                if (element instanceof Pair<?, ?>) {
+                    Object name = ((Pair<?, ?>) element).getFirst();
+                    return name.toString();
                 }
-
-                return path;
+                return element.toString(); // Fallback. Should not happen.
             }
         };
 
@@ -150,7 +142,7 @@ class SampleSelectionPage extends WizardPage implements SelectionListener, Modif
             mTableViewer.setInput(samples);
 
             mTable.select(0);
-            selectSample(mValues.samples.get(0));
+            selectSample(mValues.samples.get(0).getSecond());
             extractNamesFromAndroidManifest();
         }
     }
@@ -159,6 +151,10 @@ class SampleSelectionPage extends WizardPage implements SelectionListener, Modif
         mValues.chosenSample = sample;
         if (sample != null && !mValues.projectNameModifiedByUser) {
             mValues.projectName = sample.getName();
+            if (SdkConstants.FD_SAMPLE.equals(mValues.projectName) &&
+                    sample.getParentFile() != null) {
+                mValues.projectName = sample.getParentFile().getName() + '_' + mValues.projectName;
+            }
             try {
                 mIgnore = true;
                 mSampleProjectName.setText(mValues.projectName);
@@ -169,6 +165,8 @@ class SampleSelectionPage extends WizardPage implements SelectionListener, Modif
         }
     }
 
+    @SuppressWarnings("unchecked")
+    @Override
     public void widgetSelected(SelectionEvent e) {
         if (mIgnore) {
             return;
@@ -179,7 +177,7 @@ class SampleSelectionPage extends WizardPage implements SelectionListener, Modif
             int index = mTable.getSelectionIndex();
             if (index >= 0) {
                 Object[] roots = (Object[]) mTableViewer.getInput();
-                selectSample((File) roots[index]);
+                selectSample(((Pair<String, File>) roots[index]).getSecond());
             } else {
                 selectSample(null);
             }
@@ -190,9 +188,11 @@ class SampleSelectionPage extends WizardPage implements SelectionListener, Modif
         validatePage();
     }
 
+    @Override
     public void widgetDefaultSelected(SelectionEvent e) {
     }
 
+    @Override
     public void modifyText(ModifyEvent e) {
         if (mIgnore) {
             return;

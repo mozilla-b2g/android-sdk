@@ -16,6 +16,7 @@
 
 package com.android.ide.eclipse.adt.internal.build;
 
+import com.android.SdkConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
 
 import org.eclipse.core.runtime.CoreException;
@@ -30,6 +31,7 @@ import java.lang.reflect.Method;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.util.Collection;
 
 /**
  * Wrapper to access dx.jar through reflection.
@@ -51,6 +53,7 @@ public final class DexWrapper {
     private Field mArgVerbose;
     private Field mArgJarOutput;
     private Field mArgFileNames;
+    private Field mArgForceJumbo;
 
     private Field mConsoleOut;
     private Field mConsoleErr;
@@ -90,6 +93,7 @@ public final class DexWrapper {
                 mArgJarOutput = argClass.getField("jarOutput"); //$NON-NLS-1$
                 mArgFileNames = argClass.getField("fileNames"); //$NON-NLS-1$
                 mArgVerbose = argClass.getField("verbose"); //$NON-NLS-1$
+                mArgForceJumbo = argClass.getField("forceJumbo"); //$NON-NLS-1$
 
                 mConsoleOut = consoleClass.getField("out"); //$NON-NLS-1$
                 mConsoleErr = consoleClass.getField("err"); //$NON-NLS-1$
@@ -138,20 +142,23 @@ public final class DexWrapper {
      *
      * @param osOutFilePath the OS path to the outputfile (classes.dex
      * @param osFilenames list of input source files (.class and .jar files)
+     * @param forceJumbo force jumbo mode.
      * @param verbose verbose mode.
      * @param outStream the stdout console
      * @param errStream the stderr console
      * @return the integer return code of com.android.dx.command.dexer.Main.run()
      * @throws CoreException
      */
-    public synchronized int run(String osOutFilePath, String[] osFilenames,
-            boolean verbose, PrintStream outStream, PrintStream errStream) throws CoreException {
+    public synchronized int run(String osOutFilePath, Collection<String> osFilenames,
+            boolean forceJumbo, boolean verbose,
+            PrintStream outStream, PrintStream errStream) throws CoreException {
 
         assert mRunMethod != null;
         assert mArgConstructor != null;
         assert mArgOutName != null;
         assert mArgJarOutput != null;
         assert mArgFileNames != null;
+        assert mArgForceJumbo != null;
         assert mArgVerbose != null;
         assert mConsoleOut != null;
         assert mConsoleErr != null;
@@ -171,8 +178,9 @@ public final class DexWrapper {
             // create the Arguments object.
             Object args = mArgConstructor.newInstance();
             mArgOutName.set(args, osOutFilePath);
-            mArgFileNames.set(args, osFilenames);
-            mArgJarOutput.set(args, false);
+            mArgFileNames.set(args, osFilenames.toArray(new String[osFilenames.size()]));
+            mArgJarOutput.set(args, osOutFilePath.endsWith(SdkConstants.DOT_JAR));
+            mArgForceJumbo.set(args, forceJumbo);
             mArgVerbose.set(args, verbose);
 
             // call the run method

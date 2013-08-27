@@ -16,9 +16,9 @@
 
 package com.android.ide.eclipse.adt.internal.refactorings.renamepackage;
 
+import com.android.ide.common.xml.ManifestData;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.project.AndroidManifestHelper;
-import com.android.sdklib.xml.ManifestData;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.IAdaptable;
@@ -66,10 +66,12 @@ public class RenamePackageAction implements IObjectActionDelegate {
     /**
      * @see IObjectActionDelegate#setActivePart(IAction, IWorkbenchPart)
      */
+    @Override
     public void setActivePart(IAction action, IWorkbenchPart targetPart) {
         mTargetPart = targetPart;
     }
 
+    @Override
     public void selectionChanged(IAction action, ISelection selection) {
         mSelection = selection;
     }
@@ -81,6 +83,7 @@ public class RenamePackageAction implements IObjectActionDelegate {
         // pass
     }
 
+    @Override
     public void run(IAction action) {
 
         // Prompt for refactoring on the selected project
@@ -99,7 +102,7 @@ public class RenamePackageAction implements IObjectActionDelegate {
                     // enforce a save as a convenience.
                     RefactoringSaveHelper save_helper = new RefactoringSaveHelper(
                             RefactoringSaveHelper.SAVE_ALL_ALWAYS_ASK);
-                    if (save_helper.saveEditors(AdtPlugin.getDisplay().getActiveShell())) {
+                    if (save_helper.saveEditors(AdtPlugin.getShell())) {
                         promptNewName(project);
                     }
                 }
@@ -124,6 +127,7 @@ public class RenamePackageAction implements IObjectActionDelegate {
 
         IInputValidator validator = new IInputValidator() {
 
+            @Override
             public String isValid(String newText) {
                 try {
                     astValidator.newName(newText);
@@ -138,7 +142,7 @@ public class RenamePackageAction implements IObjectActionDelegate {
             }
         };
 
-        InputDialog dialog = new InputDialog(AdtPlugin.getDisplay().getActiveShell(),
+        InputDialog dialog = new InputDialog(AdtPlugin.getShell(),
                 "Rename Application Package", "Enter new package name:", oldPackageNameString,
                 validator);
 
@@ -161,7 +165,7 @@ public class RenamePackageAction implements IObjectActionDelegate {
             new ApplicationPackageNameRefactoringWizard(package_name_refactoring);
         RefactoringWizardOpenOperation op = new RefactoringWizardOpenOperation(wizard);
         try {
-            op.run(AdtPlugin.getDisplay().getActiveShell(), package_name_refactoring.getName());
+            op.run(AdtPlugin.getShell(), package_name_refactoring.getName());
         } catch (InterruptedException e) {
             Status s = new Status(Status.ERROR, AdtPlugin.PLUGIN_ID, e.getMessage(), e);
             AdtPlugin.getDefault().getLog().log(s);

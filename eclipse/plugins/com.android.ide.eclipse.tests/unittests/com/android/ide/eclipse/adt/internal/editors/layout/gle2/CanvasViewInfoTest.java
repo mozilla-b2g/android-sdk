@@ -24,7 +24,7 @@ import com.android.ide.eclipse.adt.internal.editors.descriptors.AttributeDescrip
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.ViewElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.layout.uimodel.UiViewElementNode;
-import com.android.util.Pair;
+import com.android.utils.Pair;
 
 import org.eclipse.swt.graphics.Rectangle;
 
@@ -39,6 +39,7 @@ import java.util.Set;
 
 import junit.framework.TestCase;
 
+@SuppressWarnings("javadoc")
 public class CanvasViewInfoTest extends TestCase {
 
     public static ViewElementDescriptor createDesc(String name, String fqn, boolean hasChildren) {

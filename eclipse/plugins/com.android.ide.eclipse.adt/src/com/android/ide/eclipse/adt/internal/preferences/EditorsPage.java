@@ -16,9 +16,9 @@
 
 package com.android.ide.eclipse.adt.internal.preferences;
 
-import static com.android.ide.eclipse.adt.internal.preferences.AttributeSortOrder.ALPHABETICAL;
-import static com.android.ide.eclipse.adt.internal.preferences.AttributeSortOrder.LOGICAL;
-import static com.android.ide.eclipse.adt.internal.preferences.AttributeSortOrder.NO_SORTING;
+import static com.android.ide.common.xml.XmlAttributeSortOrder.ALPHABETICAL;
+import static com.android.ide.common.xml.XmlAttributeSortOrder.LOGICAL;
+import static com.android.ide.common.xml.XmlAttributeSortOrder.NO_SORTING;
 
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.sdkuilib.internal.widgets.ResolutionChooserDialog;
@@ -53,6 +53,7 @@ public class EditorsPage extends FieldEditorPreferencePage implements IWorkbench
         setPreferenceStore(AdtPlugin.getDefault().getPreferenceStore());
     }
 
+    @Override
     public void init(IWorkbench workbench) {
         // pass
     }
@@ -66,7 +67,7 @@ public class EditorsPage extends FieldEditorPreferencePage implements IWorkbench
 
         final MyBooleanFieldEditor editor = new MyBooleanFieldEditor(
                 AdtPrefs.PREFS_USE_CUSTOM_XML_FORMATTER,
-                "Format XML files using the standard Android XML style rather than the\n" +
+                "Format XML files using the standard Android XML style rather than the \n" +
                 "configured Eclipse XML style (additional options below)",
                 parent);
         addField(editor);
@@ -88,7 +89,7 @@ public class EditorsPage extends FieldEditorPreferencePage implements IWorkbench
 
         mIndentEditor = new BooleanFieldEditor(AdtPrefs.PREFS_USE_ECLIPSE_INDENT,
                 "Use Eclipse setting for indentation width and space or tab character "
-                + "indentation\n(Android default is 4 space characters)",
+                + "indentation \n(Android default is 4 space characters)",
                 parent);
         addField(mIndentEditor);
 
@@ -124,6 +125,10 @@ public class EditorsPage extends FieldEditorPreferencePage implements IWorkbench
 
         addField(new BooleanFieldEditor(AdtPrefs.PREFS_FORMAT_ON_SAVE,
                 "Format on Save",
+                parent));
+
+        addField(new BooleanFieldEditor(AdtPrefs.PREFS_SHARED_LAYOUT_EDITOR,
+                "Use a single layout editor for all configuration variations of a layout",
                 parent));
 
         boolean enabled = getPreferenceStore().getBoolean(AdtPrefs.PREFS_USE_CUSTOM_XML_FORMATTER);

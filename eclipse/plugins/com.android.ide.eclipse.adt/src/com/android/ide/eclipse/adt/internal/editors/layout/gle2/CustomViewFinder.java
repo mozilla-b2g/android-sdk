@@ -15,15 +15,15 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
-import static com.android.sdklib.SdkConstants.CLASS_VIEW;
-import static com.android.sdklib.SdkConstants.CLASS_VIEWGROUP;
-import static com.android.sdklib.SdkConstants.FN_FRAMEWORK_LIBRARY;
+import static com.android.SdkConstants.CLASS_VIEW;
+import static com.android.SdkConstants.CLASS_VIEWGROUP;
+import static com.android.SdkConstants.FN_FRAMEWORK_LIBRARY;
 
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper;
 import com.android.ide.eclipse.adt.internal.sdk.ProjectState;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
-import com.android.util.Pair;
+import com.android.utils.Pair;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.CoreException;
@@ -374,6 +374,7 @@ public class CustomViewFinder {
 
             // Notify listeners on SWT's UI thread
             Display.getDefault().asyncExec(new Runnable() {
+                @Override
                 public void run() {
                     Collection<String> customViews =
                         Collections.unmodifiableCollection(mCustomViews);

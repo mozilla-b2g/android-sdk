@@ -18,6 +18,7 @@ package com.android.ide.eclipse.gltrace.state;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * A list property is a container for a list of properties, addressed by index.
@@ -26,6 +27,7 @@ public class GLListProperty implements IGLProperty {
     private final List<IGLProperty> mList;
     private final GLStateType mType;
     private IGLProperty mParent;
+    private IGLProperty mTemplate;
 
     /**
      * Construct a list of properties of given size from the provided template.
@@ -34,6 +36,7 @@ public class GLListProperty implements IGLProperty {
      */
     public GLListProperty(GLStateType type, IGLProperty template, int size) {
         mType = type;
+        mTemplate = template;
 
         mList = new ArrayList<IGLProperty>(size);
         for (int i = 0; i < size; i++) {
@@ -61,9 +64,25 @@ public class GLListProperty implements IGLProperty {
         return mList.get(index);
     }
 
+    public boolean add(IGLProperty property) {
+        property.setParent(this);
+        return mList.add(property);
+    }
+
+    public boolean remove(IGLProperty property) {
+        return mList.remove(property);
+    }
+
     public void set(int index, IGLProperty property) {
+        ensureCapacity(index + 1);
         mList.set(index, property);
         property.setParent(this);
+    }
+
+    private void ensureCapacity(int capactiy) {
+        for (int i = mList.size(); i < capactiy; i++) {
+            mList.add(mTemplate);
+        }
     }
 
     @Override
@@ -96,6 +115,7 @@ public class GLListProperty implements IGLProperty {
         return sb.toString();
     }
 
+    @Override
     public String getStringValue() {
         // This method is called for displaying objects in the UI.
         // We do not display any values for composites in the UI as they are only intermediate
@@ -103,22 +123,27 @@ public class GLListProperty implements IGLProperty {
         return "";
     }
 
+    @Override
     public GLStateType getType() {
         return mType;
     }
 
+    @Override
     public boolean isComposite() {
         return true;
     }
 
+    @Override
     public boolean isDefault() {
         return false;
     }
 
+    @Override
     public IGLProperty getParent() {
         return mParent;
     }
 
+    @Override
     public void setParent(IGLProperty parent) {
         mParent = parent;
     }
@@ -127,13 +152,31 @@ public class GLListProperty implements IGLProperty {
         return mList.indexOf(property);
     }
 
+    @Override
     public void setValue(Object value) {
         throw new UnsupportedOperationException(
                 "Values cannot be set for composite properties."); //$NON-NLS-1$
     }
 
+    @Override
     public Object getValue() {
         throw new UnsupportedOperationException(
                 "Values cannot be obtained for composite properties."); //$NON-NLS-1$
+    }
+
+    public int size() {
+        return mList.size();
+    }
+
+    @Override
+    public void prettyPrint(StatePrettyPrinter pp) {
+        pp.prettyPrint(mType, null);
+        pp.incrementIndentLevel();
+        for (int i = 0; i < mList.size(); i++) {
+            pp.prettyPrint(String.format(Locale.US, "Index %d:", i));
+            IGLProperty p = mList.get(i);
+            p.prettyPrint(pp);
+        }
+        pp.decrementIndentLevel();
     }
 }

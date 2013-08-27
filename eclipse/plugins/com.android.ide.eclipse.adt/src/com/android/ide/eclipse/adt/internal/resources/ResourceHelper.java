@@ -16,26 +16,32 @@
 
 package com.android.ide.eclipse.adt.internal.resources;
 
-import static com.android.AndroidConstants.FD_RES_VALUES;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.resources.ResourceResolver.PREFIX_ANDROID_STYLE;
-import static com.android.ide.common.resources.ResourceResolver.PREFIX_STYLE;
-import static com.android.ide.eclipse.adt.AdtConstants.ANDROID_PKG;
-import static com.android.ide.eclipse.adt.AdtConstants.DOT_XML;
-import static com.android.ide.eclipse.adt.AdtConstants.EXT_XML;
+import static com.android.SdkConstants.ANDROID_PREFIX;
+import static com.android.SdkConstants.ANDROID_STYLE_RESOURCE_PREFIX;
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ATTR_COLOR;
+import static com.android.SdkConstants.ATTR_NAME;
+import static com.android.SdkConstants.ATTR_TYPE;
+import static com.android.SdkConstants.DOT_XML;
+import static com.android.SdkConstants.EXT_XML;
+import static com.android.SdkConstants.FD_RESOURCES;
+import static com.android.SdkConstants.FD_RES_VALUES;
+import static com.android.SdkConstants.PREFIX_RESOURCE_REF;
+import static com.android.SdkConstants.STYLE_RESOURCE_PREFIX;
+import static com.android.SdkConstants.TAG_ITEM;
+import static com.android.SdkConstants.TAG_RESOURCES;
 import static com.android.ide.eclipse.adt.AdtConstants.WS_SEP;
-import static com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors.NAME_ATTR;
-import static com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors.TYPE_ATTR;
-import static com.android.sdklib.SdkConstants.FD_RESOURCES;
 
 import com.android.ide.common.rendering.api.ResourceValue;
 import com.android.ide.common.resources.ResourceDeltaKind;
+import com.android.ide.common.resources.ResourceRepository;
 import com.android.ide.common.resources.ResourceResolver;
 import com.android.ide.common.resources.configuration.CountryCodeQualifier;
 import com.android.ide.common.resources.configuration.DensityQualifier;
 import com.android.ide.common.resources.configuration.FolderConfiguration;
 import com.android.ide.common.resources.configuration.KeyboardStateQualifier;
 import com.android.ide.common.resources.configuration.LanguageQualifier;
+import com.android.ide.common.resources.configuration.LayoutDirectionQualifier;
 import com.android.ide.common.resources.configuration.NavigationMethodQualifier;
 import com.android.ide.common.resources.configuration.NavigationStateQualifier;
 import com.android.ide.common.resources.configuration.NetworkCodeQualifier;
@@ -55,16 +61,15 @@ import com.android.ide.common.resources.configuration.UiModeQualifier;
 import com.android.ide.common.resources.configuration.VersionQualifier;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
+import com.android.ide.eclipse.adt.internal.editors.Hyperlinks;
 import com.android.ide.eclipse.adt.internal.editors.IconFactory;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.ImageUtils;
 import com.android.ide.eclipse.adt.internal.editors.layout.refactoring.VisualRefactoring;
-import com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors;
-import com.android.ide.eclipse.adt.internal.editors.xml.Hyperlinks;
 import com.android.ide.eclipse.adt.internal.wizards.newxmlfile.NewXmlFileWizard;
 import com.android.resources.FolderTypeRelationship;
 import com.android.resources.ResourceFolderType;
 import com.android.resources.ResourceType;
-import com.android.util.Pair;
+import com.android.utils.Pair;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
@@ -114,34 +119,36 @@ import javax.xml.parsers.DocumentBuilderFactory;
 @SuppressWarnings("restriction") // XML model
 public class ResourceHelper {
 
-    private static final String TAG_ITEM = "item"; //$NON-NLS-1$
-    private static final String ATTR_COLOR = "color";  //$NON-NLS-1$
-
     private final static Map<Class<?>, Image> sIconMap = new HashMap<Class<?>, Image>(
             FolderConfiguration.getQualifierCount());
 
     static {
-        IconFactory factory = IconFactory.getInstance();
-        sIconMap.put(CountryCodeQualifier.class,        factory.getIcon("mcc")); //$NON-NLS-1$
-        sIconMap.put(NetworkCodeQualifier.class,        factory.getIcon("mnc")); //$NON-NLS-1$
-        sIconMap.put(LanguageQualifier.class,           factory.getIcon("language")); //$NON-NLS-1$
-        sIconMap.put(RegionQualifier.class,             factory.getIcon("region")); //$NON-NLS-1$
-        sIconMap.put(ScreenSizeQualifier.class,         factory.getIcon("size")); //$NON-NLS-1$
-        sIconMap.put(ScreenRatioQualifier.class,        factory.getIcon("ratio")); //$NON-NLS-1$
-        sIconMap.put(ScreenOrientationQualifier.class,  factory.getIcon("orientation")); //$NON-NLS-1$
-        sIconMap.put(UiModeQualifier.class,             factory.getIcon("dockmode")); //$NON-NLS-1$
-        sIconMap.put(NightModeQualifier.class,          factory.getIcon("nightmode")); //$NON-NLS-1$
-        sIconMap.put(DensityQualifier.class,            factory.getIcon("dpi")); //$NON-NLS-1$
-        sIconMap.put(TouchScreenQualifier.class,        factory.getIcon("touch")); //$NON-NLS-1$
-        sIconMap.put(KeyboardStateQualifier.class,      factory.getIcon("keyboard")); //$NON-NLS-1$
-        sIconMap.put(TextInputMethodQualifier.class,    factory.getIcon("text_input")); //$NON-NLS-1$
-        sIconMap.put(NavigationStateQualifier.class,    factory.getIcon("navpad")); //$NON-NLS-1$
-        sIconMap.put(NavigationMethodQualifier.class,   factory.getIcon("navpad")); //$NON-NLS-1$
-        sIconMap.put(ScreenDimensionQualifier.class,    factory.getIcon("dimension")); //$NON-NLS-1$
-        sIconMap.put(VersionQualifier.class,            factory.getIcon("version")); //$NON-NLS-1$
-        sIconMap.put(ScreenWidthQualifier.class,        factory.getIcon("width")); //$NON-NLS-1$
-        sIconMap.put(ScreenHeightQualifier.class,       factory.getIcon("height")); //$NON-NLS-1$
-        sIconMap.put(SmallestScreenWidthQualifier.class,factory.getIcon("swidth")); //$NON-NLS-1$
+        try {
+            IconFactory factory = IconFactory.getInstance();
+            sIconMap.put(CountryCodeQualifier.class,        factory.getIcon("mcc")); //$NON-NLS-1$
+            sIconMap.put(NetworkCodeQualifier.class,        factory.getIcon("mnc")); //$NON-NLS-1$
+            sIconMap.put(LanguageQualifier.class,           factory.getIcon("language")); //$NON-NLS-1$
+            sIconMap.put(RegionQualifier.class,             factory.getIcon("region")); //$NON-NLS-1$
+            sIconMap.put(LayoutDirectionQualifier.class,    factory.getIcon("bidi")); //$NON-NLS-1$
+            sIconMap.put(ScreenSizeQualifier.class,         factory.getIcon("size")); //$NON-NLS-1$
+            sIconMap.put(ScreenRatioQualifier.class,        factory.getIcon("ratio")); //$NON-NLS-1$
+            sIconMap.put(ScreenOrientationQualifier.class,  factory.getIcon("orientation")); //$NON-NLS-1$
+            sIconMap.put(UiModeQualifier.class,             factory.getIcon("dockmode")); //$NON-NLS-1$
+            sIconMap.put(NightModeQualifier.class,          factory.getIcon("nightmode")); //$NON-NLS-1$
+            sIconMap.put(DensityQualifier.class,            factory.getIcon("dpi")); //$NON-NLS-1$
+            sIconMap.put(TouchScreenQualifier.class,        factory.getIcon("touch")); //$NON-NLS-1$
+            sIconMap.put(KeyboardStateQualifier.class,      factory.getIcon("keyboard")); //$NON-NLS-1$
+            sIconMap.put(TextInputMethodQualifier.class,    factory.getIcon("text_input")); //$NON-NLS-1$
+            sIconMap.put(NavigationStateQualifier.class,    factory.getIcon("navpad")); //$NON-NLS-1$
+            sIconMap.put(NavigationMethodQualifier.class,   factory.getIcon("navpad")); //$NON-NLS-1$
+            sIconMap.put(ScreenDimensionQualifier.class,    factory.getIcon("dimension")); //$NON-NLS-1$
+            sIconMap.put(VersionQualifier.class,            factory.getIcon("version")); //$NON-NLS-1$
+            sIconMap.put(ScreenWidthQualifier.class,        factory.getIcon("width")); //$NON-NLS-1$
+            sIconMap.put(ScreenHeightQualifier.class,       factory.getIcon("height")); //$NON-NLS-1$
+            sIconMap.put(SmallestScreenWidthQualifier.class,factory.getIcon("swidth")); //$NON-NLS-1$
+        } catch (Throwable t) {
+            AdtPlugin.log(t , null);
+        }
     }
 
     /**
@@ -171,39 +178,6 @@ public class ResourceHelper {
         }
 
         return null;
-    }
-
-    /**
-     * Return the resource type of the given url, and the resource name
-     *
-     * @param url the resource url to be parsed
-     * @return a pair of the resource type and the resource name
-     */
-    public static Pair<ResourceType,String> parseResource(String url) {
-        if (!url.startsWith("@")) { //$NON-NLS-1$
-            return null;
-        }
-        int typeEnd = url.indexOf('/', 1);
-        if (typeEnd == -1) {
-            return null;
-        }
-        int nameBegin = typeEnd + 1;
-
-        // Skip @ and @+
-        int typeBegin = url.startsWith("@+") ? 2 : 1; //$NON-NLS-1$
-
-        int colon = url.lastIndexOf(':', typeEnd);
-        if (colon != -1) {
-            typeBegin = colon + 1;
-        }
-        String typeName = url.substring(typeBegin, typeEnd);
-        ResourceType type = ResourceType.getEnum(typeName);
-        if (type == null) {
-            return null;
-        }
-        String name = url.substring(nameBegin);
-
-        return Pair.of(type, name);
     }
 
     /**
@@ -271,11 +245,11 @@ public class ResourceHelper {
      */
     public static boolean canCreateResource(String resource) {
         // Cannot create framework resources
-        if (resource.startsWith('@' + ANDROID_PKG + ':')) {
+        if (resource.startsWith(ANDROID_PREFIX)) {
             return false;
         }
 
-        Pair<ResourceType,String> parsed = parseResource(resource);
+        Pair<ResourceType,String> parsed = ResourceRepository.parseResource(resource);
         if (parsed != null) {
             ResourceType type = parsed.getFirst();
             String name = parsed.getSecond();
@@ -408,9 +382,9 @@ public class ResourceHelper {
                                 elementImpl.setEmptyTag(true);
                             }
                         }
-                        element.setAttribute(NAME_ATTR, name);
+                        element.setAttribute(ATTR_NAME, name);
                         if (!tagName.equals(typeName)) {
-                            element.setAttribute(TYPE_ATTR, typeName);
+                            element.setAttribute(ATTR_TYPE, typeName);
                         }
                         root.insertBefore(element, nextChild);
                         IRegion region = null;
@@ -447,7 +421,7 @@ public class ResourceHelper {
             String prolog = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"; //$NON-NLS-1$
             StringBuilder sb = new StringBuilder(prolog);
 
-            String root = ResourcesDescriptors.ROOT_ELEMENT;
+            String root = TAG_RESOURCES;
             sb.append('<').append(root).append('>').append('\n');
             sb.append("    "); //$NON-NLS-1$
             sb.append('<');
@@ -505,12 +479,32 @@ public class ResourceHelper {
      * @return the user visible theme name
      */
     public static String styleToTheme(String style) {
-        if (style.startsWith(PREFIX_STYLE)) {
-            style = style.substring(PREFIX_STYLE.length());
-        } else if (style.startsWith(PREFIX_ANDROID_STYLE)) {
-            style = style.substring(PREFIX_ANDROID_STYLE.length());
+        if (style.startsWith(STYLE_RESOURCE_PREFIX)) {
+            style = style.substring(STYLE_RESOURCE_PREFIX.length());
+        } else if (style.startsWith(ANDROID_STYLE_RESOURCE_PREFIX)) {
+            style = style.substring(ANDROID_STYLE_RESOURCE_PREFIX.length());
+        } else if (style.startsWith(PREFIX_RESOURCE_REF)) {
+            // @package:style/foo
+            int index = style.indexOf('/');
+            if (index != -1) {
+                style = style.substring(index + 1);
+            }
         }
         return style;
+    }
+
+    /**
+     * Returns true if the given style represents a project theme
+     *
+     * @param style a theme style string
+     * @return true if the style string represents a project theme, as opposed
+     *         to a framework theme
+     */
+    public static boolean isProjectStyle(String style) {
+        assert style.startsWith(STYLE_RESOURCE_PREFIX)
+            || style.startsWith(ANDROID_STYLE_RESOURCE_PREFIX) : style;
+
+        return style.startsWith(STYLE_RESOURCE_PREFIX);
     }
 
     /**
@@ -555,7 +549,7 @@ public class ResourceHelper {
                 }
                 return null;
             }
-            if (value.startsWith("@")) { //$NON-NLS-1$
+            if (value.startsWith(PREFIX_RESOURCE_REF)) {
                 boolean isFramework = color.isFramework();
                 color = resources.findResValue(value, isFramework);
                 if (color != null) {

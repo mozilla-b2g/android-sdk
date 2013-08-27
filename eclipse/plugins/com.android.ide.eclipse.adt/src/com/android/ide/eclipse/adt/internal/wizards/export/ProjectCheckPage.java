@@ -16,6 +16,7 @@
 
 package com.android.ide.eclipse.adt.internal.wizards.export;
 
+import com.android.ide.common.xml.ManifestData;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.internal.editors.IconFactory;
 import com.android.ide.eclipse.adt.internal.project.AndroidManifestHelper;
@@ -24,7 +25,6 @@ import com.android.ide.eclipse.adt.internal.project.ProjectChooserHelper;
 import com.android.ide.eclipse.adt.internal.project.ProjectChooserHelper.NonLibraryProjectOnlyFilter;
 import com.android.ide.eclipse.adt.internal.project.ProjectHelper;
 import com.android.ide.eclipse.adt.internal.wizards.export.ExportWizard.ExportWizardPage;
-import com.android.sdklib.xml.ManifestData;
 
 import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IProject;
@@ -42,9 +42,6 @@ import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Text;
-
-import java.io.File;
-import java.io.IOException;
 
 /**
  * First Export Wizard Page. Display warning/errors.
@@ -71,6 +68,7 @@ final class ProjectCheckPage extends ExportWizardPage {
         setDescription("Performs a set of checks to make sure the application can be exported.");
     }
 
+    @Override
     public void createControl(Composite parent) {
         mProjectChooserHelper = new ProjectChooserHelper(parent.getShell(),
                 new NonLibraryProjectOnlyFilter());
@@ -97,6 +95,7 @@ final class ProjectCheckPage extends ExportWizardPage {
         mProjectText = new Text(projectComposite, SWT.BORDER);
         mProjectText.setLayoutData(gd = new GridData(GridData.FILL_HORIZONTAL));
         mProjectText.addModifyListener(new ModifyListener() {
+            @Override
             public void modifyText(ModifyEvent e) {
                 handleProjectNameChange();
             }

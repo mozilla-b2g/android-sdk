@@ -15,7 +15,7 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.layout.refactoring;
 
-import static com.android.ide.common.layout.LayoutConstants.FQCN_RADIO_BUTTON;
+import static com.android.SdkConstants.FQCN_RADIO_BUTTON;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.runtime.NullProgressMonitor;
@@ -46,7 +46,7 @@ public class ChangeViewRefactoringTest extends RefactoringTest {
 
         IFile file = getLayoutFile(getProject(), basename);
         TestContext info = setupTestContext(file, basename);
-        TestLayoutEditor layoutEditor = info.mLayoutEditor;
+        TestLayoutEditorDelegate layoutEditor = info.mLayoutEditorDelegate;
         List<Element> selectedElements = getElements(info.mElement, ids);
 
         ChangeViewRefactoring refactoring = new ChangeViewRefactoring(selectedElements,

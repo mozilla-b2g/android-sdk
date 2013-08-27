@@ -16,13 +16,13 @@
 
 package com.android.ide.common.layout;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_HEIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_WIDTH;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ORIENTATION;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_HORIZONTAL;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_VERTICAL;
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ATTR_ID;
+import static com.android.SdkConstants.ATTR_LAYOUT_HEIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_WIDTH;
+import static com.android.SdkConstants.ATTR_ORIENTATION;
+import static com.android.SdkConstants.VALUE_HORIZONTAL;
+import static com.android.SdkConstants.VALUE_VERTICAL;
 
 import com.android.ide.common.api.DropFeedback;
 import com.android.ide.common.api.IAttributeInfo.Format;
@@ -39,7 +39,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 
 /** Test the {@link LinearLayoutRule} */
 public class LinearLayoutRuleTest extends LayoutTestBase {
@@ -175,7 +174,7 @@ public class LinearLayoutRuleTest extends LayoutTestBase {
         initialize(rule, "android.widget.LinearLayout");
         TestNode node = TestNode.create("android.widget.LinearLayout").id("@+id/LinearLayout012");
         node.putAttributeInfo(ANDROID_URI, "orientation",
-                new TestAttributeInfo(ATTR_ORIENTATION, new Format[] { Format.ENUM },
+                new TestAttributeInfo(ATTR_ORIENTATION, Format.ENUM_SET,
                         "android.widget.LinearLayout",
                         new String[] {"horizontal", "vertical"}, null, null));
 
@@ -209,13 +208,13 @@ public class LinearLayoutRuleTest extends LayoutTestBase {
         initialize(rule, "android.widget.LinearLayout");
         TestNode node = TestNode.create("android.widget.LinearLayout").id("@+id/LinearLayout012");
         node.putAttributeInfo(ANDROID_URI, "orientation",
-                new TestAttributeInfo(ATTR_ORIENTATION, new Format[] { Format.ENUM },
+                new TestAttributeInfo(ATTR_ORIENTATION, Format.ENUM_SET,
                         "android.widget.LinearLayout",
                         new String[] {"horizontal", "vertical"}, null, null));
         node.setAttributeSources(Arrays.asList("android.widget.LinearLayout",
                 "android.view.ViewGroup", "android.view.View"));
         node.putAttributeInfo(ANDROID_URI, "gravity",
-                new TestAttributeInfo("gravity", new Format[] { Format.INTEGER },
+                new TestAttributeInfo("gravity", Format.INTEGER_SET,
                         "android.widget.LinearLayout", null, null, null));
 
 
@@ -459,36 +458,6 @@ public class LinearLayoutRuleTest extends LayoutTestBase {
 
                 // Drop Preview
                 "useStyle(DROP_PREVIEW), drawRect(0,381,100,461)");
-    }
-
-    public void testFormatFloatValue() throws Exception {
-        assertEquals("1", LinearLayoutRule.formatFloatAttribute(1.0f));
-        assertEquals("2", LinearLayoutRule.formatFloatAttribute(2.0f));
-        assertEquals("1.50", LinearLayoutRule.formatFloatAttribute(1.5f));
-        assertEquals("1.50", LinearLayoutRule.formatFloatAttribute(1.50f));
-        assertEquals("1.51", LinearLayoutRule.formatFloatAttribute(1.51f));
-        assertEquals("1.51", LinearLayoutRule.formatFloatAttribute(1.514542f));
-        assertEquals("1.52", LinearLayoutRule.formatFloatAttribute(1.516542f));
-        assertEquals("-1.51", LinearLayoutRule.formatFloatAttribute(-1.51f));
-        assertEquals("-1", LinearLayoutRule.formatFloatAttribute(-1f));
-    }
-
-    public void testFormatFloatValueLocale() throws Exception {
-        // Ensure that the layout float values aren't affected by
-        // locale settings, like using commas instead of of periods
-        Locale originalDefaultLocale = Locale.getDefault();
-
-        try {
-            Locale.setDefault(Locale.FRENCH);
-
-            // Ensure that this is a locale which uses a comma instead of a period:
-            assertEquals("5,24", String.format("%.2f", 5.236f));
-
-            // Ensure that the formatFloatAttribute is immune
-            assertEquals("1.50", LinearLayoutRule.formatFloatAttribute(1.5f));
-        } finally {
-            Locale.setDefault(originalDefaultLocale);
-        }
     }
 
     // Left to test:

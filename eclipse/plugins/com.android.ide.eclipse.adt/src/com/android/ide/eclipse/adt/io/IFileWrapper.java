@@ -43,22 +43,29 @@ public class IFileWrapper implements IAbstractFile {
         mFile = file;
     }
 
+    @Override
     public InputStream getContents() throws StreamException {
         try {
             return mFile.getContents();
         } catch (CoreException e) {
-            throw new StreamException(e);
+            StreamException.Error error = StreamException.Error.DEFAULT;
+            if (mFile.isSynchronized(IResource.DEPTH_ZERO) == false) {
+                error = StreamException.Error.OUTOFSYNC;
+            }
+            throw new StreamException(e, this, error);
         }
     }
 
+    @Override
     public void setContents(InputStream source) throws StreamException {
         try {
             mFile.setContents(source, IResource.FORCE, null);
         } catch (CoreException e) {
-            throw new StreamException(e);
+            throw new StreamException(e, this);
         }
     }
 
+    @Override
     public OutputStream getOutputStream() throws StreamException {
         return new ByteArrayOutputStream() {
             @Override
@@ -75,22 +82,27 @@ public class IFileWrapper implements IAbstractFile {
         };
     }
 
+    @Override
     public PreferredWriteMode getPreferredWriteMode() {
         return PreferredWriteMode.INPUTSTREAM;
     }
 
+    @Override
     public String getOsLocation() {
         return mFile.getLocation().toOSString();
     }
 
+    @Override
     public String getName() {
         return mFile.getName();
     }
 
+    @Override
     public boolean exists() {
         return mFile.exists();
     }
 
+    @Override
     public boolean delete() {
         try {
             mFile.delete(true /*force*/, new NullProgressMonitor());
@@ -107,6 +119,7 @@ public class IFileWrapper implements IAbstractFile {
         return mFile;
     }
 
+    @Override
     public long getModificationStamp() {
         return mFile.getModificationStamp();
     }
@@ -129,6 +142,7 @@ public class IFileWrapper implements IAbstractFile {
         return mFile.hashCode();
     }
 
+    @Override
     public IAbstractFolder getParentFolder() {
         IContainer p = mFile.getParent();
         if (p != null) {

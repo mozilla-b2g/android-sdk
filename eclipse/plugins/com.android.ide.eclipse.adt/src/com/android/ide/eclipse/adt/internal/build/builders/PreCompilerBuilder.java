@@ -16,6 +16,10 @@
 
 package com.android.ide.eclipse.adt.internal.build.builders;
 
+import com.android.SdkConstants;
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
+import com.android.ide.common.xml.ManifestData;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.build.AaptParser;
@@ -23,6 +27,7 @@ import com.android.ide.eclipse.adt.internal.build.AidlProcessor;
 import com.android.ide.eclipse.adt.internal.build.Messages;
 import com.android.ide.eclipse.adt.internal.build.RenderScriptProcessor;
 import com.android.ide.eclipse.adt.internal.build.SourceProcessor;
+import com.android.ide.eclipse.adt.internal.lint.EclipseLintClient;
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs.BuildVerbosity;
 import com.android.ide.eclipse.adt.internal.project.AndroidManifestHelper;
@@ -33,16 +38,28 @@ import com.android.ide.eclipse.adt.internal.project.XmlErrorHandler.BasicXmlErro
 import com.android.ide.eclipse.adt.internal.resources.manager.IdeScanningContext;
 import com.android.ide.eclipse.adt.internal.resources.manager.ProjectResources;
 import com.android.ide.eclipse.adt.internal.resources.manager.ResourceManager;
+import com.android.ide.eclipse.adt.internal.sdk.AdtManifestMergeCallback;
 import com.android.ide.eclipse.adt.internal.sdk.ProjectState;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.ide.eclipse.adt.io.IFileWrapper;
 import com.android.ide.eclipse.adt.io.IFolderWrapper;
+import com.android.io.StreamException;
+import com.android.manifmerger.ManifestMerger;
+import com.android.manifmerger.MergerLog;
 import com.android.sdklib.AndroidVersion;
+import com.android.sdklib.BuildToolInfo;
 import com.android.sdklib.IAndroidTarget;
-import com.android.sdklib.SdkConstants;
 import com.android.sdklib.internal.build.BuildConfigGenerator;
-import com.android.sdklib.xml.AndroidManifest;
-import com.android.sdklib.xml.ManifestData;
+import com.android.sdklib.internal.build.SymbolLoader;
+import com.android.sdklib.internal.build.SymbolWriter;
+import com.android.sdklib.internal.project.ProjectProperties;
+import com.android.sdklib.io.FileOp;
+import com.android.utils.ILogger;
+import com.android.utils.Pair;
+import com.android.xml.AndroidManifest;
+import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Multimap;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFolder;
@@ -53,16 +70,21 @@ import org.eclipse.core.resources.IResourceDelta;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.core.runtime.Path;
 import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.JavaCore;
+import org.xml.sax.SAXException;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+
+import javax.xml.parsers.ParserConfigurationException;
 
 /**
  * Pre Java Compiler.
@@ -84,22 +106,29 @@ public class PreCompilerBuilder extends BaseBuilder {
      */
     public final static String RELEASE_REQUESTED = "android.releaseBuild"; //$NON-NLS-1$
 
-
     private static final String PROPERTY_PACKAGE = "manifestPackage"; //$NON-NLS-1$
+    private static final String PROPERTY_MERGE_MANIFEST = "mergeManifest"; //$NON-NLS-1$
     private static final String PROPERTY_COMPILE_RESOURCES = "compileResources"; //$NON-NLS-1$
     private static final String PROPERTY_COMPILE_BUILDCONFIG = "createBuildConfig"; //$NON-NLS-1$
     private static final String PROPERTY_BUILDCONFIG_MODE = "buildConfigMode"; //$NON-NLS-1$
 
-    /**
-     * Resource Compile flag. This flag is reset to false after each successful compilation, and
-     * stored in the project persistent properties. This allows the builder to remember its state
-     * when the project is closed/opened.
-     */
+    private static final boolean MANIFEST_MERGER_ENABLED_DEFAULT = false;
+    private static final String MANIFEST_MERGER_PROPERTY = "manifestmerger.enabled"; //$NON-NLS-1$
+
+    /** Merge Manifest Flag. Computed from resource delta, reset after action is taken.
+     * Stored persistently in the project. */
+    private boolean mMustMergeManifest = false;
+    /** Resource compilation Flag. Computed from resource delta, reset after action is taken.
+     * Stored persistently in the project. */
     private boolean mMustCompileResources = false;
+    /** BuildConfig Flag. Computed from resource delta, reset after action is taken.
+     * Stored persistently in the project. */
     private boolean mMustCreateBuildConfig = false;
+    /** BuildConfig last more Flag. Computed from resource delta, reset after action is taken.
+     * Stored persistently in the project. */
     private boolean mLastBuildConfigMode;
 
-    private final List<SourceProcessor> mProcessors = new ArrayList<SourceProcessor>();
+    private final List<SourceProcessor> mProcessors = new ArrayList<SourceProcessor>(2);
 
     /** cache of the java package defined in the manifest */
     private String mManifestPackage;
@@ -115,6 +144,8 @@ public class PreCompilerBuilder extends BaseBuilder {
      */
     private DerivedProgressMonitor mDerivedProgressMonitor;
 
+    private AidlProcessor mAidlProcessor;
+    private RenderScriptProcessor mRenderScriptProcessor;
 
     /**
      * Progress monitor waiting the end of the process to set a persistent value
@@ -136,9 +167,11 @@ public class PreCompilerBuilder extends BaseBuilder {
             mDone = false;
         }
 
+        @Override
         public void beginTask(String name, int totalWork) {
         }
 
+        @Override
         public void done() {
             if (mDone == false) {
                 mDone = true;
@@ -171,23 +204,29 @@ public class PreCompilerBuilder extends BaseBuilder {
             }
         }
 
+        @Override
         public void internalWorked(double work) {
         }
 
+        @Override
         public boolean isCanceled() {
             return mCancelled;
         }
 
+        @Override
         public void setCanceled(boolean value) {
             mCancelled = value;
         }
 
+        @Override
         public void setTaskName(String name) {
         }
 
+        @Override
         public void subTask(String name) {
         }
 
+        @Override
         public void worked(int work) {
         }
     }
@@ -197,15 +236,17 @@ public class PreCompilerBuilder extends BaseBuilder {
     }
 
     // build() returns a list of project from which this project depends for future compilation.
-    @SuppressWarnings("unchecked")
     @Override
-    protected IProject[] build(int kind, Map args, IProgressMonitor monitor)
+    protected IProject[] build(
+            int kind,
+            @SuppressWarnings("rawtypes") Map args,
+            IProgressMonitor monitor)
             throws CoreException {
         // get a project object
         IProject project = getProject();
 
-        if (DEBUG) {
-            System.out.println("BUILD(PRE) " + project.getName());
+        if (DEBUG_LOG) {
+            AdtPlugin.log(IStatus.INFO, "%s BUILD(PRE)", project.getName());
         }
 
         // For the PreCompiler, only the library projects are considered Referenced projects,
@@ -213,6 +254,8 @@ public class PreCompilerBuilder extends BaseBuilder {
         IProject[] result = null;
 
         try {
+            assert mDerivedProgressMonitor != null;
+
             mDerivedProgressMonitor.reset();
 
             // get the project info
@@ -223,6 +266,8 @@ public class PreCompilerBuilder extends BaseBuilder {
                 return null;
             }
 
+            boolean isLibrary = projectState.isLibrary();
+
             IAndroidTarget projectTarget = projectState.getTarget();
 
             // get the libraries
@@ -232,10 +277,14 @@ public class PreCompilerBuilder extends BaseBuilder {
             IJavaProject javaProject = JavaCore.create(project);
 
             // Top level check to make sure the build can move forward.
-            abortOnBadSetup(javaProject);
+            abortOnBadSetup(javaProject, projectState);
+
+            setupSourceProcessors(javaProject, projectState);
 
             // now we need to get the classpath list
             List<IPath> sourceFolderPathList = BaseProjectHelper.getSourceClasspaths(javaProject);
+
+            IFolder androidOutputFolder = BaseProjectHelper.getAndroidOutputFolder(project);
 
             PreCompilerDeltaVisitor dv = null;
             String javaPackage = null;
@@ -245,13 +294,14 @@ public class PreCompilerBuilder extends BaseBuilder {
                 AdtPlugin.printBuildToConsole(BuildVerbosity.VERBOSE, project,
                         Messages.Start_Full_Pre_Compiler);
 
-                if (DEBUG) {
-                    System.out.println("\tfull build!");
+                if (DEBUG_LOG) {
+                    AdtPlugin.log(IStatus.INFO, "%s full build!", project.getName());
                 }
 
                 // do some clean up.
                 doClean(project, monitor);
 
+                mMustMergeManifest = true;
                 mMustCompileResources = true;
                 mMustCreateBuildConfig = true;
 
@@ -279,19 +329,26 @@ public class PreCompilerBuilder extends BaseBuilder {
 
                     // Check to see if Manifest.xml, Manifest.java, or R.java have changed:
                     mMustCompileResources |= dv.getCompileResources();
+                    mMustMergeManifest |= dv.hasManifestChanged();
 
                     // Notify the ResourceManager:
                     ResourceManager resManager = ResourceManager.getInstance();
-                    ProjectResources projectResources = resManager.getProjectResources(project);
 
                     if (ResourceManager.isAutoBuilding()) {
-                        IdeScanningContext context = new IdeScanningContext(projectResources, project);
+                        ProjectResources projectResources = resManager.getProjectResources(project);
 
-                        resManager.processDelta(delta, context);
+                        IdeScanningContext context = new IdeScanningContext(projectResources,
+                                project, true);
+
+                        boolean wasCleared = projectResources.ensureInitialized();
+
+                        if (!wasCleared) {
+                            resManager.processDelta(delta, context);
+                        }
 
                         // Check whether this project or its dependencies (libraries) have
                         // resources that need compilation
-                        if (context.needsFullAapt()) {
+                        if (wasCleared || context.needsFullAapt()) {
                             mMustCompileResources = true;
 
                             // Must also call markAaptRequested on the project to not just
@@ -320,7 +377,43 @@ public class PreCompilerBuilder extends BaseBuilder {
             // one of the library projects this project depends on has changed
             mMustCompileResources |= ResourceManager.isAaptRequested(project);
 
+            // if the main manifest didn't change, then we check for the library
+            // ones (will trigger manifest merging too)
+            if (libProjects.size() > 0) {
+                for (IProject libProject : libProjects) {
+                    IResourceDelta delta = getDelta(libProject);
+                    if (delta != null) {
+                        PatternBasedDeltaVisitor visitor = new PatternBasedDeltaVisitor(
+                                project, libProject,
+                                "PRE:LibManifest"); //$NON-NLS-1$
+                        visitor.addSet(ChangedFileSetHelper.MANIFEST);
+
+                        ChangedFileSet textSymbolCFS = null;
+                        if (isLibrary == false) {
+                            textSymbolCFS = ChangedFileSetHelper.getTextSymbols(
+                                    libProject);
+                            visitor.addSet(textSymbolCFS);
+                        }
+
+                        delta.accept(visitor);
+
+                        mMustMergeManifest |= visitor.checkSet(ChangedFileSetHelper.MANIFEST);
+
+                        if (textSymbolCFS != null) {
+                            mMustCompileResources |= visitor.checkSet(textSymbolCFS);
+                        }
+
+                        // no need to test others if we have all flags at true.
+                        if (mMustMergeManifest &&
+                                (mMustCompileResources || textSymbolCFS == null)) {
+                            break;
+                        }
+                    }
+                }
+            }
+
             // store the build status in the persistent storage
+            saveProjectBooleanProperty(PROPERTY_MERGE_MANIFEST, mMustMergeManifest);
             saveProjectBooleanProperty(PROPERTY_COMPILE_RESOURCES, mMustCompileResources);
             saveProjectBooleanProperty(PROPERTY_COMPILE_BUILDCONFIG, mMustCreateBuildConfig);
 
@@ -331,7 +424,6 @@ public class PreCompilerBuilder extends BaseBuilder {
 
                 return result;
             }
-
 
             // get the manifest file
             IFile manifestFile = ProjectHelper.getManifest(project);
@@ -352,27 +444,60 @@ public class PreCompilerBuilder extends BaseBuilder {
             // resource delta visitor yet.
             if (dv == null || dv.getCheckedManifestXml() == false) {
                 BasicXmlErrorListener errorListener = new BasicXmlErrorListener();
-                ManifestData parser = AndroidManifestHelper.parse(new IFileWrapper(manifestFile),
-                        true /*gather data*/,
-                        errorListener);
+                try {
+                    ManifestData parser = AndroidManifestHelper.parseUnchecked(
+                            new IFileWrapper(manifestFile),
+                            true /*gather data*/,
+                            errorListener);
 
-                if (errorListener.mHasXmlError == true) {
-                    // There was an error in the manifest, its file has been marked
-                    // by the XmlErrorHandler. The stopBuild() call below will abort
-                    // this with an exception.
-                    String msg = String.format(Messages.s_Contains_Xml_Error,
-                            SdkConstants.FN_ANDROID_MANIFEST_XML);
-                    AdtPlugin.printBuildToConsole(BuildVerbosity.VERBOSE, project, msg);
+                    if (errorListener.mHasXmlError == true) {
+                        // There was an error in the manifest, its file has been marked
+                        // by the XmlErrorHandler. The stopBuild() call below will abort
+                        // this with an exception.
+                        String msg = String.format(Messages.s_Contains_Xml_Error,
+                                SdkConstants.FN_ANDROID_MANIFEST_XML);
+                        AdtPlugin.printBuildToConsole(BuildVerbosity.VERBOSE, project, msg);
+                        markProject(AdtConstants.MARKER_ADT, msg, IMarker.SEVERITY_ERROR);
+
+                        return result;
+                    }
+
+                    // Get the java package from the parser.
+                    // This can be null if the parsing failed because the resource is out of sync,
+                    // in which case the error will already have been logged anyway.
+                    if (parser != null) {
+                        javaPackage = parser.getPackage();
+                        minSdkVersion = parser.getMinSdkVersionString();
+                    }
+                } catch (StreamException e) {
+                    handleStreamException(e);
 
                     return result;
-                }
+                } catch (ParserConfigurationException e) {
+                    String msg = String.format(
+                            "Bad parser configuration for %s: %s",
+                            manifestFile.getFullPath(),
+                            e.getMessage());
 
-                // Get the java package from the parser.
-                // This can be null if the parsing failed because the resource is out of sync,
-                // in which case the error will already have been logged anyway.
-                if (parser != null) {
-                    javaPackage = parser.getPackage();
-                    minSdkVersion = parser.getMinSdkVersionString();
+                    handleException(e, msg);
+                    return result;
+
+                } catch (SAXException e) {
+                    String msg = String.format(
+                            "Parser exception for %s: %s",
+                            manifestFile.getFullPath(),
+                            e.getMessage());
+
+                    handleException(e, msg);
+                    return result;
+                } catch (IOException e) {
+                    String msg = String.format(
+                            "I/O error for %s: %s",
+                            manifestFile.getFullPath(),
+                            e.getMessage());
+
+                    handleException(e, msg);
+                    return result;
                 }
             }
 
@@ -401,15 +526,6 @@ public class PreCompilerBuilder extends BaseBuilder {
                         BaseProjectHelper.markResource(manifestFile, AdtConstants.MARKER_ADT,
                                 msg, IMarker.SEVERITY_ERROR);
                         return result;
-                    } else if (minSdkValue < targetVersion.getApiLevel()) {
-                        // integer minSdk is not high enough for the target => warning
-                        String msg = String.format(
-                                "Attribute %1$s (%2$d) is lower than the project target API level (%3$d)",
-                                AndroidManifest.ATTRIBUTE_MIN_SDK_VERSION,
-                                minSdkValue, targetVersion.getApiLevel());
-                        AdtPlugin.printBuildToConsole(BuildVerbosity.VERBOSE, project, msg);
-                        BaseProjectHelper.markResource(manifestFile, AdtConstants.MARKER_ADT,
-                                msg, IMarker.SEVERITY_WARNING);
                     } else if (minSdkValue > targetVersion.getApiLevel()) {
                         // integer minSdk is too high for the target => warning
                         String msg = String.format(
@@ -503,12 +619,14 @@ public class PreCompilerBuilder extends BaseBuilder {
 
                 // force a clean
                 doClean(project, monitor);
+                mMustMergeManifest = true;
                 mMustCompileResources = true;
                 mMustCreateBuildConfig = true;
                 for (SourceProcessor processor : mProcessors) {
                     processor.prepareFullBuild(project);
                 }
 
+                saveProjectBooleanProperty(PROPERTY_MERGE_MANIFEST, mMustMergeManifest);
                 saveProjectBooleanProperty(PROPERTY_COMPILE_RESOURCES, mMustCompileResources);
                 saveProjectBooleanProperty(PROPERTY_COMPILE_BUILDCONFIG, mMustCreateBuildConfig);
             }
@@ -516,19 +634,59 @@ public class PreCompilerBuilder extends BaseBuilder {
             try {
                 handleBuildConfig(args);
             } catch (IOException e) {
-                AdtPlugin.log(e, "Failed to create BuildConfig class for project %s",
-                        getProject().getName());
+                handleException(e, "Failed to create BuildConfig class");
                 return result;
+            }
+
+            // merge the manifest
+            if (mMustMergeManifest) {
+                boolean enabled = MANIFEST_MERGER_ENABLED_DEFAULT;
+                String propValue = projectState.getProperty(MANIFEST_MERGER_PROPERTY);
+                if (propValue != null) {
+                    enabled = Boolean.valueOf(propValue);
+                }
+
+                if (mergeManifest(androidOutputFolder, libProjects, enabled) == false) {
+                    return result;
+                }
+            }
+
+            List<File> libProjectsOut = new ArrayList<File>(libProjects.size());
+            for (IProject libProject : libProjects) {
+                libProjectsOut.add(
+                        BaseProjectHelper.getAndroidOutputFolder(libProject)
+                            .getLocation().toFile());
             }
 
             // run the source processors
             int processorStatus = SourceProcessor.COMPILE_STATUS_NONE;
+
+            // get the renderscript target
+            int rsTarget = minSdkValue == -1 ? 11 : minSdkValue;
+            String rsTargetStr = projectState.getProperty(ProjectProperties.PROPERTY_RS_TARGET);
+            if (rsTargetStr != null) {
+                try {
+                    rsTarget = Integer.parseInt(rsTargetStr);
+                } catch (NumberFormatException e) {
+                    handleException(e, String.format(
+                            "Property %s is not an integer.",
+                            ProjectProperties.PROPERTY_RS_TARGET));
+                    return result;
+                }
+            }
+
+            mRenderScriptProcessor.setTargetApi(rsTarget);
+
             for (SourceProcessor processor : mProcessors) {
                 try {
                     processorStatus |= processor.compileFiles(this,
-                            project, projectTarget, minSdkValue, sourceFolderPathList, monitor);
+                            project, projectTarget, sourceFolderPathList,
+                            libProjectsOut, monitor);
                 } catch (Throwable t) {
-                    AdtPlugin.log(t, "Failed to run one of the source processor");
+                    handleException(t, String.format(
+                            "Failed to run %s. Check workspace log for detail.",
+                            processor.getClass().getName()));
+                    return result;
                 }
             }
 
@@ -543,11 +701,17 @@ public class PreCompilerBuilder extends BaseBuilder {
             // generate resources.
             boolean compiledTheResources = mMustCompileResources;
             if (mMustCompileResources) {
-                if (DEBUG) {
-                    System.out.println("\tcompiling resources!");
+                if (DEBUG_LOG) {
+                    AdtPlugin.log(IStatus.INFO, "%s compiling resources!", project.getName());
                 }
-                handleResources(project, javaPackage, projectTarget, manifestFile, libProjects,
-                        projectState.isLibrary());
+
+                IFile proguardFile = null;
+                if (projectState.getProperty(ProjectProperties.PROPERTY_PROGUARD_CONFIG) != null) {
+                    proguardFile = androidOutputFolder.getFile(AdtConstants.FN_AAPT_PROGUARD);
+                }
+
+                handleResources(project, javaPackage, projectTarget, manifestFile,
+                        libProjects, isLibrary, proguardFile);
             }
 
             if (processorStatus == SourceProcessor.COMPILE_STATUS_NONE &&
@@ -570,8 +734,8 @@ public class PreCompilerBuilder extends BaseBuilder {
     protected void clean(IProgressMonitor monitor) throws CoreException {
         super.clean(monitor);
 
-        if (DEBUG) {
-            System.out.println("CLEAN(PRE) " + getProject().getName());
+        if (DEBUG_LOG) {
+            AdtPlugin.log(IStatus.INFO, "%s CLEAN(PRE)", getProject().getName());
         }
 
         doClean(getProject(), monitor);
@@ -585,7 +749,7 @@ public class PreCompilerBuilder extends BaseBuilder {
                 Messages.Removing_Generated_Classes);
 
         // remove all the derived resources from the 'gen' source folder.
-        if (mGenFolder != null) {
+        if (mGenFolder != null && mGenFolder.exists()) {
             // gen folder should not be derived, but previous version could set it to derived
             // so we make sure this isn't the case (or it'll get deleted by the clean)
             mGenFolder.setDerived(false, monitor);
@@ -598,7 +762,15 @@ public class PreCompilerBuilder extends BaseBuilder {
         removeMarkersFromContainer(project, AdtConstants.MARKER_XML);
         removeMarkersFromContainer(project, AdtConstants.MARKER_AIDL);
         removeMarkersFromContainer(project, AdtConstants.MARKER_RENDERSCRIPT);
+        removeMarkersFromContainer(project, AdtConstants.MARKER_MANIFMERGER);
         removeMarkersFromContainer(project, AdtConstants.MARKER_ANDROID);
+
+        // Also clean up lint
+        EclipseLintClient.clearMarkers(project);
+
+        // clean the project repo
+        ProjectResources res = ResourceManager.getInstance().getProjectResources(project);
+        res.clear();
     }
 
     @Override
@@ -616,6 +788,7 @@ public class PreCompilerBuilder extends BaseBuilder {
             mDerivedProgressMonitor = new DerivedProgressMonitor(mGenFolder);
 
             // Load the current compile flags. We ask for true if not found to force a recompile.
+            mMustMergeManifest = loadProjectBooleanProperty(PROPERTY_MERGE_MANIFEST, true);
             mMustCompileResources = loadProjectBooleanProperty(PROPERTY_COMPILE_RESOURCES, true);
             mMustCreateBuildConfig = loadProjectBooleanProperty(PROPERTY_COMPILE_BUILDCONFIG, true);
             Boolean v = ProjectHelper.loadBooleanProperty(project, PROPERTY_BUILDCONFIG_MODE);
@@ -626,22 +799,28 @@ public class PreCompilerBuilder extends BaseBuilder {
                 mLastBuildConfigMode = v;
             }
 
-
-            IJavaProject javaProject = JavaCore.create(project);
-
-            // load the source processors
-            SourceProcessor aidlProcessor = new AidlProcessor(javaProject, mGenFolder);
-            mProcessors.add(aidlProcessor);
-            SourceProcessor renderScriptProcessor = new RenderScriptProcessor(javaProject,
-                    mGenFolder);
-            mProcessors.add(renderScriptProcessor);
         } catch (Throwable throwable) {
             AdtPlugin.log(throwable, "Failed to finish PrecompilerBuilder#startupOnInitialize()");
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private void handleBuildConfig(Map args) throws IOException, CoreException {
+    private void setupSourceProcessors(@NonNull IJavaProject javaProject,
+            @NonNull ProjectState projectState) {
+        if (mAidlProcessor == null) {
+            mAidlProcessor = new AidlProcessor(javaProject, mBuildToolInfo, mGenFolder);
+            mRenderScriptProcessor = new RenderScriptProcessor(javaProject, mBuildToolInfo,
+                    mGenFolder);
+            mProcessors.add(mAidlProcessor);
+            mProcessors.add(mRenderScriptProcessor);
+        } else {
+            mAidlProcessor.setBuildToolInfo(mBuildToolInfo);
+            mRenderScriptProcessor.setBuildToolInfo(mBuildToolInfo);
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private void handleBuildConfig(@SuppressWarnings("rawtypes") Map args)
+            throws IOException, CoreException {
         boolean debugMode = !args.containsKey(RELEASE_REQUESTED);
 
         BuildConfigGenerator generator = new BuildConfigGenerator(
@@ -665,6 +844,10 @@ public class PreCompilerBuilder extends BaseBuilder {
         }
 
         if (mMustCreateBuildConfig) {
+            if (DEBUG_LOG) {
+                AdtPlugin.log(IStatus.INFO, "%s generating BuilderConfig!", getProject().getName());
+            }
+
             AdtPlugin.printBuildToConsole(BuildVerbosity.VERBOSE, getProject(),
                     String.format("Generating %1$s...", BuildConfigGenerator.BUILD_CONFIG_NAME));
             generator.generate();
@@ -675,6 +858,100 @@ public class PreCompilerBuilder extends BaseBuilder {
         }
     }
 
+    private boolean mergeManifest(IFolder androidOutFolder, List<IProject> libProjects,
+            boolean enabled) throws CoreException {
+        if (DEBUG_LOG) {
+            AdtPlugin.log(IStatus.INFO, "%s merging manifests!", getProject().getName());
+        }
+
+        IFile outFile = androidOutFolder.getFile(SdkConstants.FN_ANDROID_MANIFEST_XML);
+        IFile manifest = getProject().getFile(SdkConstants.FN_ANDROID_MANIFEST_XML);
+
+        // remove existing markers from the manifest.
+        // FIXME: only remove from manifest once the markers are put there.
+        removeMarkersFromResource(getProject(), AdtConstants.MARKER_MANIFMERGER);
+
+        // If the merging is not enabled or if there's no library then we simply copy the
+        // manifest over.
+        if (enabled == false || libProjects.size() == 0) {
+            try {
+                new FileOp().copyFile(manifest.getLocation().toFile(),
+                        outFile.getLocation().toFile());
+
+                outFile.refreshLocal(IResource.DEPTH_INFINITE, mDerivedProgressMonitor);
+
+                saveProjectBooleanProperty(PROPERTY_MERGE_MANIFEST, mMustMergeManifest = false);
+            } catch (IOException e) {
+                handleException(e, "Failed to copy Manifest");
+                return false;
+            }
+        } else {
+            final ArrayList<String> errors = new ArrayList<String>();
+
+            // TODO change MergerLog.wrapSdkLog by a custom IMergerLog that will create
+            // and maintain error markers.
+            ManifestMerger merger = new ManifestMerger(
+                MergerLog.wrapSdkLog(new ILogger() {
+                    @Override
+                    public void warning(@NonNull String warningFormat, Object... args) {
+                        AdtPlugin.printToConsole(getProject(), String.format(warningFormat, args));
+                    }
+
+                    @Override
+                    public void info(@NonNull String msgFormat, Object... args) {
+                        AdtPlugin.printToConsole(getProject(), String.format(msgFormat, args));
+                    }
+
+                    @Override
+                    public void verbose(@NonNull String msgFormat, Object... args) {
+                        info(msgFormat, args);
+                    }
+
+                    @Override
+                    public void error(@Nullable Throwable t, @Nullable String errorFormat,
+                            Object... args) {
+                        errors.add(String.format(errorFormat, args));
+                    }
+                }),
+                new AdtManifestMergeCallback());
+
+            File[] libManifests = new File[libProjects.size()];
+            int libIndex = 0;
+            for (IProject lib : libProjects) {
+                libManifests[libIndex++] = lib.getFile(SdkConstants.FN_ANDROID_MANIFEST_XML)
+                        .getLocation().toFile();
+            }
+
+            if (merger.process(
+                    outFile.getLocation().toFile(),
+                    manifest.getLocation().toFile(),
+                    libManifests,
+                    null /*injectAttributes*/, null /*packageOverride*/) == false) {
+                if (errors.size() > 1) {
+                    StringBuilder sb = new StringBuilder();
+                    for (String s : errors) {
+                        sb.append(s).append('\n');
+                    }
+
+                    markProject(AdtConstants.MARKER_MANIFMERGER, sb.toString(),
+                            IMarker.SEVERITY_ERROR);
+
+                } else if (errors.size() == 1) {
+                    markProject(AdtConstants.MARKER_MANIFMERGER, errors.get(0),
+                            IMarker.SEVERITY_ERROR);
+                } else {
+                    markProject(AdtConstants.MARKER_MANIFMERGER, "Unknown error merging manifest",
+                            IMarker.SEVERITY_ERROR);
+                }
+                return false;
+            }
+
+            outFile.refreshLocal(IResource.DEPTH_INFINITE, mDerivedProgressMonitor);
+            saveProjectBooleanProperty(PROPERTY_MERGE_MANIFEST, mMustMergeManifest = false);
+        }
+
+        return true;
+    }
 
     /**
      * Handles resource changes and regenerate whatever files need regenerating.
@@ -688,7 +965,7 @@ public class PreCompilerBuilder extends BaseBuilder {
      * @throws AbortBuildException
      */
     private void handleResources(IProject project, String javaPackage, IAndroidTarget projectTarget,
-            IFile manifest, List<IProject> libProjects, boolean isLibrary)
+            IFile manifest, List<IProject> libProjects, boolean isLibrary, IFile proguardFile)
             throws CoreException, AbortBuildException {
         // get the resource folder
         IFolder resFolder = project.getFolder(AdtConstants.WS_RESOURCES);
@@ -717,8 +994,8 @@ public class PreCompilerBuilder extends BaseBuilder {
             IFolder mainPackageFolder = getGenManifestPackageFolder();
 
             // handle libraries
-            ArrayList<IFolder> libResFolders = new ArrayList<IFolder>();
-            StringBuilder libJavaPackages = null;
+            ArrayList<IFolder> libResFolders = Lists.newArrayList();
+            ArrayList<Pair<File, String>> libRFiles = Lists.newArrayList();
             if (libProjects != null) {
                 for (IProject lib : libProjects) {
                     IFolder libResFolder = lib.getFolder(SdkConstants.FD_RES);
@@ -727,28 +1004,29 @@ public class PreCompilerBuilder extends BaseBuilder {
                     }
 
                     try {
+                        // get the package of the library, and if it's different form the
+                        // main project, generate the R class for it too.
                         String libJavaPackage = AndroidManifest.getPackage(new IFolderWrapper(lib));
                         if (libJavaPackage.equals(javaPackage) == false) {
-                            if (libJavaPackages == null) {
-                                libJavaPackages = new StringBuilder(libJavaPackage);
-                            } else {
-                                libJavaPackages.append(":");
-                                libJavaPackages.append(libJavaPackage);
-                            }
+
+                            IFolder libOutput = BaseProjectHelper.getAndroidOutputFolder(lib);
+                            File libOutputFolder = libOutput.getLocation().toFile();
+
+                            libRFiles.add(Pair.of(
+                                    new File(libOutputFolder, "R.txt"),
+                                    libJavaPackage));
+
                         }
                     } catch (Exception e) {
                     }
                 }
             }
 
-            String libPackages = null;
-            if (libJavaPackages != null) {
-                libPackages = libJavaPackages.toString();
-
-            }
+            String proguardFilePath = proguardFile != null ?
+                    proguardFile.getLocation().toOSString(): null;
 
             execAapt(project, projectTarget, osOutputPath, osResPath, osManifestPath,
-                    mainPackageFolder, libResFolders, libPackages, isLibrary);
+                    mainPackageFolder, libResFolders, libRFiles, isLibrary, proguardFilePath);
         }
     }
 
@@ -765,25 +1043,29 @@ public class PreCompilerBuilder extends BaseBuilder {
      * If <var>customJavaPackage</var> is not null, this must match the new destination triggered
      * by its value.
      * @param libResFolders the list of res folders for the library.
-     * @param libraryPackages an optional list of javapackages to replace the main project java package.
-     * can be null.
+     * @param libRFiles a list of R files for the libraries.
      * @param isLibrary if the project is a library project
+     * @param proguardFile an optional path to store proguard information
      * @throws AbortBuildException
      */
+    @SuppressWarnings("deprecation")
     private void execAapt(IProject project, IAndroidTarget projectTarget, String osOutputPath,
             String osResPath, String osManifestPath, IFolder packageFolder,
-            ArrayList<IFolder> libResFolders, String libraryPackages, boolean isLibrary)
+            ArrayList<IFolder> libResFolders, List<Pair<File, String>> libRFiles,
+            boolean isLibrary, String proguardFile)
             throws AbortBuildException {
 
         // We actually need to delete the manifest.java as it may become empty and
         // in this case aapt doesn't generate an empty one, but instead doesn't
         // touch it.
-        IFile manifestJavaFile = packageFolder.getFile(AdtConstants.FN_MANIFEST_CLASS);
+        IFile manifestJavaFile = packageFolder.getFile(SdkConstants.FN_MANIFEST_CLASS);
         manifestJavaFile.getLocation().toFile().delete();
 
         // launch aapt: create the command line
         ArrayList<String> array = new ArrayList<String>();
-        String aaptPath = projectTarget.getPath(IAndroidTarget.AAPT);
+
+        String aaptPath = mBuildToolInfo.getPath(BuildToolInfo.PathId.AAPT);
+
         array.add(aaptPath);
         array.add("package"); //$NON-NLS-1$
         array.add("-m"); //$NON-NLS-1$
@@ -799,9 +1081,13 @@ public class PreCompilerBuilder extends BaseBuilder {
             array.add("--auto-add-overlay"); //$NON-NLS-1$
         }
 
-        if (libraryPackages != null) {
-            array.add("--extra-packages"); //$NON-NLS-1$
-            array.add(libraryPackages);
+        // If a library or has libraries, generate a text version of the R symbols.
+        File outputFolder = BaseProjectHelper.getAndroidOutputFolder(project).getLocation()
+                .toFile();
+
+        if (isLibrary || !libRFiles.isEmpty()) {
+            array.add("--output-text-symbols"); //$NON-NLS-1$
+            array.add(outputFolder.getAbsolutePath());
         }
 
         array.add("-J"); //$NON-NLS-1$
@@ -818,6 +1104,12 @@ public class PreCompilerBuilder extends BaseBuilder {
         array.add("-I"); //$NON-NLS-1$
         array.add(projectTarget.getPath(IAndroidTarget.ANDROID_JAR));
 
+        // use the proguard file
+        if (proguardFile != null && proguardFile.length() > 0) {
+            array.add("-G");
+            array.add(proguardFile);
+        }
+
         if (AdtPrefs.getPrefs().getBuildVerbosity() == BuildVerbosity.VERBOSE) {
             StringBuilder sb = new StringBuilder();
             for (String c : array) {
@@ -829,38 +1121,43 @@ public class PreCompilerBuilder extends BaseBuilder {
         }
 
         // launch
-        int execError = 1;
         try {
             // launch the command line process
             Process process = Runtime.getRuntime().exec(
                     array.toArray(new String[array.size()]));
 
             // list to store each line of stderr
-            ArrayList<String> results = new ArrayList<String>();
+            ArrayList<String> stdErr = new ArrayList<String>();
 
             // get the output and return code from the process
-            execError = grabProcessOutput(process, results);
+            int returnCode = grabProcessOutput(process, stdErr);
 
             // attempt to parse the error output
-            boolean parsingError = AaptParser.parseOutput(results, project);
+            boolean parsingError = AaptParser.parseOutput(stdErr, project);
 
             // if we couldn't parse the output we display it in the console.
             if (parsingError) {
-                if (execError != 0) {
-                    AdtPlugin.printErrorToConsole(project, results.toArray());
+                if (returnCode != 0) {
+                    AdtPlugin.printErrorToConsole(project, stdErr.toArray());
                 } else {
                     AdtPlugin.printBuildToConsole(BuildVerbosity.NORMAL,
-                            project, results.toArray());
+                            project, stdErr.toArray());
                 }
             }
 
-            if (execError != 0) {
+            if (returnCode != 0) {
                 // if the exec failed, and we couldn't parse the error output
                 // (and therefore not all files that should have been marked,
                 // were marked), we put a generic marker on the project and abort.
                 if (parsingError) {
                     markProject(AdtConstants.MARKER_ADT,
                             Messages.Unparsed_AAPT_Errors, IMarker.SEVERITY_ERROR);
+                } else if (stdErr.size() == 0) {
+                    // no parsing error because sdterr was empty. We still need to put
+                    // a marker otherwise there's no user visible feedback.
+                    markProject(AdtConstants.MARKER_ADT,
+                            String.format(Messages.AAPT_Exec_Error_d, returnCode),
+                            IMarker.SEVERITY_ERROR);
                 }
 
                 AdtPlugin.printBuildToConsole(BuildVerbosity.VERBOSE, project,
@@ -869,10 +1166,67 @@ public class PreCompilerBuilder extends BaseBuilder {
                 // abort if exec failed.
                 throw new AbortBuildException();
             }
+
+            // now if the project has libraries, R needs to be created for each libraries
+            // unless this is a library.
+            if (isLibrary == false && !libRFiles.isEmpty()) {
+                File rFile = new File(outputFolder, SdkConstants.FN_RESOURCE_TEXT);
+                // if the project has no resources, the file could not exist.
+                if (rFile.isFile()) {
+                    // Load the full symbols from the full R.txt file.
+                    SymbolLoader fullSymbolValues = new SymbolLoader(rFile);
+                    fullSymbolValues.load();
+
+                    Multimap<String, SymbolLoader> libMap = ArrayListMultimap.create();
+
+                    // First pass processing the libraries, collecting them by packageName,
+                    // and ignoring the ones that have the same package name as the application
+                    // (since that R class was already created).
+
+                    for (Pair<File, String> lib : libRFiles) {
+                        String libPackage = lib.getSecond();
+                        File rText = lib.getFirst();
+
+                        if (rText.isFile()) {
+                            // load the lib symbols
+                            SymbolLoader libSymbols = new SymbolLoader(rText);
+                            libSymbols.load();
+
+                            // store these symbols by associating them with the package name.
+                            libMap.put(libPackage, libSymbols);
+                        }
+                    }
+
+                    // now loop on all the package names, merge all the symbols to write,
+                    // and write them
+                    for (String packageName : libMap.keySet()) {
+                        Collection<SymbolLoader> symbols = libMap.get(packageName);
+
+                        SymbolWriter writer = new SymbolWriter(osOutputPath, packageName,
+                                fullSymbolValues);
+                        for (SymbolLoader symbolLoader : symbols) {
+                            writer.addSymbolsToWrite(symbolLoader);
+                        }
+                        writer.write();
+                    }
+                }
+            }
+
         } catch (IOException e1) {
             // something happen while executing the process,
             // mark the project and exit
-            String msg = String.format(Messages.AAPT_Exec_Error, array.get(0));
+            String msg;
+            String path = array.get(0);
+            if (!new File(path).exists()) {
+                msg = String.format(Messages.AAPT_Exec_Error_s, path);
+            } else {
+                String description = e1.getLocalizedMessage();
+                if (e1.getCause() != null && e1.getCause() != e1) {
+                    description = description + ": " + e1.getCause().getLocalizedMessage();
+                }
+                msg = String.format(Messages.AAPT_Exec_Error_Other_s, description);
+            }
+
             markProject(AdtConstants.MARKER_ADT, msg, IMarker.SEVERITY_ERROR);
 
             // Add workaround for the Linux problem described here:
@@ -898,7 +1252,7 @@ public class PreCompilerBuilder extends BaseBuilder {
         } catch (InterruptedException e) {
             // we got interrupted waiting for the process to end...
             // mark the project and exit
-            String msg = String.format(Messages.AAPT_Exec_Error, array.get(0));
+            String msg = String.format(Messages.AAPT_Exec_Error_s, array.get(0));
             markProject(AdtConstants.MARKER_ADT, msg, IMarker.SEVERITY_ERROR);
 
             // This interrupts the build.

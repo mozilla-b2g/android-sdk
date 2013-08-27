@@ -15,9 +15,9 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.layout.refactoring;
 
-import static com.android.ide.common.layout.LayoutConstants.FQCN_GRID_LAYOUT;
-import static com.android.ide.common.layout.LayoutConstants.FQCN_LINEAR_LAYOUT;
-import static com.android.ide.common.layout.LayoutConstants.FQCN_RELATIVE_LAYOUT;
+import static com.android.SdkConstants.FQCN_GRID_LAYOUT;
+import static com.android.SdkConstants.FQCN_LINEAR_LAYOUT;
+import static com.android.SdkConstants.FQCN_RELATIVE_LAYOUT;
 
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.CanvasViewInfo;
 
@@ -107,11 +107,16 @@ public class ChangeLayoutRefactoringTest extends RefactoringTest {
         checkRefactoring(newLayoutType, basename, flatten, null);
     }
 
+    @Override
+    protected int getMinSdk() {
+        return 14;
+    }
+
     private void checkRefactoring(String newLayoutType, String basename,
             boolean flatten, String initialAttributes) throws Exception {
         IFile file = getLayoutFile(getProject(), basename);
         TestContext info = setupTestContext(file, basename);
-        TestLayoutEditor layoutEditor = info.mLayoutEditor;
+        TestLayoutEditorDelegate layoutEditor = info.mLayoutEditorDelegate;
         CanvasViewInfo rootView = info.mRootView;
         Element element = info.mElement;
 

@@ -16,6 +16,9 @@
 
 package com.android.ide.eclipse.adt.internal.project;
 
+import static com.android.sdklib.internal.project.ProjectProperties.PROPERTY_SDK;
+
+import com.android.SdkConstants;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.AndroidPrintStream;
@@ -24,16 +27,19 @@ import com.android.ide.eclipse.adt.internal.build.DexException;
 import com.android.ide.eclipse.adt.internal.build.NativeLibInJarException;
 import com.android.ide.eclipse.adt.internal.build.ProguardExecException;
 import com.android.ide.eclipse.adt.internal.build.ProguardResultException;
+import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
 import com.android.ide.eclipse.adt.internal.sdk.ProjectState;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.ide.eclipse.adt.io.IFileWrapper;
-import com.android.sdklib.SdkConstants;
+import com.android.sdklib.BuildToolInfo;
 import com.android.sdklib.build.ApkCreationException;
 import com.android.sdklib.build.DuplicateFileException;
 import com.android.sdklib.internal.project.ProjectProperties;
-import com.android.sdklib.xml.AndroidManifest;
+import com.android.tools.lint.detector.api.LintUtils;
+import com.android.xml.AndroidManifest;
 
 import org.eclipse.core.resources.IFile;
+import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.IncrementalProjectBuilder;
@@ -57,6 +63,9 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
@@ -65,8 +74,10 @@ import java.util.jar.JarOutputStream;
  * Export helper to export release version of APKs.
  */
 public final class ExportHelper {
-
-    private final static String TEMP_PREFIX = "android_";  //$NON-NLS-1$
+    private static final String HOME_PROPERTY = "user.home";                    //$NON-NLS-1$
+    private static final String HOME_PROPERTY_REF = "${" + HOME_PROPERTY + '}'; //$NON-NLS-1$
+    private static final String SDK_PROPERTY_REF = "${" + PROPERTY_SDK + '}';   //$NON-NLS-1$
+    private final static String TEMP_PREFIX = "android_";                       //$NON-NLS-1$
 
     /**
      * Exports a release version of the application created by the given project.
@@ -74,7 +85,8 @@ public final class ExportHelper {
      * @param outputFile the file to write
      * @param key the key to used for signing. Can be null.
      * @param certificate the certificate used for signing. Can be null.
-     * @param monitor
+     * @param monitor progress monitor
+     * @throws CoreException if an error occurs
      */
     public static void exportReleaseApk(IProject project, File outputFile, PrivateKey key,
             X509Certificate certificate, IProgressMonitor monitor) throws CoreException {
@@ -112,27 +124,54 @@ public final class ExportHelper {
                 }
             });
 
-            BuildHelper helper = new BuildHelper(project,
+            ProjectState projectState = Sdk.getProjectState(project);
+
+            // get the jumbo mode option
+            String forceJumboStr = projectState.getProperty(AdtConstants.DEX_OPTIONS_FORCEJUMBO);
+            Boolean jumbo = Boolean.valueOf(forceJumboStr);
+
+            String dexMergerStr = projectState.getProperty(AdtConstants.DEX_OPTIONS_DISABLE_MERGER);
+            Boolean dexMerger = Boolean.valueOf(dexMergerStr);
+
+            BuildToolInfo buildToolInfo = projectState.getBuildToolInfo();
+            if (buildToolInfo == null) {
+                buildToolInfo = Sdk.getCurrent().getLatestBuildTool();
+            }
+
+            if (buildToolInfo == null) {
+                throw new CoreException(new Status(IStatus.ERROR, AdtPlugin.PLUGIN_ID,
+                        "No Build Tools installed in the SDK."));
+            }
+
+            BuildHelper helper = new BuildHelper(project, buildToolInfo,
                     fakeStream, fakeStream,
-                    debugMode, false /*verbose*/);
+                    jumbo.booleanValue(),
+                    dexMerger.booleanValue(),
+                    debugMode, false /*verbose*/,
+                    null /*resourceMarker*/);
 
             // get the list of library projects
-            ProjectState projectState = Sdk.getProjectState(project);
             List<IProject> libProjects = projectState.getFullLibraryProjects();
 
             // Step 1. Package the resources.
 
             // tmp file for the packaged resource file. To not disturb the incremental builders
             // output, all intermediary files are created in tmp files.
-            File resourceFile = File.createTempFile(TEMP_PREFIX, AdtConstants.DOT_RES);
+            File resourceFile = File.createTempFile(TEMP_PREFIX, SdkConstants.DOT_RES);
             resourceFile.deleteOnExit();
 
             // Make sure the PNG crunch cache is up to date
             helper.updateCrunchCache();
 
+            // get the merged manifest
+            IFolder androidOutputFolder = BaseProjectHelper.getAndroidOutputFolder(project);
+            IFile mergedManifestFile = androidOutputFolder.getFile(
+                    SdkConstants.FN_ANDROID_MANIFEST_XML);
+
+
             // package the resources.
             helper.packageResources(
-                    project.getFile(SdkConstants.FN_ANDROID_MANIFEST_XML),
+                    mergedManifestFile,
                     libProjects,
                     null,   // res filter
                     0,      // versionCode
@@ -142,7 +181,7 @@ public final class ExportHelper {
             // Step 2. Convert the byte code to Dalvik bytecode
 
             // tmp file for the packaged resource file.
-            File dexFile = File.createTempFile(TEMP_PREFIX, AdtConstants.DOT_DEX);
+            File dexFile = File.createTempFile(TEMP_PREFIX, SdkConstants.DOT_DEX);
             dexFile.deleteOnExit();
 
             ProjectState state = Sdk.getProjectState(project);
@@ -150,59 +189,93 @@ public final class ExportHelper {
                     ProjectProperties.PROPERTY_PROGUARD_CONFIG);
 
             boolean runProguard = false;
-            File proguardConfigFile = null;
+            List<File> proguardConfigFiles = null;
             if (proguardConfig != null && proguardConfig.length() > 0) {
-                proguardConfigFile = new File(proguardConfig);
-                if (proguardConfigFile.isAbsolute() == false) {
-                    proguardConfigFile = new File(project.getLocation().toFile(), proguardConfig);
+                // Be tolerant with respect to file and path separators just like
+                // Ant is. Allow "/" in the property file to mean whatever the file
+                // separator character is:
+                if (File.separatorChar != '/' && proguardConfig.indexOf('/') != -1) {
+                    proguardConfig = proguardConfig.replace('/', File.separatorChar);
                 }
-                runProguard = proguardConfigFile.isFile();
+
+                Iterable<String> paths = LintUtils.splitPath(proguardConfig);
+                for (String path : paths) {
+                    if (path.startsWith(SDK_PROPERTY_REF)) {
+                        path = AdtPrefs.getPrefs().getOsSdkFolder() +
+                                path.substring(SDK_PROPERTY_REF.length());
+                    } else if (path.startsWith(HOME_PROPERTY_REF)) {
+                        path = System.getProperty(HOME_PROPERTY) +
+                                path.substring(HOME_PROPERTY_REF.length());
+                    }
+                    File proguardConfigFile = new File(path);
+                    if (proguardConfigFile.isAbsolute() == false) {
+                        proguardConfigFile = new File(project.getLocation().toFile(), path);
+                    }
+                    if (proguardConfigFile.isFile()) {
+                        if (proguardConfigFiles == null) {
+                            proguardConfigFiles = new ArrayList<File>();
+                        }
+                        proguardConfigFiles.add(proguardConfigFile);
+                        runProguard = true;
+                    } else {
+                        throw new CoreException(new Status(IStatus.ERROR, AdtPlugin.PLUGIN_ID,
+                                "Invalid proguard configuration file path " + proguardConfigFile
+                                + " does not exist or is not a regular file", null));
+                    }
+                }
+
+                // get the proguard file output by aapt
+                if (proguardConfigFiles != null) {
+                    IFile proguardFile = androidOutputFolder.getFile(AdtConstants.FN_AAPT_PROGUARD);
+                    proguardConfigFiles.add(proguardFile.getLocation().toFile());
+                }
             }
 
-            String[] dxInput;
+            Collection<String> dxInput;
 
             if (runProguard) {
-                // the output of the main project (and any java-only project dependency)
-                String[] projectOutputs = helper.getProjectJavaOutputs();
+                // get all the compiled code paths. This will contain both project output
+                // folder and jar files.
+                Collection<String> paths = helper.getCompiledCodePaths();
 
-                // create a jar from the output of these projects
-                File inputJar = File.createTempFile(TEMP_PREFIX, AdtConstants.DOT_JAR);
+                // create a jar file containing all the project output (as proguard cannot
+                // process folders of .class files).
+                File inputJar = File.createTempFile(TEMP_PREFIX, SdkConstants.DOT_JAR);
                 inputJar.deleteOnExit();
-
                 JarOutputStream jos = new JarOutputStream(new FileOutputStream(inputJar));
-                for (String po : projectOutputs) {
-                    File root = new File(po);
-                    if (root.exists()) {
+
+                // a list of the other paths (jar files.)
+                List<String> jars = new ArrayList<String>();
+
+                for (String path : paths) {
+                    File root = new File(path);
+                    if (root.isDirectory()) {
                         addFileToJar(jos, root, root);
+                    } else if (root.isFile()) {
+                        jars.add(path);
                     }
                 }
                 jos.close();
 
-                // get the other jar files
-                String[] jarFiles = helper.getCompiledCodePaths(false /*includeProjectOutputs*/,
-                        null /*resourceMarker*/);
-
                 // destination file for proguard
-                File obfuscatedJar = File.createTempFile(TEMP_PREFIX, AdtConstants.DOT_JAR);
+                File obfuscatedJar = File.createTempFile(TEMP_PREFIX, SdkConstants.DOT_JAR);
                 obfuscatedJar.deleteOnExit();
 
                 // run proguard
-                helper.runProguard(proguardConfigFile, inputJar, jarFiles, obfuscatedJar,
+                helper.runProguard(proguardConfigFiles, inputJar, jars, obfuscatedJar,
                         new File(project.getLocation().toFile(), SdkConstants.FD_PROGUARD));
 
+                helper.setProguardOutput(obfuscatedJar.getAbsolutePath());
+
                 // dx input is proguard's output
-                dxInput = new String[] { obfuscatedJar.getAbsolutePath() };
+                dxInput = Collections.singletonList(obfuscatedJar.getAbsolutePath());
             } else {
                 // no proguard, simply get all the compiled code path: project output(s) +
                 // jar file(s)
-                dxInput = helper.getCompiledCodePaths(true /*includeProjectOutputs*/,
-                        null /*resourceMarker*/);
+                dxInput = helper.getCompiledCodePaths();
             }
 
             IJavaProject javaProject = JavaCore.create(project);
-            List<IProject> javaProjects = ProjectHelper.getReferencedProjects(project);
-            List<IJavaProject> referencedJavaProjects = BuildHelper.getJavaProjects(
-                    javaProjects);
 
             helper.executeDx(javaProject, dxInput, dexFile.getAbsolutePath());
 
@@ -212,9 +285,7 @@ public final class ExportHelper {
                     resourceFile.getAbsolutePath(),
                     dexFile.getAbsolutePath(),
                     outputFile.getAbsolutePath(),
-                    javaProject,
                     libProjects,
-                    referencedJavaProjects,
                     key,
                     certificate,
                     null); //resourceMarker
@@ -277,7 +348,7 @@ public final class ExportHelper {
         Shell shell = Display.getCurrent().getActiveShell();
 
         // create a default file name for the apk.
-        String fileName = project.getName() + AdtConstants.DOT_ANDROID_PACKAGE;
+        String fileName = project.getName() + SdkConstants.DOT_ANDROID_PACKAGE;
 
         // Pop up the file save window to get the file location
         FileDialog fileDialog = new FileDialog(shell, SWT.SAVE);
@@ -329,17 +400,12 @@ public final class ExportHelper {
     private static void addFileToJar(JarOutputStream jar, File file, File rootDirectory)
             throws IOException {
         if (file.isDirectory()) {
-            for (File child: file.listFiles()) {
-                addFileToJar(jar, child, rootDirectory);
+            if (file.getName().equals("META-INF") == false) {
+                for (File child: file.listFiles()) {
+                    addFileToJar(jar, child, rootDirectory);
+                }
             }
-
         } else if (file.isFile()) {
-            // check the extension
-            String name = file.getName();
-            if (name.toLowerCase().endsWith(AdtConstants.DOT_CLASS) == false) {
-                return;
-            }
-
             String rootPath = rootDirectory.getAbsolutePath();
             String path = file.getAbsolutePath();
             path = path.substring(rootPath.length()).replace("\\", "/"); //$NON-NLS-1$ //$NON-NLS-2$

@@ -16,11 +16,11 @@
 
 package com.android.ide.eclipse.adt.internal.editors.descriptors;
 
+import com.android.SdkConstants;
 import com.android.ide.common.api.IAttributeInfo;
 import com.android.ide.eclipse.adt.internal.editors.IconFactory;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiAttributeNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
-import com.android.sdklib.SdkConstants;
 
 import org.eclipse.swt.graphics.Image;
 
@@ -114,6 +114,7 @@ public abstract class AttributeDescriptor implements Comparable<AttributeDescrip
     public abstract UiAttributeNode createUiNode(UiElementNode uiParent);
 
     // Implements Comparable<AttributeDescriptor>
+    @Override
     public int compareTo(AttributeDescriptor other) {
         return mXmlLocalName.compareTo(other.mXmlLocalName);
     }

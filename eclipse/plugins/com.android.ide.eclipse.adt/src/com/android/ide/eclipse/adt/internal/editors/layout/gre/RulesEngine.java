@@ -16,9 +16,12 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.gre;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_WIDGET_PREFIX;
-import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.VIEW_MERGE;
+import static com.android.SdkConstants.ANDROID_WIDGET_PREFIX;
+import static com.android.SdkConstants.VIEW_MERGE;
+import static com.android.SdkConstants.VIEW_TAG;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.api.DropFeedback;
 import com.android.ide.common.api.IDragElement;
 import com.android.ide.common.api.IGraphics;
@@ -154,6 +157,7 @@ public class RulesEngine {
      * @return Null if the rule failed, there's no rule or the rule does not provide
      *   any custom menu actions. Otherwise, a list of {@link RuleAction}.
      */
+    @Nullable
     public List<RuleAction> callGetContextMenu(NodeProxy selectedNode) {
         // try to find a rule for this element's FQCN
         IViewRule rule = loadRule(selectedNode.getNode());
@@ -168,6 +172,30 @@ public class RulesEngine {
                 return actions;
             } catch (Exception e) {
                 AdtPlugin.log(e, "%s.getContextMenu() failed: %s",
+                        rule.getClass().getSimpleName(),
+                        e.toString());
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Calls the selected node to return its default action
+     *
+     * @param selectedNode the node to apply the action to
+     * @return the default action id
+     */
+    public String callGetDefaultActionId(@NonNull NodeProxy selectedNode) {
+        // try to find a rule for this element's FQCN
+        IViewRule rule = loadRule(selectedNode.getNode());
+
+        if (rule != null) {
+            try {
+                mInsertType = InsertType.CREATE;
+                return rule.getDefaultActionId(selectedNode);
+            } catch (Exception e) {
+                AdtPlugin.log(e, "%s.getDefaultAction() failed: %s",
                         rule.getClass().getSimpleName(),
                         e.toString());
             }
@@ -368,9 +396,30 @@ public class RulesEngine {
      * @param targetNode The first node selected.
      * @param targetView The view object for the target node, or null if not known
      * @param pastedElements The elements being pasted.
+     * @return the parent node the paste was applied into
      */
-    public void callOnPaste(NodeProxy targetNode, Object targetView,
+    public NodeProxy callOnPaste(NodeProxy targetNode, Object targetView,
             SimpleElement[] pastedElements) {
+
+        // Find a target which accepts children. If you for example select a button
+        // and attempt to paste, this will reselect the parent of the button as the paste
+        // target. (This is a loop rather than just checking the direct parent since
+        // we will soon ask each child whether they are *willing* to accept the new child.
+        // A ScrollView for example, which only accepts one child, might also say no
+        // and delegate to its parent in turn.
+        INode parent = targetNode;
+        while (parent instanceof NodeProxy) {
+            NodeProxy np = (NodeProxy) parent;
+            if (np.getNode() != null && np.getNode().getDescriptor() != null) {
+                ElementDescriptor descriptor = np.getNode().getDescriptor();
+                if (descriptor.hasChildren()) {
+                    targetNode = np;
+                    break;
+                }
+            }
+            parent = parent.getParent();
+        }
+
         // try to find a rule for this element's FQCN
         IViewRule rule = loadRule(targetNode.getNode());
 
@@ -385,6 +434,8 @@ public class RulesEngine {
                         e.toString());
             }
         }
+
+        return targetNode;
     }
 
     // ---- Resize operations ----
@@ -482,6 +533,7 @@ public class RulesEngine {
         // fill the parent.)
         if (!editor.isEditXmlModelPending()) {
             editor.wrapEditXmlModel(new Runnable() {
+                @Override
                 public void run() {
                     callCreateHooks(editor, insertType,
                             parentRule, parentNode, childRule, newNode);
@@ -527,14 +579,15 @@ public class RulesEngine {
 
     // ---- Deletion ----
 
-    public void callOnRemovingChildren(AndroidXmlEditor editor, NodeProxy parentNode,
+    public void callOnRemovingChildren(NodeProxy parentNode,
             List<INode> children) {
         if (parentNode != null) {
             UiViewElementNode parentUiNode = parentNode.getNode();
             IViewRule parentRule = loadRule(parentUiNode);
             if (parentRule != null) {
                 try {
-                    parentRule.onRemovingChildren(children, parentNode);
+                    parentRule.onRemovingChildren(children, parentNode,
+                            mInsertType == InsertType.MOVE_WITHIN);
                 } catch (Exception e) {
                     AdtPlugin.log(e, "%s.onDispose() failed: %s",
                             parentRule.getClass().getSimpleName(),
@@ -740,6 +793,12 @@ public class RulesEngine {
                 String baseName = realFqcn.substring(dotIndex+1);
                 // Capitalize rule class name to match naming conventions, if necessary (<merge>)
                 if (Character.isLowerCase(baseName.charAt(0))) {
+                    if (baseName.equals(VIEW_TAG)) {
+                        // Hack: ViewRule is generic for the "View" class, so we can't use it
+                        // for the special XML "view" tag (lowercase); instead, the rule is
+                        // named "ViewTagRule" instead.
+                        baseName = "ViewTag"; //$NON-NLS-1$
+                    }
                     baseName = Character.toUpperCase(baseName.charAt(0)) + baseName.substring(1);
                 }
                 ruleClassName = packageName + "." + //$NON-NLS-1$

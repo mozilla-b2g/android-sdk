@@ -15,25 +15,42 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
-import static com.android.ide.common.layout.LayoutConstants.FQCN_SPACE;
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ATTR_ID;
+import static com.android.SdkConstants.FQCN_SPACE;
+import static com.android.SdkConstants.FQCN_SPACE_V7;
+import static com.android.SdkConstants.NEW_ID_PREFIX;
 import static com.android.ide.eclipse.adt.internal.editors.layout.gle2.SelectionHandle.PIXEL_MARGIN;
 import static com.android.ide.eclipse.adt.internal.editors.layout.gle2.SelectionHandle.PIXEL_RADIUS;
 
+import com.android.SdkConstants;
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.api.INode;
+import com.android.ide.common.api.RuleAction;
+import com.android.ide.common.layout.BaseViewRule;
 import com.android.ide.common.layout.GridLayoutRule;
+import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
+import com.android.ide.eclipse.adt.internal.editors.layout.gre.NodeFactory;
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.NodeProxy;
+import com.android.ide.eclipse.adt.internal.editors.layout.gre.RulesEngine;
 import com.android.ide.eclipse.adt.internal.editors.layout.uimodel.UiViewElementNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
-import com.android.sdklib.SdkConstants;
-import com.android.util.Pair;
+import com.android.ide.eclipse.adt.internal.refactorings.core.RenameResourceWizard;
+import com.android.ide.eclipse.adt.internal.refactorings.core.RenameResult;
+import com.android.ide.eclipse.adt.internal.resources.ResourceNameValidator;
+import com.android.resources.ResourceType;
+import com.android.utils.Pair;
 
+import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.ListenerList;
 import org.eclipse.jface.action.Action;
 import org.eclipse.jface.action.ActionContributionItem;
 import org.eclipse.jface.action.IAction;
 import org.eclipse.jface.action.Separator;
+import org.eclipse.jface.dialogs.InputDialog;
 import org.eclipse.jface.util.SafeRunnable;
 import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jface.viewers.ISelectionChangedListener;
@@ -42,6 +59,7 @@ import org.eclipse.jface.viewers.ITreeSelection;
 import org.eclipse.jface.viewers.SelectionChangedEvent;
 import org.eclipse.jface.viewers.TreePath;
 import org.eclipse.jface.viewers.TreeSelection;
+import org.eclipse.jface.window.Window;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.events.MenuDetectEvent;
 import org.eclipse.swt.events.MouseEvent;
@@ -103,13 +121,15 @@ public class SelectionManager implements ISelectionProvider {
      * @param layoutCanvas The layout canvas to create a {@link SelectionManager} for.
      */
     public SelectionManager(LayoutCanvas layoutCanvas) {
-        this.mCanvas = layoutCanvas;
+        mCanvas = layoutCanvas;
     }
 
+    @Override
     public void addSelectionChangedListener(ISelectionChangedListener listener) {
         mSelectionListeners.add(listener);
     }
 
+    @Override
     public void removeSelectionChangedListener(ISelectionChangedListener listener) {
         mSelectionListeners.remove(listener);
     }
@@ -119,6 +139,7 @@ public class SelectionManager implements ISelectionProvider {
      *
      * @return An immutable list of {@link SelectionItem}. Can be empty but not null.
      */
+    @NonNull
     List<SelectionItem> getSelections() {
         return mUnmodifiableSelection;
     }
@@ -129,7 +150,12 @@ public class SelectionManager implements ISelectionProvider {
      *
      * @return A copy of the current selection. Never null.
      */
-    /* package */ List<SelectionItem> getSnapshot() {
+    @NonNull
+    public List<SelectionItem> getSnapshot() {
+        if (mSelectionListeners.isEmpty()) {
+            return Collections.emptyList();
+        }
+
         return new ArrayList<SelectionItem>(mSelections);
     }
 
@@ -137,6 +163,7 @@ public class SelectionManager implements ISelectionProvider {
      * Returns a {@link TreeSelection} where each {@link TreePath} item is
      * actually a {@link CanvasViewInfo}.
      */
+    @Override
     public ISelection getSelection() {
         if (mSelections.isEmpty()) {
             return TreeSelection.EMPTY;
@@ -180,11 +207,13 @@ public class SelectionManager implements ISelectionProvider {
      * changed. Typically it means the outline selection has changed and we're
      * synchronizing ours to match.
      */
+    @Override
     public void setSelection(ISelection selection) {
         if (mInsideUpdateSelection) {
             return;
         }
 
+        boolean changed = false;
         try {
             mInsideUpdateSelection = true;
 
@@ -206,7 +235,6 @@ public class SelectionManager implements ISelectionProvider {
                     return;
                 }
 
-                boolean changed = false;
                 boolean redoLayout = false;
 
                 // Create a list of all currently selected view infos
@@ -237,6 +265,10 @@ public class SelectionManager implements ISelectionProvider {
                         if (newVi.isInvisible()) {
                             redoLayout = true;
                         }
+                    } else {
+                        // Unrelated selection (e.g. user clicked in the Project Explorer
+                        // or something) -- just ignore these
+                        return;
                     }
                 }
 
@@ -250,16 +282,17 @@ public class SelectionManager implements ISelectionProvider {
                 }
 
                 if (redoLayout) {
-                    mCanvas.getLayoutEditor().recomputeLayout();
+                    mCanvas.getEditorDelegate().recomputeLayout();
                 }
-                if (changed) {
-                    redraw();
-                    updateActionsFromSelection();
-                }
-
             }
         } finally {
             mInsideUpdateSelection = false;
+        }
+
+        if (changed) {
+            redraw();
+            fireSelectionChanged();
+            updateActionsFromSelection();
         }
     }
 
@@ -353,7 +386,7 @@ public class SelectionManager implements ISelectionProvider {
                 // toggle this selection on-off: remove it if already selected
                 if (deselect(vi)) {
                     if (vi.isExploded()) {
-                        mCanvas.getLayoutEditor().recomputeLayout();
+                        mCanvas.getEditorDelegate().recomputeLayout();
                     }
 
                     redraw();
@@ -412,11 +445,15 @@ public class SelectionManager implements ISelectionProvider {
 
     /**
      * Removes all the currently selected item and only select the given item.
-     * Issues a {@link #redraw()} if the selection changes.
+     * Issues a redraw() if the selection changes.
      *
      * @param vi The new selected item if non-null. Selection becomes empty if null.
+     * @return the item selected, or null if the selection was cleared (e.g. vi was null)
      */
-    /* package */ void selectSingle(CanvasViewInfo vi) {
+    @Nullable
+    SelectionItem selectSingle(CanvasViewInfo vi) {
+        SelectionItem item = null;
+
         // reset alternate selection if any
         mAltSelection = null;
 
@@ -432,13 +469,14 @@ public class SelectionManager implements ISelectionProvider {
         if (!mSelections.isEmpty()) {
             if (mSelections.size() == 1 && mSelections.getFirst().getViewInfo() == vi) {
                 // CanvasSelection remains the same, don't touch it.
-                return;
+                return mSelections.getFirst();
             }
             mSelections.clear();
         }
 
         if (vi != null) {
-            mSelections.add(createSelection(vi));
+            item = createSelection(vi);
+            mSelections.add(item);
             if (vi.isInvisible()) {
                 redoLayout = true;
             }
@@ -446,10 +484,12 @@ public class SelectionManager implements ISelectionProvider {
         fireSelectionChanged();
 
         if (redoLayout) {
-            mCanvas.getLayoutEditor().recomputeLayout();
+            mCanvas.getEditorDelegate().recomputeLayout();
         }
 
         redraw();
+
+        return item;
     }
 
     /** Returns true if the view hierarchy is showing exploded items. */
@@ -490,7 +530,7 @@ public class SelectionManager implements ISelectionProvider {
         fireSelectionChanged();
 
         if (redoLayout) {
-            mCanvas.getLayoutEditor().recomputeLayout();
+            mCanvas.getEditorDelegate().recomputeLayout();
         }
 
         redraw();
@@ -694,7 +734,7 @@ public class SelectionManager implements ISelectionProvider {
     }
 
     /** Sync the selection with an updated view info tree */
-    /* package */ void sync() {
+    void sync() {
         // Check if the selection is still the same (based on the object keys)
         // and eventually recompute their bounds.
         for (ListIterator<SelectionItem> it = mSelections.listIterator(); it.hasNext(); ) {
@@ -709,6 +749,9 @@ public class SelectionManager implements ISelectionProvider {
             // we need to recompute its bounds in case it moved so we'll insert a new one
             // at the same place.
             it.remove();
+            if (vi == null) {
+                vi = findCorresponding(s.getViewInfo(), viewHierarchy.getRoot());
+            }
             if (vi != null) {
                 it.add(createSelection(vi));
             }
@@ -717,6 +760,39 @@ public class SelectionManager implements ISelectionProvider {
 
         // remove the current alternate selection views
         mAltSelection = null;
+    }
+
+    /** Finds the corresponding {@link CanvasViewInfo} in the new hierarchy */
+    private CanvasViewInfo findCorresponding(CanvasViewInfo old, CanvasViewInfo newRoot) {
+        CanvasViewInfo oldParent = old.getParent();
+        if (oldParent != null) {
+            CanvasViewInfo newParent = findCorresponding(oldParent, newRoot);
+            if (newParent == null) {
+                return null;
+            }
+
+            List<CanvasViewInfo> oldSiblings = oldParent.getChildren();
+            List<CanvasViewInfo> newSiblings = newParent.getChildren();
+            Iterator<CanvasViewInfo> oldIterator = oldSiblings.iterator();
+            Iterator<CanvasViewInfo> newIterator = newSiblings.iterator();
+            while (oldIterator.hasNext() && newIterator.hasNext()) {
+                CanvasViewInfo oldSibling = oldIterator.next();
+                CanvasViewInfo newSibling = newIterator.next();
+
+                if (oldSibling.getName().equals(newSibling.getName())) {
+                    // Structure has changed: can't do a proper search
+                    return null;
+                }
+
+                if (oldSibling == old) {
+                    return newSibling;
+                }
+            }
+        } else {
+            return newRoot;
+        }
+
+        return null;
     }
 
     /**
@@ -732,6 +808,7 @@ public class SelectionManager implements ISelectionProvider {
             final SelectionChangedEvent event = new SelectionChangedEvent(this, getSelection());
 
             SafeRunnable.run(new SafeRunnable() {
+                @Override
                 public void run() {
                     for (Object listener : mSelectionListeners.getListeners()) {
                         ((ISelectionChangedListener) listener).selectionChanged(event);
@@ -750,7 +827,7 @@ public class SelectionManager implements ISelectionProvider {
      * actions that depend on the selection
      */
     private void updateActionsFromSelection() {
-        LayoutEditor editor = mCanvas.getLayoutEditor();
+        LayoutEditorDelegate editor = mCanvas.getEditorDelegate();
         if (editor != null) {
             // Update menu actions that depend on the selection
             mCanvas.updateMenuActionState();
@@ -869,7 +946,8 @@ public class SelectionManager implements ISelectionProvider {
                     // Skip spacers - unless you're dropping just one
                     continue;
                 }
-                if (GridLayoutRule.sDebugGridLayout && viewInfo.getName().equals(FQCN_SPACE)) {
+                if (GridLayoutRule.sDebugGridLayout && (viewInfo.getName().equals(FQCN_SPACE)
+                        || viewInfo.getName().equals(FQCN_SPACE_V7))) {
                     // In debug mode they might not be marked as hidden but we never never
                     // want to select these guys
                     continue;
@@ -877,9 +955,13 @@ public class SelectionManager implements ISelectionProvider {
                 newChildren.add(viewInfo);
             }
         }
-        mCanvas.getSelectionManager().selectMultiple(newChildren);
+        boolean found = nodes.size() == newChildren.size();
 
-        return nodes.size() == newChildren.size();
+        if (found || newChildren.size() > 0) {
+            mCanvas.getSelectionManager().selectMultiple(newChildren);
+        }
+
+        return found;
     }
 
     /**
@@ -888,6 +970,7 @@ public class SelectionManager implements ISelectionProvider {
      */
     public void setOutlineSelection(final List<INode> nodes) {
         Display.getDefault().asyncExec(new Runnable() {
+            @Override
             public void run() {
                 selectDropped(nodes, null /* indices */);
                 syncOutlineSelection();
@@ -979,7 +1062,7 @@ public class SelectionManager implements ISelectionProvider {
             new ActionContributionItem(a).fill(menu, -1);
             a.setEnabled(true);
 
-            a = selectionManager.new SelectAction("Select None", SELECT_NONE);
+            a = selectionManager.new SelectAction("Deselect All", SELECT_NONE);
             new ActionContributionItem(a).fill(menu, -1);
             a.setEnabled(haveSelection);
         }
@@ -1039,5 +1122,141 @@ public class SelectionManager implements ISelectionProvider {
 
         }
         return null;
+    }
+
+    /** Performs the default action provided by the currently selected view */
+    public void performDefaultAction() {
+        final List<SelectionItem> selections = getSelections();
+        if (selections.size() > 0) {
+            NodeProxy primary = selections.get(0).getNode();
+            if (primary != null) {
+                RulesEngine rulesEngine = mCanvas.getRulesEngine();
+                final String id = rulesEngine.callGetDefaultActionId(primary);
+                if (id == null) {
+                    return;
+                }
+                final List<RuleAction> actions = rulesEngine.callGetContextMenu(primary);
+                if (actions == null) {
+                    return;
+                }
+                RuleAction matching = null;
+                for (RuleAction a : actions) {
+                    if (id.equals(a.getId())) {
+                        matching = a;
+                        break;
+                    }
+                }
+                if (matching == null) {
+                    return;
+                }
+                final List<INode> selectedNodes = new ArrayList<INode>();
+                for (SelectionItem item : selections) {
+                    NodeProxy n = item.getNode();
+                    if (n != null) {
+                        selectedNodes.add(n);
+                    }
+                }
+                final RuleAction action = matching;
+                mCanvas.getEditorDelegate().getEditor().wrapUndoEditXmlModel(action.getTitle(),
+                    new Runnable() {
+                        @Override
+                        public void run() {
+                            action.getCallback().action(action, selectedNodes,
+                                    action.getId(), null);
+                            LayoutCanvas canvas = mCanvas;
+                            CanvasViewInfo root = canvas.getViewHierarchy().getRoot();
+                            if (root != null) {
+                                UiViewElementNode uiViewNode = root.getUiViewNode();
+                                NodeFactory nodeFactory = canvas.getNodeFactory();
+                                NodeProxy rootNode = nodeFactory.create(uiViewNode);
+                                if (rootNode != null) {
+                                    rootNode.applyPendingChanges();
+                                }
+                            }
+                        }
+                });
+            }
+        }
+    }
+
+    /** Performs renaming the selected views */
+    public void performRename() {
+        final List<SelectionItem> selections = getSelections();
+        if (selections.size() > 0) {
+            NodeProxy primary = selections.get(0).getNode();
+            if (primary != null) {
+                performRename(primary, selections);
+            }
+        }
+    }
+
+    /**
+     * Performs renaming the given node.
+     *
+     * @param primary the node to be renamed, or the primary node (to get the
+     *            current value from if more than one node should be renamed)
+     * @param selections if not null, a list of nodes to apply the setting to
+     *            (which should include the primary)
+     * @return the result of the renaming operation
+     */
+    @NonNull
+    public RenameResult performRename(
+            final @NonNull INode primary,
+            final @Nullable List<SelectionItem> selections) {
+        String id = primary.getStringAttr(ANDROID_URI, ATTR_ID);
+        if (id != null && !id.isEmpty()) {
+            RenameResult result = RenameResourceWizard.renameResource(
+                    mCanvas.getShell(),
+                    mCanvas.getEditorDelegate().getGraphicalEditor().getProject(),
+                    ResourceType.ID, BaseViewRule.stripIdPrefix(id), null, true /*canClear*/);
+            if (result.isCanceled()) {
+                return result;
+            } else if (!result.isUnavailable()) {
+                return result;
+            }
+        }
+        String currentId = primary.getStringAttr(ANDROID_URI, ATTR_ID);
+        currentId = BaseViewRule.stripIdPrefix(currentId);
+        InputDialog d = new InputDialog(
+                    AdtPlugin.getDisplay().getActiveShell(),
+                    "Set ID",
+                    "New ID:",
+                    currentId,
+                    ResourceNameValidator.create(false, (IProject) null, ResourceType.ID));
+        if (d.open() == Window.OK) {
+            final String s = d.getValue();
+            mCanvas.getEditorDelegate().getEditor().wrapUndoEditXmlModel("Set ID",
+                    new Runnable() {
+                @Override
+                public void run() {
+                    String newId = s;
+                    newId = NEW_ID_PREFIX + BaseViewRule.stripIdPrefix(s);
+                    if (selections != null) {
+                        for (SelectionItem item : selections) {
+                            NodeProxy node = item.getNode();
+                            if (node != null) {
+                                node.setAttribute(ANDROID_URI, ATTR_ID, newId);
+                            }
+                        }
+                    } else {
+                        primary.setAttribute(ANDROID_URI, ATTR_ID, newId);
+                    }
+
+                    LayoutCanvas canvas = mCanvas;
+                    CanvasViewInfo root = canvas.getViewHierarchy().getRoot();
+                    if (root != null) {
+                        UiViewElementNode uiViewNode = root.getUiViewNode();
+                        NodeFactory nodeFactory = canvas.getNodeFactory();
+                        NodeProxy rootNode = nodeFactory.create(uiViewNode);
+                        if (rootNode != null) {
+                            rootNode.applyPendingChanges();
+                        }
+                    }
+                }
+            });
+            return RenameResult.name(BaseViewRule.stripIdPrefix(s));
+        } else {
+            return RenameResult.canceled();
+        }
     }
 }

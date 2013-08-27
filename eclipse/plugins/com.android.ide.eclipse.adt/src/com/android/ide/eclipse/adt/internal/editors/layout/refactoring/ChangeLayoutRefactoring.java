@@ -15,35 +15,36 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.layout.refactoring;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_NS_NAME_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_WIDGET_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_BASELINE_ALIGNED;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_BASELINE;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_BELOW;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_HEIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_TO_RIGHT_OF;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_WIDTH;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ORIENTATION;
-import static com.android.ide.common.layout.LayoutConstants.FQCN_GESTURE_OVERLAY_VIEW;
-import static com.android.ide.common.layout.LayoutConstants.FQCN_GRID_LAYOUT;
-import static com.android.ide.common.layout.LayoutConstants.FQCN_LINEAR_LAYOUT;
-import static com.android.ide.common.layout.LayoutConstants.FQCN_RELATIVE_LAYOUT;
-import static com.android.ide.common.layout.LayoutConstants.FQCN_TABLE_LAYOUT;
-import static com.android.ide.common.layout.LayoutConstants.GESTURE_OVERLAY_VIEW;
-import static com.android.ide.common.layout.LayoutConstants.LINEAR_LAYOUT;
-import static com.android.ide.common.layout.LayoutConstants.TABLE_ROW;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_FALSE;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_VERTICAL;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_WRAP_CONTENT;
-import static com.android.ide.eclipse.adt.AdtConstants.EXT_XML;
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ANDROID_WIDGET_PREFIX;
+import static com.android.SdkConstants.ATTR_BASELINE_ALIGNED;
+import static com.android.SdkConstants.ATTR_LAYOUT_ALIGN_BASELINE;
+import static com.android.SdkConstants.ATTR_LAYOUT_BELOW;
+import static com.android.SdkConstants.ATTR_LAYOUT_HEIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_RESOURCE_PREFIX;
+import static com.android.SdkConstants.ATTR_LAYOUT_TO_RIGHT_OF;
+import static com.android.SdkConstants.ATTR_LAYOUT_WIDTH;
+import static com.android.SdkConstants.ATTR_ORIENTATION;
+import static com.android.SdkConstants.EXT_XML;
+import static com.android.SdkConstants.FQCN_GESTURE_OVERLAY_VIEW;
+import static com.android.SdkConstants.FQCN_GRID_LAYOUT;
+import static com.android.SdkConstants.FQCN_LINEAR_LAYOUT;
+import static com.android.SdkConstants.FQCN_RELATIVE_LAYOUT;
+import static com.android.SdkConstants.FQCN_TABLE_LAYOUT;
+import static com.android.SdkConstants.GESTURE_OVERLAY_VIEW;
+import static com.android.SdkConstants.LINEAR_LAYOUT;
+import static com.android.SdkConstants.TABLE_ROW;
+import static com.android.SdkConstants.VALUE_FALSE;
+import static com.android.SdkConstants.VALUE_VERTICAL;
+import static com.android.SdkConstants.VALUE_WRAP_CONTENT;
 
+import com.android.SdkConstants;
+import com.android.annotations.NonNull;
 import com.android.annotations.VisibleForTesting;
+import com.android.ide.common.xml.XmlFormatStyle;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.AttributeDescriptor;
-import com.android.ide.eclipse.adt.internal.editors.formatting.XmlFormatStyle;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.ViewElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.CanvasViewInfo;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.DomUtilities;
@@ -105,13 +106,16 @@ public class ChangeLayoutRefactoring extends VisualRefactoring {
     }
 
     @VisibleForTesting
-    ChangeLayoutRefactoring(List<Element> selectedElements, LayoutEditor editor) {
-        super(selectedElements, editor);
+    ChangeLayoutRefactoring(List<Element> selectedElements, LayoutEditorDelegate delegate) {
+        super(selectedElements, delegate);
     }
 
-    public ChangeLayoutRefactoring(IFile file, LayoutEditor editor, ITextSelection selection,
+    public ChangeLayoutRefactoring(
+            IFile file,
+            LayoutEditorDelegate delegate,
+            ITextSelection selection,
             ITreeSelection treeSelection) {
-        super(file, editor, selection, treeSelection);
+        super(file, delegate, selection, treeSelection);
     }
 
     @Override
@@ -215,11 +219,14 @@ public class ChangeLayoutRefactoring extends VisualRefactoring {
     }
 
     @Override
-    protected List<Change> computeChanges(IProgressMonitor monitor) {
+    protected @NonNull List<Change> computeChanges(IProgressMonitor monitor) {
         String name = getViewClass(mTypeFqcn);
 
-        IFile file = mEditor.getInputFile();
+        IFile file = mDelegate.getEditor().getInputFile();
         List<Change> changes = new ArrayList<Change>();
+        if (file == null) {
+            return changes;
+        }
         TextFileChange change = new TextFileChange(file.getName(), file);
         MultiTextEdit rootEdit = new MultiTextEdit();
         change.setTextType(EXT_XML);
@@ -243,7 +250,7 @@ public class ChangeLayoutRefactoring extends VisualRefactoring {
         String newId = ensureIdMatchesType(layout, mTypeFqcn, rootEdit);
         // Update any layout references to the old id with the new id
         if (oldId != null && newId != null) {
-            IStructuredModel model = mEditor.getModelForRead();
+            IStructuredModel model = mDelegate.getEditor().getModelForRead();
             try {
                 IStructuredDocument doc = model.getStructuredDocument();
                 if (doc != null) {
@@ -302,10 +309,10 @@ public class ChangeLayoutRefactoring extends VisualRefactoring {
                 String value = nameValue[1];
                 String prefix = null;
                 String namespaceUri = null;
-                if (attribute.startsWith(ANDROID_NS_NAME_PREFIX)) {
+                if (attribute.startsWith(SdkConstants.ANDROID_NS_NAME_PREFIX)) {
                     prefix = namespace;
                     namespaceUri = ANDROID_URI;
-                    attribute = attribute.substring(ANDROID_NS_NAME_PREFIX.length());
+                    attribute = attribute.substring(SdkConstants.ANDROID_NS_NAME_PREFIX.length());
                 }
                 setAttribute(rootEdit, layout, namespaceUri,
                         prefix, attribute, value);
@@ -561,7 +568,7 @@ public class ChangeLayoutRefactoring extends VisualRefactoring {
             Node attributeNode = attributeMap.item(i);
 
             String name = attributeNode.getLocalName();
-            if (!name.startsWith(ATTR_LAYOUT_PREFIX)
+            if (!name.startsWith(ATTR_LAYOUT_RESOURCE_PREFIX)
                     && ANDROID_URI.equals(attributeNode.getNamespaceURI())) {
                 if (!defined.contains(name)) {
                     // Remove it
@@ -577,7 +584,7 @@ public class ChangeLayoutRefactoring extends VisualRefactoring {
         Element layout = getPrimaryElement();
         CanvasViewInfo rootView = mRootView;
         if (rootView == null) {
-            LayoutCanvas canvas = mEditor.getGraphicalEditor().getCanvasControl();
+            LayoutCanvas canvas = mDelegate.getGraphicalEditor().getCanvasControl();
             ViewHierarchy viewHierarchy = canvas.getViewHierarchy();
             rootView = viewHierarchy.getRoot();
         }
@@ -599,7 +606,7 @@ public class ChangeLayoutRefactoring extends VisualRefactoring {
         Element layout = getPrimaryElement();
         CanvasViewInfo rootView = mRootView;
         if (rootView == null) {
-            LayoutCanvas canvas = mEditor.getGraphicalEditor().getCanvasControl();
+            LayoutCanvas canvas = mDelegate.getGraphicalEditor().getCanvasControl();
             ViewHierarchy viewHierarchy = canvas.getViewHierarchy();
             rootView = viewHierarchy.getRoot();
         }
@@ -645,6 +652,6 @@ public class ChangeLayoutRefactoring extends VisualRefactoring {
 
     @Override
     VisualRefactoringWizard createWizard() {
-        return new ChangeLayoutWizard(this, mEditor);
+        return new ChangeLayoutWizard(this, mDelegate);
     }
 }

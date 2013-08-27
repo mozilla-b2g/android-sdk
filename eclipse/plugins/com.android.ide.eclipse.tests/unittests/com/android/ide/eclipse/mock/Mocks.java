@@ -25,6 +25,9 @@ import static org.easymock.EasyMock.expectLastCall;
 import static org.easymock.EasyMock.isA;
 import static org.easymock.EasyMock.replay;
 
+import com.android.io.IAbstractFolder;
+import com.android.io.IAbstractResource;
+
 import org.easymock.Capture;
 import org.easymock.EasyMock;
 import org.easymock.IAnswer;
@@ -55,6 +58,7 @@ public class Mocks {
         expect(javaProject.getOutputLocation()).andReturn(capturedOutput.getValue()).anyTimes();
 
         expect(javaProject.getRawClasspath()).andAnswer(new IAnswer<IClasspathEntry[]>() {
+            @Override
             public IClasspathEntry[] answer() throws Throwable {
                 return capturedEntries.getValue();
             }
@@ -76,18 +80,21 @@ public class Mocks {
 
         expect(javaProject.getOption(JavaCore.COMPILER_COMPLIANCE, true)).andAnswer(
                 new IAnswer<String>() {
+                    @Override
                     public String answer() throws Throwable {
                         return capturedCompliance.getValue();
                     }
                 });
         expect(javaProject.getOption(JavaCore.COMPILER_SOURCE, true)).andAnswer(
                 new IAnswer<String>() {
+                    @Override
                     public String answer() throws Throwable {
                         return capturedSource.getValue();
                     }
                 });
         expect(javaProject.getOption(JavaCore.COMPILER_CODEGEN_TARGET_PLATFORM, true)).andAnswer(
                 new IAnswer<String>() {
+                    @Override
                     public String answer() throws Throwable {
                         return capturedTarget.getValue();
                     }
@@ -139,6 +146,16 @@ public class Mocks {
         expect(file.members()).andReturn(members).anyTimes();
         replay(file);
         return file;
+    }
+
+    public static IAbstractFolder createAbstractFolder(String name, IAbstractResource[] members) {
+        IAbstractFolder folder = createNiceMock(IAbstractFolder.class);
+        expect(folder.getName()).andReturn(name).anyTimes();
+        // expect(file.getLocation()).andReturn(new Path(name)).anyTimes();
+        expect(folder.listMembers()).andReturn(members).anyTimes();
+        replay(folder);
+
+        return folder;
     }
 
     /**

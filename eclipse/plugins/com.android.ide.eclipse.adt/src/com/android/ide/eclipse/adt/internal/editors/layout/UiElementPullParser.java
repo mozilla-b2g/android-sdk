@@ -16,17 +16,27 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout;
 
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_HEIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_WIDTH;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_PADDING;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_FILL_PARENT;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_MATCH_PARENT;
-import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.ATTR_LAYOUT;
-import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.VIEW_FRAGMENT;
-import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.VIEW_INCLUDE;
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ATTR_LAYOUT;
+import static com.android.SdkConstants.ATTR_LAYOUT_HEIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_WIDTH;
+import static com.android.SdkConstants.ATTR_PADDING;
+import static com.android.SdkConstants.AUTO_URI;
+import static com.android.SdkConstants.UNIT_DIP;
+import static com.android.SdkConstants.UNIT_DP;
+import static com.android.SdkConstants.UNIT_IN;
+import static com.android.SdkConstants.UNIT_MM;
+import static com.android.SdkConstants.UNIT_PT;
+import static com.android.SdkConstants.UNIT_PX;
+import static com.android.SdkConstants.UNIT_SP;
+import static com.android.SdkConstants.VALUE_FILL_PARENT;
+import static com.android.SdkConstants.VALUE_MATCH_PARENT;
+import static com.android.SdkConstants.VIEW_FRAGMENT;
+import static com.android.SdkConstants.VIEW_INCLUDE;
 
 import com.android.ide.common.rendering.api.ILayoutPullParser;
 import com.android.ide.common.rendering.api.ViewInfo;
+import com.android.ide.common.res2.ValueXmlHelper;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.ViewElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.FragmentMenu;
@@ -36,7 +46,6 @@ import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetData;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.resources.Density;
 import com.android.sdklib.IAndroidTarget;
-import com.android.sdklib.SdkConstants;
 
 import org.eclipse.core.resources.IProject;
 import org.w3c.dom.Document;
@@ -70,13 +79,12 @@ public class UiElementPullParser extends BasePullParser {
     private boolean mIncreaseExistingPadding = false;
     private LayoutDescriptors mDescriptors;
     private final Density mDensity;
-    private final float mXdpi;
 
     /**
      * Number of pixels to pad views with in exploded-rendering mode.
      */
     private static final String DEFAULT_PADDING_VALUE =
-        ExplodedRenderingHelper.PADDING_VALUE + "px"; //$NON-NLS-1$
+        ExplodedRenderingHelper.PADDING_VALUE + UNIT_PX;
 
     /**
      * Number of pixels to pad exploded individual views with. (This is HALF the width of the
@@ -105,18 +113,16 @@ public class UiElementPullParser extends BasePullParser {
      *            nodes are not individually exploded (but they may all be exploded with the
      *            explodeRendering parameter.
      * @param density the density factor for the screen.
-     * @param xdpi the screen actual dpi in X
      * @param project Project containing this layout.
      */
     public UiElementPullParser(UiElementNode top, boolean explodeRendering,
             Set<UiElementNode> explodeNodes,
-            Density density, float xdpi, IProject project) {
+            Density density, IProject project) {
         super();
         mRoot = top;
         mExplodedRendering = explodeRendering;
         mExplodeNodes = explodeNodes;
         mDensity = density;
-        mXdpi = xdpi;
         if (mExplodedRendering) {
             // get the layout descriptor
             IAndroidTarget target = Sdk.getCurrent().getTarget(project);
@@ -164,7 +170,7 @@ public class UiElementPullParser extends BasePullParser {
             ViewElementDescriptor descriptor = mDescriptors.findDescriptorByTag(xml);
             if (descriptor != null) {
                 NamedNodeMap attributes = node.getXmlNode().getAttributes();
-                Node padding = attributes.getNamedItemNS(SdkConstants.NS_RESOURCES, ATTR_PADDING);
+                Node padding = attributes.getNamedItemNS(ANDROID_URI, ATTR_PADDING);
                 if (padding == null) {
                     // we'll return an extra padding
                     mZeroAttributeIsPadding = true;
@@ -192,6 +198,7 @@ public class UiElementPullParser extends BasePullParser {
      * - private method GraphicalLayoutEditor#updateNodeWithBounds(ILayoutViewInfo).
      * - private constructor of LayoutCanvas.CanvasViewInfo.
      */
+    @Override
     public Object getViewCookie() {
         return getCurrentNode();
     }
@@ -199,6 +206,7 @@ public class UiElementPullParser extends BasePullParser {
     /**
      * Legacy method required by {@link com.android.layoutlib.api.IXmlPullParser}
      */
+    @Override
     public Object getViewKey() {
         return getViewCookie();
     }
@@ -207,12 +215,14 @@ public class UiElementPullParser extends BasePullParser {
      * This implementation does nothing for now as all the embedded XML will use a normal KXML
      * parser.
      */
+    @Override
     public ILayoutPullParser getParser(String layoutName) {
         return null;
     }
 
     // ------------- XmlPullParser --------
 
+    @Override
     public String getPositionDescription() {
         return "XML DOM element depth:" + mNodeStack.size();
     }
@@ -221,6 +231,7 @@ public class UiElementPullParser extends BasePullParser {
      * This does not seem to be called by the layoutlib, but we keep this (and maintain
      * it) just in case.
      */
+    @Override
     public int getAttributeCount() {
         UiElementNode node = getCurrentNode();
 
@@ -238,6 +249,7 @@ public class UiElementPullParser extends BasePullParser {
      * This does not seem to be called by the layoutlib, but we keep this (and maintain
      * it) just in case.
      */
+    @Override
     public String getAttributeName(int i) {
         if (mZeroAttributeIsPadding) {
             if (i == 0) {
@@ -259,10 +271,11 @@ public class UiElementPullParser extends BasePullParser {
      * This does not seem to be called by the layoutlib, but we keep this (and maintain
      * it) just in case.
      */
+    @Override
     public String getAttributeNamespace(int i) {
         if (mZeroAttributeIsPadding) {
             if (i == 0) {
-                return SdkConstants.NS_RESOURCES;
+                return ANDROID_URI;
             } else {
                 i--;
             }
@@ -279,12 +292,13 @@ public class UiElementPullParser extends BasePullParser {
      * This does not seem to be called by the layoutlib, but we keep this (and maintain
      * it) just in case.
      */
+    @Override
     public String getAttributePrefix(int i) {
         if (mZeroAttributeIsPadding) {
             if (i == 0) {
                 // figure out the prefix associated with the android namespace.
                 Document doc = mRoot.getXmlDocument();
-                return doc.lookupPrefix(SdkConstants.NS_RESOURCES);
+                return doc.lookupPrefix(ANDROID_URI);
             } else {
                 i--;
             }
@@ -301,6 +315,7 @@ public class UiElementPullParser extends BasePullParser {
      * This does not seem to be called by the layoutlib, but we keep this (and maintain
      * it) just in case.
      */
+    @Override
     public String getAttributeValue(int i) {
         if (mZeroAttributeIsPadding) {
             if (i == 0) {
@@ -314,7 +329,7 @@ public class UiElementPullParser extends BasePullParser {
         if (attribute != null) {
             String value = attribute.getNodeValue();
             if (mIncreaseExistingPadding && ATTR_PADDING.equals(attribute.getLocalName()) &&
-                    SdkConstants.NS_RESOURCES.equals(attribute.getNamespaceURI())) {
+                    ANDROID_URI.equals(attribute.getNamespaceURI())) {
                 // add the padding and return the value
                 return addPaddingToValue(value);
             }
@@ -327,9 +342,10 @@ public class UiElementPullParser extends BasePullParser {
     /*
      * This is the main method used by the LayoutInflater to query for attributes.
      */
+    @Override
     public String getAttributeValue(String namespace, String localName) {
         if (mExplodeNodes != null && ATTR_PADDING.equals(localName) &&
-                SdkConstants.NS_RESOURCES.equals(namespace)) {
+                ANDROID_URI.equals(namespace)) {
             UiElementNode node = getCurrentNode();
             if (node != null && mExplodeNodes.contains(node)) {
                 return FIXED_PADDING_VALUE;
@@ -337,7 +353,7 @@ public class UiElementPullParser extends BasePullParser {
         }
 
         if (mZeroAttributeIsPadding && ATTR_PADDING.equals(localName) &&
-                SdkConstants.NS_RESOURCES.equals(namespace)) {
+                ANDROID_URI.equals(namespace)) {
             return DEFAULT_PADDING_VALUE;
         }
 
@@ -356,10 +372,19 @@ public class UiElementPullParser extends BasePullParser {
             }
 
             Node attribute = xmlNode.getAttributes().getNamedItemNS(namespace, localName);
+
+            // Auto-convert http://schemas.android.com/apk/res-auto resources. The lookup
+            // will be for the current application's resource package, e.g.
+            // http://schemas.android.com/apk/res/foo.bar, but the XML document will
+            // be using http://schemas.android.com/apk/res-auto in library projects:
+            if (attribute == null && namespace != null && !namespace.equals(ANDROID_URI)) {
+                attribute = xmlNode.getAttributes().getNamedItemNS(AUTO_URI, localName);
+            }
+
             if (attribute != null) {
                 String value = attribute.getNodeValue();
                 if (mIncreaseExistingPadding && ATTR_PADDING.equals(localName) &&
-                        SdkConstants.NS_RESOURCES.equals(namespace)) {
+                        ANDROID_URI.equals(namespace)) {
                     // add the padding and return the value
                     return addPaddingToValue(value);
                 }
@@ -369,9 +394,12 @@ public class UiElementPullParser extends BasePullParser {
                 if (VALUE_MATCH_PARENT.equals(value) &&
                         (ATTR_LAYOUT_WIDTH.equals(localName) ||
                                 ATTR_LAYOUT_HEIGHT.equals(localName)) &&
-                        SdkConstants.NS_RESOURCES.equals(namespace)) {
+                        ANDROID_URI.equals(namespace)) {
                     return VALUE_FILL_PARENT;
                 }
+
+                // Handle unicode escapes etc
+                value = ValueXmlHelper.unescapeResourceString(value, false, false);
 
                 return value;
             }
@@ -380,10 +408,12 @@ public class UiElementPullParser extends BasePullParser {
         return null;
     }
 
+    @Override
     public int getDepth() {
         return mNodeStack.size();
     }
 
+    @Override
     public String getName() {
         if (mParsingState == START_TAG || mParsingState == END_TAG) {
             String name = getCurrentNode().getDescriptor().getXmlLocalName();
@@ -404,6 +434,7 @@ public class UiElementPullParser extends BasePullParser {
         return null;
     }
 
+    @Override
     public String getNamespace() {
         if (mParsingState == START_TAG || mParsingState == END_TAG) {
             return getCurrentNode().getDescriptor().getNamespace();
@@ -412,6 +443,7 @@ public class UiElementPullParser extends BasePullParser {
         return null;
     }
 
+    @Override
     public String getPrefix() {
         if (mParsingState == START_TAG || mParsingState == END_TAG) {
             Document doc = mRoot.getXmlDocument();
@@ -421,6 +453,7 @@ public class UiElementPullParser extends BasePullParser {
         return null;
     }
 
+    @Override
     public boolean isEmptyElementTag() throws XmlPullParserException {
         if (mParsingState == START_TAG) {
             return getCurrentNode().getUiChildren().size() == 0;
@@ -511,13 +544,13 @@ public class UiElementPullParser extends BasePullParser {
     private static final int COMPLEX_UNIT_MM = 5;
 
     private final static DimensionEntry[] sDimensions = new DimensionEntry[] {
-        new DimensionEntry("px", COMPLEX_UNIT_PX),
-        new DimensionEntry("dip", COMPLEX_UNIT_DIP),
-        new DimensionEntry("dp", COMPLEX_UNIT_DIP),
-        new DimensionEntry("sp", COMPLEX_UNIT_SP),
-        new DimensionEntry("pt", COMPLEX_UNIT_PT),
-        new DimensionEntry("in", COMPLEX_UNIT_IN),
-        new DimensionEntry("mm", COMPLEX_UNIT_MM),
+        new DimensionEntry(UNIT_PX, COMPLEX_UNIT_PX),
+        new DimensionEntry(UNIT_DIP, COMPLEX_UNIT_DIP),
+        new DimensionEntry(UNIT_DP, COMPLEX_UNIT_DIP),
+        new DimensionEntry(UNIT_SP, COMPLEX_UNIT_SP),
+        new DimensionEntry(UNIT_PT, COMPLEX_UNIT_PT),
+        new DimensionEntry(UNIT_IN, COMPLEX_UNIT_IN),
+        new DimensionEntry(UNIT_MM, COMPLEX_UNIT_MM),
     };
 
     /**
@@ -533,7 +566,7 @@ public class UiElementPullParser extends BasePullParser {
             padding += sIntOut[0];
         }
 
-        return padding + "px"; //$NON-NLS-1$
+        return padding + UNIT_PX;
     }
 
     /**
@@ -593,13 +626,13 @@ public class UiElementPullParser extends BasePullParser {
                             f *= (float)mDensity.getDpiValue() / Density.DEFAULT_DENSITY;
                             break;
                         case COMPLEX_UNIT_PT:
-                            f *= mXdpi * (1.0f / 72);
+                            f *= mDensity.getDpiValue() * (1.0f / 72);
                             break;
                         case COMPLEX_UNIT_IN:
-                            f *= mXdpi;
+                            f *= mDensity.getDpiValue();
                             break;
                         case COMPLEX_UNIT_MM:
-                            f *= mXdpi * (1.0f / 25.4f);
+                            f *= mDensity.getDpiValue() * (1.0f / 25.4f);
                             break;
                     }
 

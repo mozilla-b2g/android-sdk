@@ -16,6 +16,7 @@
 
 package com.android.ide.eclipse.adt.internal.resources.manager;
 
+import com.android.SdkConstants;
 import com.android.ide.common.resources.FrameworkResources;
 import com.android.ide.common.resources.ResourceFile;
 import com.android.ide.common.resources.ResourceFolder;
@@ -33,7 +34,6 @@ import com.android.ide.eclipse.adt.io.IFolderWrapper;
 import com.android.io.FolderWrapper;
 import com.android.resources.ResourceFolderType;
 import com.android.sdklib.IAndroidTarget;
-import com.android.sdklib.SdkConstants;
 
 import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
@@ -49,7 +49,6 @@ import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.QualifiedName;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -151,11 +150,18 @@ public final class ResourceManager {
     /**
      * Returns the resources of a project.
      * @param project The project
-     * @return a ProjectResources object or null if none was found.
+     * @return a ProjectResources object
      */
     public ProjectResources getProjectResources(IProject project) {
         synchronized (mMap) {
-            return mMap.get(project);
+            ProjectResources resources = mMap.get(project);
+
+            if (resources == null) {
+                resources = ProjectResources.create(project);
+                mMap.put(project, resources);
+            }
+
+            return resources;
         }
     }
 
@@ -167,6 +173,24 @@ public final class ResourceManager {
      *            as a place to stash errors encountered
      */
     public void processDelta(IResourceDelta delta, IdeScanningContext context) {
+        doProcessDelta(delta, context);
+
+        // when a project is added to the workspace it is possible this is called before the
+        // repo is actually created so this will return null.
+        ResourceRepository repo = context.getRepository();
+        if (repo != null) {
+            repo.postUpdateCleanUp();
+        }
+    }
+
+    /**
+     * Update the resource repository with a delta
+     *
+     * @param delta the resource changed delta to process.
+     * @param context a context object with state for the current update, such
+     *            as a place to stash errors encountered
+     */
+    private void doProcessDelta(IResourceDelta delta, IdeScanningContext context) {
         // Skip over deltas that don't fit our mask
         int mask = IResourceDelta.ADDED | IResourceDelta.REMOVED | IResourceDelta.CHANGED;
         int kind = delta.getKind();
@@ -228,7 +252,7 @@ public final class ResourceManager {
 
                             // if it doesn't exist, we create it.
                             if (resources == null) {
-                                resources = new ProjectResources(project);
+                                resources = ProjectResources.create(project);
                                 mMap.put(project, resources);
                             }
                         }
@@ -339,26 +363,36 @@ public final class ResourceManager {
      * do not appear in the public API of {@link ResourceManager}.
      */
     private final IProjectListener mProjectListener = new IProjectListener() {
+        @Override
         public void projectClosed(IProject project) {
             synchronized (mMap) {
                 mMap.remove(project);
             }
         }
 
+        @Override
         public void projectDeleted(IProject project) {
             synchronized (mMap) {
                 mMap.remove(project);
             }
         }
 
+        @Override
         public void projectOpened(IProject project) {
             createProject(project);
         }
 
+        @Override
         public void projectOpenedWithWorkspace(IProject project) {
             createProject(project);
         }
 
+        @Override
+        public void allProjectsOpenedWithWorkspace() {
+            // nothing to do.
+        }
+
+        @Override
         public void projectRenamed(IProject project, IPath from) {
             // renamed project get a delete/open event too, so this can be ignored.
         }
@@ -370,6 +404,7 @@ public final class ResourceManager {
      * accessed through the {@link ResourceManager#visitDelta(IResourceDelta delta)} method.
      */
     private final IRawDeltaListener mRawDeltaListener = new IRawDeltaListener() {
+        @Override
         public void visitDelta(IResourceDelta workspaceDelta) {
             // If we're auto-building, then PreCompilerBuilder will pass us deltas and
             // they will be processed as part of the build.
@@ -386,8 +421,17 @@ public final class ResourceManager {
             for (IResourceDelta delta : projectDeltas) {
                 if (delta.getResource() instanceof IProject) {
                     IProject project = (IProject) delta.getResource();
+
+                    try {
+                        if (project.hasNature(AdtConstants.NATURE_DEFAULT) == false) {
+                            continue;
+                        }
+                    } catch (CoreException e) {
+                        // only happens if the project is closed or doesn't exist.
+                    }
+
                     IdeScanningContext context =
-                            new IdeScanningContext(getProjectResources(project), project);
+                            new IdeScanningContext(getProjectResources(project), project, true);
 
                     processDelta(delta, context);
 
@@ -446,16 +490,11 @@ public final class ResourceManager {
 
         FolderWrapper frameworkRes = new FolderWrapper(osResourcesPath);
         if (frameworkRes.exists()) {
-            FrameworkResources resources = new FrameworkResources();
+            FrameworkResources resources = new FrameworkResources(frameworkRes);
 
-            try {
-                resources.loadResources(frameworkRes);
-                resources.loadPublicResources(frameworkRes, AdtPlugin.getDefault());
-                return resources;
-            } catch (IOException e) {
-                // since we test that folders are folders, and files are files, this shouldn't
-                // happen. We can ignore it.
-            }
+            resources.loadResources();
+            resources.loadPublicResources(AdtPlugin.getDefault());
+            return resources;
         }
 
         return null;
@@ -467,60 +506,11 @@ public final class ResourceManager {
      */
     private void createProject(IProject project) {
         if (project.isOpen()) {
-            try {
-                if (project.hasNature(AdtConstants.NATURE_DEFAULT) == false) {
-                    return;
-                }
-            } catch (CoreException e1) {
-                // can't check the nature of the project? ignore it.
-                return;
-            }
-
-            IFolder resourceFolder = project.getFolder(SdkConstants.FD_RESOURCES);
-
-            ProjectResources projectResources;
             synchronized (mMap) {
-                projectResources = mMap.get(project);
+                ProjectResources projectResources = mMap.get(project);
                 if (projectResources == null) {
-                    projectResources = new ProjectResources(project);
+                    projectResources = ProjectResources.create(project);
                     mMap.put(project, projectResources);
-                }
-            }
-            IdeScanningContext context = new IdeScanningContext(projectResources, project);
-
-            if (resourceFolder != null && resourceFolder.exists()) {
-                try {
-                    IResource[] resources = resourceFolder.members();
-
-                    for (IResource res : resources) {
-                        if (res.getType() == IResource.FOLDER) {
-                            IFolder folder = (IFolder)res;
-                            ResourceFolder resFolder = projectResources.processFolder(
-                                    new IFolderWrapper(folder));
-
-                            if (resFolder != null) {
-                                // now we process the content of the folder
-                                IResource[] files = folder.members();
-
-                                for (IResource fileRes : files) {
-                                    if (fileRes.getType() == IResource.FILE) {
-                                        IFile file = (IFile)fileRes;
-
-                                        context.startScanning(file);
-
-                                        resFolder.processFile(new IFileWrapper(file),
-                                                ResourceHelper.getResourceDeltaKind(
-                                                        IResourceDelta.ADDED), context);
-
-                                        context.finishScanning(file);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } catch (CoreException e) {
-                    // This happens if the project is closed or if the folder doesn't exist.
-                    // Since we already test for that, we can ignore this exception.
                 }
             }
         }

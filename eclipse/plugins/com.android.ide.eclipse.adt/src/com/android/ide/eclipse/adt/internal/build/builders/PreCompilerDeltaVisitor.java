@@ -16,6 +16,8 @@
 
 package com.android.ide.eclipse.adt.internal.build.builders;
 
+import com.android.SdkConstants;
+import com.android.ide.common.xml.ManifestData;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.build.Messages;
@@ -24,9 +26,8 @@ import com.android.ide.eclipse.adt.internal.build.SourceProcessor;
 import com.android.ide.eclipse.adt.internal.build.builders.BaseBuilder.BaseDeltaVisitor;
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs.BuildVerbosity;
 import com.android.ide.eclipse.adt.internal.project.AndroidManifestHelper;
+import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper;
 import com.android.ide.eclipse.adt.io.IFileWrapper;
-import com.android.sdklib.SdkConstants;
-import com.android.sdklib.xml.ManifestData;
 
 import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
@@ -58,9 +59,11 @@ import java.util.List;
 class PreCompilerDeltaVisitor extends BaseDeltaVisitor implements IResourceDeltaVisitor {
 
     // Result fields.
+    private boolean mChangedManifest = false;
+
     /**
      * Compile flag. This is set to true if one of the changed/added/removed
-     * files is Manifest.xml, Manifest.java, or R.java. All other file changes
+     * files is Manifest.java, or R.java. All other file changes
      * will be taken care of by ResourceManager.
      */
     private boolean mCompileResources = false;
@@ -94,7 +97,7 @@ class PreCompilerDeltaVisitor extends BaseDeltaVisitor implements IResourceDelta
         new ArrayList<SourceChangeHandler>();
     private final IWorkspaceRoot mRoot;
 
-
+    private IFolder mAndroidOutputFolder;
 
     public PreCompilerDeltaVisitor(BaseBuilder builder, List<IPath> sourceFolders,
             List<SourceProcessor> processors) {
@@ -106,6 +109,8 @@ class PreCompilerDeltaVisitor extends BaseDeltaVisitor implements IResourceDelta
             SourceChangeHandler handler = processor.getChangeHandler();
             mSourceChangeHandlers.add(handler);
         }
+
+        mAndroidOutputFolder = BaseProjectHelper.getAndroidOutputFolder(builder.getProject());
     }
 
     /**
@@ -113,7 +118,11 @@ class PreCompilerDeltaVisitor extends BaseDeltaVisitor implements IResourceDelta
      * @return true if any of Manifest.xml, Manifest.java, or R.java have been modified
      */
     public boolean getCompileResources() {
-        return mCompileResources;
+        return mCompileResources || mChangedManifest;
+    }
+
+    public boolean hasManifestChanged() {
+        return mChangedManifest;
     }
 
     /**
@@ -162,6 +171,7 @@ class PreCompilerDeltaVisitor extends BaseDeltaVisitor implements IResourceDelta
      * @see org.eclipse.core.resources.IResourceDeltaVisitor
      *      #visit(org.eclipse.core.resources.IResourceDelta)
      */
+    @Override
     public boolean visit(IResourceDelta delta) throws CoreException {
         // we are only going to look for changes in res/, source folders and in
         // AndroidManifest.xml since the delta visitor goes through the main
@@ -219,7 +229,7 @@ class PreCompilerDeltaVisitor extends BaseDeltaVisitor implements IResourceDelta
 
                     mCheckedManifestXml = true;
                 }
-                mCompileResources = true;
+                mChangedManifest = true;
 
                 // we don't want to go to the children, not like they are
                 // any for this resource anyway.
@@ -265,8 +275,8 @@ class PreCompilerDeltaVisitor extends BaseDeltaVisitor implements IResourceDelta
                 String fileName = resource.getName();
 
                 // Special case of R.java/Manifest.java.
-                if (AdtConstants.FN_RESOURCE_CLASS.equals(fileName) ||
-                        AdtConstants.FN_MANIFEST_CLASS.equals(fileName)) {
+                if (SdkConstants.FN_RESOURCE_CLASS.equals(fileName) ||
+                        SdkConstants.FN_MANIFEST_CLASS.equals(fileName)) {
                     // if it was removed, there's a possibility that it was removed due to a
                     // package change, or an aidl that was removed, but the only thing
                     // that will happen is that we'll have an extra build. Not much of a problem.
@@ -331,12 +341,12 @@ class PreCompilerDeltaVisitor extends BaseDeltaVisitor implements IResourceDelta
                 case IResourceDelta.ADDED:
                     // display verbose message
                     message = String.format(Messages.Added_s_s_Needs_Updating, p,
-                            AdtConstants.FN_RESOURCE_CLASS);
+                            SdkConstants.FN_RESOURCE_CLASS);
                     break;
                 case IResourceDelta.REMOVED:
                     // display verbose message
                     message = String.format(Messages.s_Removed_s_Needs_Updating, p,
-                            AdtConstants.FN_RESOURCE_CLASS);
+                            SdkConstants.FN_RESOURCE_CLASS);
                     break;
             }
             if (message != null) {
@@ -348,13 +358,19 @@ class PreCompilerDeltaVisitor extends BaseDeltaVisitor implements IResourceDelta
                 handler.handleResourceFile((IFile)resource, kind);
             }
             // If it's an XML resource, check the syntax
-            if (AdtConstants.EXT_XML.equalsIgnoreCase(ext) && kind != IResourceDelta.REMOVED) {
+            if (SdkConstants.EXT_XML.equalsIgnoreCase(ext) && kind != IResourceDelta.REMOVED) {
                 // check xml Validity
                 mBuilder.checkXML(resource, this);
             }
             // Whether or not to generate R.java for a changed resource is taken care of by the
             // Resource Manager.
         } else if (resource instanceof IFolder) {
+            // first check if we are in the android output folder.
+            if (resource.equals(mAndroidOutputFolder)) {
+                // we want to visit the merged manifest.
+                return true;
+            }
+
             // in this case we may be inside a folder that contains a source
             // folder, go through the list of known source folders
 

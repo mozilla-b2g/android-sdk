@@ -1,3 +1,186 @@
+21.0.0
+* Bug fixes.
+* JUnit test runner allows a test to be run on all devices
+* XML code completion can now complete (and show documentation for)
+  theme references, such as ?android:attr/dividerHeight
+* Improved flag and locale data in the configuration chooser
+* New lint checks:
+  * Find misspellings in English string files
+  * Detect certain types of wakelock mistakes leading to unnecessary
+    battery usage
+  * Find private key files placed in directories where they end up
+    getting bundled with the .apk
+  * Find usages of "dp" units with the font property textSize
+  * Find invalid selector files where a later state is fully covered
+    by an earlier state and is therefore unreachable
+  * Find incorrect use of the SecureRandom object (where it is
+    initialized with a fixed seed)
+  Various lint infrastructure improvements.
+
+20.0.0
+* A lot of bug fixes, performance fixes and memory fixes.
+* Support for Eclipse 4.x.
+* Build System
+  * Automatic merging of library project manifest files into the
+    including project's manifest. Enable with the
+    manifestmerger.enabled property.
+  * Automatic ProGuard support for the aapt -G flag. This means that
+    the build system will generate a temporary ProGuard keep-rules
+    file containing classes to keep that are referenced from XML files
+    (such as custom views) and pass this to ProGuard at
+    shrink-time. This can make the resulting APK much smaller when
+    using just a small portion of a large library project (such as the
+    Android Support library), since we have also removed the catch-all
+    rules to keep all custom views from the default ProGuard
+    configuration file.
+   * Aidl files from library projects are now in the import list.
+   * Fixes in Ant:
+     * Test projects now have access to the full classpath from the
+       tested projects, including Library Projects and 3rd party jar
+     * Applications embedding tests can now be deployed and tested,
+       including with code coverage, like test applications.
+* Lint
+  * Tighter integration with the layout editor (error and warning
+    icons overlaid views with errors, lint error messages shown as
+    tooltips in the layout canvas and in the outline, error count
+    displayed in the layout actions bar.)
+  * Lint is run incrementally in Java files on save, just like XML
+    files already are.
+  * New lint rules:
+  * Detect usages of Toast.makeText() without calling show() on the
+    result, as well as passing invalid duration parameters (e.g. a
+    number instead of one of the two allowed constants.)
+  * Detect incorrect manifest registrations (where elements such as
+    <uses-library>, <activity> etc are placed under the wrong parent.)
+  * Several security checks: Look for exported content providers
+    without required permissions, look for creation of world readable
+    files and preferences, look for calls to
+    android.webkit.WebSettings.setJavaScriptEnabled.
+  * Check to make sure that Fragment classes are instantiatable. If
+    you accidentally make a fragment innerclass non-static, or forget
+    to have a default constructor, you can hit runtime errors when the
+    system attempts to reinstantiate your fragment after a
+    configuration change.
+  * Look for handler leaks: This check makes sure that a handler inner
+    class does not hold an implicit reference to its outer class.
+  * Duplicate Activity registrations in the manifest. This can lead to
+    subtle errors that can be difficult to understand.
+  * Lint check ensuring that when you edit() a SharedPreference object
+    you call commit()
+* Layout Editor
+  * New property sheet implementation, which offers:
+    * Highlighting (in bold) for important attributes.
+    * Inline preview of colors and images, as well as the
+      corresponding resource name.
+    * Displays default values, when available.
+    * Completion of resource values and enum and flag constants.
+    * Support for showing and hiding "advanced" properties.
+    * Nested properties (and collapse all and expand all) for better
+      categorization. For example, layout params are listed first as a
+      single nested property.
+    * Tooltips over the attribute names, not values, so they never
+      obscure the value column.
+    * Checkbox support for boolean values.
+    * Support for switching between alphabetical and natural sort
+      orders.
+  * New window management. The propertysheet is now automatically
+    docked into the Outline view, and the outline can appear in a
+    maximized editor. The structure and palette views can be minimized
+    and appear temporarily on flyover.
+  * New configuration chooser above the layout editor, which in
+    addition to a visual refresh offers an activity chooser, a nested
+    theme chooser, a single button to flip orientation, better
+    wrapping behavior, etc.
+* SDK Manager:
+  * Cache to avoid downloading repository definitions all the time.
+  * New "Tools > Manage Add-on Sites" option that allows deactivating
+    3rd party sites (e.g. if one or more are temporarily slow to
+    load.)
+* NDK integration (alpha):
+  * Initial support for building and debugging projects with C/C++
+    code.
+  * To enable this, install the NDK feature (depends on CDT), and then
+    set the path to NDK in Android Preferences.
+  * Add NDK nature to an Android project by right clicking on the
+    project and select "Android Tools -> Add Native Support".
+  * To debug an NDK project, just right click and select "Debug As
+    Android Native Application".
+* Execution
+  * LogCat: Allow users to set colors for different priorities
+  * LogCat: Ctrl + F now brings up a Find dialog to find items (rather
+    than filter)
+  * Allow running on multiple devices with a single launch. The target
+    tab in the launch configuration dialog adds a new option which
+    allows launching on all connected devices, and a drop down allows
+    the user to further narrow down the list to just physical devices
+    or just emulators. (This applies only to Run configurations, not
+    to Debug/JUnit tests.)
+* XML Editing
+  * Code completion support for custom attributes on custom views.
+  * Go to Declaration now works for theme references (?android:attr,
+    ?attr: etc,)
+  * Completion of the minSdkVersion and targetSdkVersion attributes in
+    manifest files now include version descriptions for each of the
+    API levels
+  * Support XML editor outlines for layout files. Switching back and
+    forth between the text editor and graphical editor will alternate
+    between the two outlines, and in particular the XML editor outline
+    will keep up to date with edits in the editor, and selection will
+    follow the mouse cursor etc.
+* The Asset Studio Wizard now supports padding and disabling
+  background shapes
+
+19.0.0 (does not exist)
+
+18.0.0
+* Fix bug 27940 where exporting release package doesn't recompile libraries
+  in release mode.
+
+17.0.0:
+* ADT 17 requires Java 6 and Eclipse 3.6.2.
+* Improved Lint UI.
+   * Many new lint checks: See the tools changes.txt for details.
+   * New "Run Lint" toolbar action with a dropdown menu for selecting
+     specific (or all) projects, clearing results, etc.
+   * The results window is now organized as a tree rather than a flat
+     list. Each issue type has a single top level item, which makes it
+     easier to quickly scan through the reported issues and narrow
+     down to issues you are most interested in.
+   * The results window contains many new toolbar actions, including
+     expand/collapse, ignore in file, ignore in project, ignore
+     everywhere, show options, and configure columns.
+   * There are new columns available, such as category, priority,
+     project, file and line. The column selection (as well as the
+     column sizes) are persisted. You can click on columns to sort by
+     that column.
+   * The Lint Options dialog has Enable All and Disable All buttons,
+     and a search filter textbox to filter by issue id, summary and
+     severity.
+* New Quick Outline for XML editors (Ctrl-O, Command-O). This shows
+  the structure of the current file including icons and ids, and lets
+  you filter and quickly jump to specific ids.
+* The resource chooser now shows the resolved value for resources
+  (e.g. when selecting @string/hello it displays that the resolved value
+  is "Hello World"). It also allows editing the chosen value directly.
+* The layout editor no longer assigns default ids to layouts, includes
+  and merge tags. This tended to pollute the namespace with a lot of
+  unused resources since layouts aren't usually manipulated via code,
+  or referenced from XML. (The RelativeLayout editor automatically
+  assigns ids to views without ids when pointing to them.)
+* Export Screenshot from the Layout Editor
+* Layout editor fix for SlidingDrawer which on some platforms could
+  not be dragged into the layout. Also fix preview rendering for
+  SlidingDrawer and TabHost (issue 23022).
+* New default application icons, including an xhdpi version.
+* Important bug fixes:
+  * Fix bug in resource chooser which made some types of framework
+    resources impossible to select (issue 20589)
+  * Fix a bug in the formatter where a certain whitespace pattern
+    could result in a non-space character getting deleted (issue
+    23940)
+  * Fix locale bug affecting Turkish locales in particular (issue
+    23747)
+
 16.0.0:
 * New "lint" feature which scans the Android projects for potential
   problems such as missing translations, duplicate ids between layouts

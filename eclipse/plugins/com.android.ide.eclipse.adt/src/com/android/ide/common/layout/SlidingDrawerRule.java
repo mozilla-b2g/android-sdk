@@ -15,14 +15,17 @@
  */
 package com.android.ide.common.layout;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_CONTENT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_HANDLE;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_HEIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_WIDTH;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_TEXT;
+import static com.android.SdkConstants.ATTR_CONTENT;
+import static com.android.SdkConstants.ATTR_HANDLE;
+import static com.android.SdkConstants.ATTR_ID;
+import static com.android.SdkConstants.ATTR_LAYOUT_HEIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_WIDTH;
+import static com.android.SdkConstants.ATTR_TEXT;
 
+
+import com.android.SdkConstants;
+import static com.android.SdkConstants.ANDROID_URI;
+import com.android.annotations.NonNull;
 import com.android.ide.common.api.INode;
 import com.android.ide.common.api.IViewRule;
 import com.android.ide.common.api.InsertType;
@@ -34,7 +37,8 @@ import com.android.ide.common.api.InsertType;
 public class SlidingDrawerRule extends BaseLayoutRule {
 
     @Override
-    public void onCreate(INode node, INode parent, InsertType insertType) {
+    public void onCreate(@NonNull INode node, @NonNull INode parent,
+            @NonNull InsertType insertType) {
         super.onCreate(node, parent, insertType);
 
         if (insertType.isCreate()) {
@@ -50,12 +54,12 @@ public class SlidingDrawerRule extends BaseLayoutRule {
             node.setAttribute(ANDROID_URI, ATTR_CONTENT, contentId);
 
             // Handle
-            INode handle = node.appendChild(LayoutConstants.FQCN_BUTTON);
+            INode handle = node.appendChild(SdkConstants.FQCN_BUTTON);
             handle.setAttribute(ANDROID_URI, ATTR_TEXT, "Handle");
             handle.setAttribute(ANDROID_URI, ATTR_ID, handleId);
 
             // Content
-            INode content = node.appendChild(LayoutConstants.FQCN_LINEAR_LAYOUT);
+            INode content = node.appendChild(SdkConstants.FQCN_LINEAR_LAYOUT);
             content.setAttribute(ANDROID_URI, ATTR_ID, contentId);
             content.setAttribute(ANDROID_URI, ATTR_LAYOUT_WIDTH, matchParent);
             content.setAttribute(ANDROID_URI, ATTR_LAYOUT_HEIGHT, matchParent);

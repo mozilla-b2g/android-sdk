@@ -16,9 +16,6 @@
 
 package com.android.ide.eclipse.adt.internal.resources;
 
-import static com.android.resources.ResourceType.DIMEN;
-import static com.android.resources.ResourceType.LAYOUT;
-
 import com.android.ide.common.resources.ResourceDeltaKind;
 import com.android.ide.common.resources.configuration.FolderConfiguration;
 import com.android.ide.common.resources.configuration.ResourceQualifier;
@@ -90,6 +87,10 @@ public class ResourceHelperTest extends TestCase {
             return false;
         }
 
+        @Override
+        public int since() {
+            return 0;
+        }
     }
 
     public void testGetIcon() throws Exception {
@@ -118,19 +119,6 @@ public class ResourceHelperTest extends TestCase {
 
         assertNull(ResourceHelper.getResourceDeltaKind(IResourceDelta.ADDED_PHANTOM));
     }
-
-    public void testParseResource() {
-        assertNull(ResourceHelper.parseResource(""));
-        assertNull(ResourceHelper.parseResource("not_a_resource"));
-
-        assertEquals(LAYOUT, ResourceHelper.parseResource("@layout/foo").getFirst());
-        assertEquals(DIMEN, ResourceHelper.parseResource("@dimen/foo").getFirst());
-        assertEquals(DIMEN, ResourceHelper.parseResource("@android:dimen/foo").getFirst());
-        assertEquals("foo", ResourceHelper.parseResource("@layout/foo").getSecond());
-        assertEquals("foo", ResourceHelper.parseResource("@dimen/foo").getSecond());
-        assertEquals("foo", ResourceHelper.parseResource("@android:dimen/foo").getSecond());
-    }
-
 
     public void testIsFileBasedResourceType() throws Exception {
         assertTrue(ResourceHelper.isFileBasedResourceType(ResourceType.ANIMATOR));
@@ -185,5 +173,11 @@ public class ResourceHelperTest extends TestCase {
         assertEquals("Foo", ResourceHelper.styleToTheme("Foo"));
         assertEquals("Theme", ResourceHelper.styleToTheme("@android:style/Theme"));
         assertEquals("LocalTheme", ResourceHelper.styleToTheme("@style/LocalTheme"));
+        //assertEquals("LocalTheme", ResourceHelper.styleToTheme("@foo.bar:style/LocalTheme"));
+    }
+
+    public void testIsProjectStyle() throws Exception {
+        assertFalse(ResourceHelper.isProjectStyle("@android:style/Theme"));
+        assertTrue(ResourceHelper.isProjectStyle("@style/LocalTheme"));
     }
 }

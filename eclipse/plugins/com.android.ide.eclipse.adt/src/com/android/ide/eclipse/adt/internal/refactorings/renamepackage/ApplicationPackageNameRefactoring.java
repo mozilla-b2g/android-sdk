@@ -16,11 +16,14 @@
 
 package com.android.ide.eclipse.adt.internal.refactorings.renamepackage;
 
-import com.android.ide.eclipse.adt.AdtPlugin;
+import static com.android.SdkConstants.FN_BUILD_CONFIG_BASE;
+import static com.android.SdkConstants.FN_MANIFEST_BASE;
+import static com.android.SdkConstants.FN_RESOURCE_BASE;
+
+import com.android.SdkConstants;
 import com.android.ide.eclipse.adt.AdtConstants;
-import com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor;
-import com.android.sdklib.SdkConstants;
-import com.android.sdklib.xml.AndroidManifest;
+import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.xml.AndroidManifest;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFolder;
@@ -75,16 +78,11 @@ import java.util.List;
  */
 @SuppressWarnings("restriction")
 class ApplicationPackageNameRefactoring extends Refactoring {
-
     private final IProject mProject;
     private final Name mOldPackageName;
     private final Name mNewPackageName;
 
     List<String> MAIN_COMPONENT_TYPES_LIST = Arrays.asList(MAIN_COMPONENT_TYPES);
-
-    private final static String ANDROID_NS_URI = SdkConstants.NS_RESOURCES;
-    private final static String NAMESPACE_DECLARATION_PREFIX =
-        XmlnsAttributeDescriptor.XMLNS_COLON;
 
     ApplicationPackageNameRefactoring(
             IProject project,
@@ -105,8 +103,8 @@ class ApplicationPackageNameRefactoring extends Refactoring {
                 IMarker.PROBLEM,
                 true,
                 IResource.DEPTH_INFINITE) == IMarker.SEVERITY_ERROR) {
-            return RefactoringStatus
-            .createFatalErrorStatus("Fix the errors in your project, first.");
+            return
+                RefactoringStatus.createFatalErrorStatus("Fix the errors in your project, first.");
         }
 
         return new RefactoringStatus();
@@ -148,21 +146,36 @@ class ApplicationPackageNameRefactoring extends Refactoring {
         TextEdit rewrittenImports = importVisitor.getTextEdit();
 
         // If the import of R was potentially implicit, insert an import statement
-        if (cu.getPackage().getName().getFullyQualifiedName()
+        if (rewrittenImports != null && cu.getPackage().getName().getFullyQualifiedName()
                 .equals(mOldPackageName.getFullyQualifiedName())) {
 
-            ImportRewrite irw = ImportRewrite.create(cu, true);
-            irw.addImport(mNewPackageName.getFullyQualifiedName() + '.'
-                    + AdtConstants.FN_RESOURCE_BASE);
+            UsageVisitor usageVisitor = new UsageVisitor();
+            cu.accept(usageVisitor);
 
-            try {
-                rewrittenImports.addChild( irw.rewriteImports(null) );
-            } catch (MalformedTreeException e) {
-                Status s = new Status(Status.ERROR, AdtPlugin.PLUGIN_ID, e.getMessage(), e);
-                AdtPlugin.getDefault().getLog().log(s);
-            } catch (CoreException e) {
-                Status s = new Status(Status.ERROR, AdtPlugin.PLUGIN_ID, e.getMessage(), e);
-                AdtPlugin.getDefault().getLog().log(s);
+            if (usageVisitor.seenAny()) {
+                ImportRewrite irw = ImportRewrite.create(cu, true);
+                if (usageVisitor.hasSeenR()) {
+                    irw.addImport(mNewPackageName.getFullyQualifiedName() + '.'
+                            + FN_RESOURCE_BASE);
+                }
+                if (usageVisitor.hasSeenBuildConfig()) {
+                    irw.addImport(mNewPackageName.getFullyQualifiedName() + '.'
+                            + FN_BUILD_CONFIG_BASE);
+                }
+                if (usageVisitor.hasSeenManifest()) {
+                    irw.addImport(mNewPackageName.getFullyQualifiedName() + '.'
+                            + FN_MANIFEST_BASE);
+                }
+
+                try {
+                    rewrittenImports.addChild( irw.rewriteImports(null) );
+                } catch (MalformedTreeException e) {
+                    Status s = new Status(Status.ERROR, AdtPlugin.PLUGIN_ID, e.getMessage(), e);
+                    AdtPlugin.getDefault().getLog().log(s);
+                } catch (CoreException e) {
+                    Status s = new Status(Status.ERROR, AdtPlugin.PLUGIN_ID, e.getMessage(), e);
+                    AdtPlugin.getDefault().getLog().log(s);
+                }
             }
         }
 
@@ -210,7 +223,7 @@ class ApplicationPackageNameRefactoring extends Refactoring {
         }
 
         TextFileChange xmlChange = new TextFileChange("XML resource file edit", file);
-        xmlChange.setTextType(AdtConstants.EXT_XML);
+        xmlChange.setTextType(SdkConstants.EXT_XML);
 
         MultiTextEdit multiEdit = new MultiTextEdit();
         ArrayList<TextEditGroup> editGroups = new ArrayList<TextEditGroup>();
@@ -243,7 +256,7 @@ class ApplicationPackageNameRefactoring extends Refactoring {
                     // Check this is the attribute and the original string
 
                     if (lastAttrName != null &&
-                            lastAttrName.startsWith(NAMESPACE_DECLARATION_PREFIX)) {
+                            lastAttrName.startsWith(SdkConstants.XMLNS_PREFIX)) {
 
                         String lastAttrValue = region.getText(subRegion);
                         if (oldAppNamespaceString.equals(stripQuotes(lastAttrValue))) {
@@ -301,7 +314,7 @@ class ApplicationPackageNameRefactoring extends Refactoring {
         }
 
         TextFileChange xmlChange = new TextFileChange("Make Manifest edits", file);
-        xmlChange.setTextType(AdtConstants.EXT_XML);
+        xmlChange.setTextType(SdkConstants.EXT_XML);
 
         MultiTextEdit multiEdit = new MultiTextEdit();
         ArrayList<TextEditGroup> editGroups = new ArrayList<TextEditGroup>();
@@ -338,12 +351,12 @@ class ApplicationPackageNameRefactoring extends Refactoring {
 
                     String lastAttrValue = region.getText(subRegion);
                     if (lastAttrName != null &&
-                            lastAttrName.startsWith(NAMESPACE_DECLARATION_PREFIX)) {
+                            lastAttrName.startsWith(SdkConstants.XMLNS_PREFIX)) {
 
                         // Resolves the android namespace prefix for this file
-                        if (ANDROID_NS_URI.equals(stripQuotes(lastAttrValue))) {
+                        if (SdkConstants.ANDROID_URI.equals(stripQuotes(lastAttrValue))) {
                             String android_namespace_prefix = lastAttrName
-                                .substring(NAMESPACE_DECLARATION_PREFIX.length());
+                                .substring(SdkConstants.XMLNS_PREFIX.length());
                             android_name_attribute = android_namespace_prefix + ':'
                                 + AndroidManifest.ATTRIBUTE_NAME;
                         }
@@ -410,27 +423,28 @@ class ApplicationPackageNameRefactoring extends Refactoring {
             Collections.reverse(mChanges);
             CompositeChange change = new CompositeChange("Refactoring Application package name",
                     mChanges.toArray(new Change[mChanges.size()]));
+            change.markAsSynthetic();
             return change;
         }
 
-        @SuppressWarnings("unused")
+        @Override
         public boolean visit(IResource resource) throws CoreException {
             if (resource instanceof IFile) {
                 IFile file = (IFile) resource;
-                if (AdtConstants.EXT_JAVA.equals(file.getFileExtension())) {
+                if (SdkConstants.EXT_JAVA.equals(file.getFileExtension())) {
 
                     ICompilationUnit icu = JavaCore.createCompilationUnitFrom(file);
 
                     mParser.setSource(icu);
                     CompilationUnit cu = (CompilationUnit) mParser.createAST(null);
 
-                    TextEdit text_edit = updateJavaFileImports(cu);
-                    if (text_edit.hasChildren()) {
+                    TextEdit textEdit = updateJavaFileImports(cu);
+                    if (textEdit != null && textEdit.hasChildren()) {
                         MultiTextEdit edit = new MultiTextEdit();
-                        edit.addChild(text_edit);
+                        edit.addChild(textEdit);
 
                         TextFileChange text_file_change = new TextFileChange(file.getName(), file);
-                        text_file_change.setTextType(AdtConstants.EXT_JAVA);
+                        text_file_change.setTextType(SdkConstants.EXT_JAVA);
                         text_file_change.setEdit(edit);
                         mChanges.add(text_file_change);
                     }
@@ -438,13 +452,16 @@ class ApplicationPackageNameRefactoring extends Refactoring {
                     // XXX Partially taken from ExtractStringRefactoring.java
                     // Check this a Layout XML file and get the selection and
                     // its context.
-                } else if (AdtConstants.EXT_XML.equals(file.getFileExtension())) {
+                } else if (SdkConstants.EXT_XML.equals(file.getFileExtension())) {
 
                     if (SdkConstants.FN_ANDROID_MANIFEST_XML.equals(file.getName())) {
-
-                        TextFileChange manifest_change = editAndroidManifest(file);
-                        mChanges.add(manifest_change);
-
+                        // Ensure that this is the root manifest, not some other copy
+                        // (such as the one in bin/)
+                        IPath path = file.getFullPath();
+                        if (path.segmentCount() == 2) {
+                            TextFileChange manifest_change = editAndroidManifest(file);
+                            mChanges.add(manifest_change);
+                        }
                     } else {
 
                         // Currently we only support Android resource XML files,
@@ -479,7 +496,43 @@ class ApplicationPackageNameRefactoring extends Refactoring {
         }
     }
 
-    class ImportVisitor extends ASTVisitor {
+    private static class UsageVisitor extends ASTVisitor {
+        private boolean mSeenManifest;
+        private boolean mSeenR;
+        private boolean mSeenBuildConfig;
+
+        @Override
+        public boolean visit(QualifiedName node) {
+            Name qualifier = node.getQualifier();
+            if (qualifier.isSimpleName()) {
+                String name = qualifier.toString();
+                if (name.equals(FN_RESOURCE_BASE)) {
+                    mSeenR = true;
+                } else if (name.equals(FN_BUILD_CONFIG_BASE)) {
+                    mSeenBuildConfig = true;
+                } else if (name.equals(FN_MANIFEST_BASE)) {
+                    mSeenManifest = true;
+                }
+            }
+            return super.visit(node);
+        };
+
+        public boolean seenAny() {
+            return mSeenR || mSeenBuildConfig || mSeenManifest;
+        }
+
+        public boolean hasSeenBuildConfig() {
+            return mSeenBuildConfig;
+        }
+        public boolean hasSeenManifest() {
+            return mSeenManifest;
+        }
+        public boolean hasSeenR() {
+            return mSeenR;
+        }
+    }
+
+    private class ImportVisitor extends ASTVisitor {
 
         final AST mAst;
         final ASTRewrite mRewriter;
@@ -509,8 +562,19 @@ class ApplicationPackageNameRefactoring extends Refactoring {
             if (importName.isQualifiedName()) {
                 QualifiedName qualifiedImportName = (QualifiedName) importName;
 
-                if (qualifiedImportName.getName().getIdentifier()
-                        .equals(AdtConstants.FN_RESOURCE_BASE)) {
+                String identifier = qualifiedImportName.getName().getIdentifier();
+                if (identifier.equals(FN_RESOURCE_BASE)) {
+                    mRewriter.replace(qualifiedImportName.getQualifier(), mNewPackageName,
+                            null);
+                } else if (identifier.equals(FN_BUILD_CONFIG_BASE)
+                        && mOldPackageName.toString().equals(
+                                qualifiedImportName.getQualifier().toString())) {
+                    mRewriter.replace(qualifiedImportName.getQualifier(), mNewPackageName,
+                            null);
+
+                } else if (identifier.equals(FN_MANIFEST_BASE)
+                        && mOldPackageName.toString().equals(
+                                qualifiedImportName.getQualifier().toString())) {
                     mRewriter.replace(qualifiedImportName.getQualifier(), mNewPackageName,
                             null);
                 }

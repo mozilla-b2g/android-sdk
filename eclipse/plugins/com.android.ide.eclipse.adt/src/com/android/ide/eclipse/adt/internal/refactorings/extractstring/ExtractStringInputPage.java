@@ -17,13 +17,12 @@
 package com.android.ide.eclipse.adt.internal.refactorings.extractstring;
 
 
-import com.android.AndroidConstants;
+import com.android.SdkConstants;
 import com.android.ide.common.resources.configuration.FolderConfiguration;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.internal.ui.ConfigurationSelector;
 import com.android.ide.eclipse.adt.internal.ui.ConfigurationSelector.SelectorMode;
 import com.android.resources.ResourceFolderType;
-import com.android.sdklib.SdkConstants;
 
 import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IProject;
@@ -47,6 +46,7 @@ import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Text;
 
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
@@ -95,6 +95,7 @@ class ExtractStringInputPage extends UserInputWizardPage {
     private final OnConfigSelectorUpdated mOnConfigSelectorUpdated = new OnConfigSelectorUpdated();
 
     private ModifyListener mValidateOnModify = new ModifyListener() {
+        @Override
         public void modifyText(ModifyEvent e) {
             validatePage();
         }
@@ -122,6 +123,7 @@ class ExtractStringInputPage extends UserInputWizardPage {
      * Note: the special tag below defines this as the entry point for the WindowsDesigner Editor.
      * @wbp.parser.entryPoint
      */
+    @Override
     public void createControl(Composite parent) {
         Composite content = new Composite(parent, SWT.NONE);
         GridLayout layout = new GridLayout();
@@ -170,6 +172,7 @@ class ExtractStringInputPage extends UserInputWizardPage {
         ref.setNewStringValue(mStringValueField.getText());
 
         mStringValueField.addModifyListener(new ModifyListener() {
+            @Override
             public void modifyText(ModifyEvent e) {
                 validatePage();
             }
@@ -291,7 +294,7 @@ class ExtractStringInputPage extends UserInputWizardPage {
         }
 
         // make lower case
-        text = text.toLowerCase();
+        text = text.toLowerCase(Locale.US);
 
         // everything not alphanumeric becomes an underscore
         text = text.replaceAll("[^a-zA-Z0-9]+", "_");  //$NON-NLS-1$ //$NON-NLS-2$
@@ -448,6 +451,7 @@ class ExtractStringInputPage extends UserInputWizardPage {
          * <li> Re-populate the file combo with all the choices.
          * <li> Select the original XML file.
          */
+        @Override
         public void run() {
             if (mInternalConfigChange) {
                 return;
@@ -545,6 +549,7 @@ class ExtractStringInputPage extends UserInputWizardPage {
          * Callback invoked when {@link ExtractStringInputPage#mResFileCombo} has been
          * modified.
          */
+        @Override
         public void modifyText(ModifyEvent e) {
             if (mInternalFileComboChange) {
                 return;
@@ -576,7 +581,7 @@ class ExtractStringInputPage extends UserInputWizardPage {
                     wsFolderPath = wsFolderPath.substring(0, pos);
                 }
 
-                String[] folderSegments = wsFolderPath.split(AndroidConstants.RES_QUALIFIER_SEP);
+                String[] folderSegments = wsFolderPath.split(SdkConstants.RES_QUALIFIER_SEP);
 
                 if (folderSegments.length > 0) {
                     String folderName = folderSegments[0];

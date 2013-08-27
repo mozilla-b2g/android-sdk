@@ -16,20 +16,24 @@
 
 package com.android.ide.eclipse.adt.internal.sdk;
 
-import static com.android.ide.eclipse.adt.AdtConstants.DOT_XML;
-import static com.android.ide.eclipse.adt.AdtUtils.endsWith;
-import static com.android.sdklib.SdkConstants.FD_RES;
+import static com.android.SdkConstants.DOT_XML;
+import static com.android.SdkConstants.EXT_JAR;
+import static com.android.SdkConstants.FD_RES;
 
-import com.android.AndroidConstants;
+import com.android.SdkConstants;
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ddmlib.IDevice;
 import com.android.ide.common.rendering.LayoutLibrary;
 import com.android.ide.common.sdk.LoadStatus;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.build.DexWrapper;
-import com.android.ide.eclipse.adt.internal.project.AndroidClasspathContainerInitializer;
+import com.android.ide.eclipse.adt.internal.editors.common.CommonXmlEditor;
+import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
 import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper;
 import com.android.ide.eclipse.adt.internal.project.LibraryClasspathContainerInitializer;
+import com.android.ide.eclipse.adt.internal.project.ProjectHelper;
 import com.android.ide.eclipse.adt.internal.resources.manager.GlobalProjectMonitor;
 import com.android.ide.eclipse.adt.internal.resources.manager.GlobalProjectMonitor.IFileListener;
 import com.android.ide.eclipse.adt.internal.resources.manager.GlobalProjectMonitor.IProjectListener;
@@ -38,19 +42,22 @@ import com.android.ide.eclipse.adt.internal.sdk.ProjectState.LibraryDifference;
 import com.android.ide.eclipse.adt.internal.sdk.ProjectState.LibraryState;
 import com.android.io.StreamException;
 import com.android.prefs.AndroidLocation.AndroidLocationException;
-import com.android.resources.ResourceFolderType;
 import com.android.sdklib.AndroidVersion;
+import com.android.sdklib.BuildToolInfo;
 import com.android.sdklib.IAndroidTarget;
-import com.android.sdklib.ISdkLog;
-import com.android.sdklib.SdkConstants;
 import com.android.sdklib.SdkManager;
+import com.android.sdklib.devices.DeviceManager;
 import com.android.sdklib.internal.avd.AvdManager;
 import com.android.sdklib.internal.project.ProjectProperties;
 import com.android.sdklib.internal.project.ProjectProperties.PropertyType;
 import com.android.sdklib.internal.project.ProjectPropertiesWorkingCopy;
+import com.android.sdklib.repository.FullRevision;
+import com.android.utils.ILogger;
+import com.google.common.collect.Maps;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFolder;
+import org.eclipse.core.resources.IMarker;
 import org.eclipse.core.resources.IMarkerDelta;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
@@ -65,6 +72,17 @@ import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.JavaCore;
+import org.eclipse.jface.preference.IPreferenceStore;
+import org.eclipse.ui.IEditorDescriptor;
+import org.eclipse.ui.IEditorInput;
+import org.eclipse.ui.IEditorPart;
+import org.eclipse.ui.IEditorReference;
+import org.eclipse.ui.IFileEditorInput;
+import org.eclipse.ui.IWorkbenchPage;
+import org.eclipse.ui.IWorkbenchPartSite;
+import org.eclipse.ui.IWorkbenchWindow;
+import org.eclipse.ui.PartInitException;
+import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.ide.IDE;
 
 import java.io.File;
@@ -72,6 +90,8 @@ import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -110,12 +130,13 @@ public final class Sdk  {
      */
     private final static class TargetLoadBundle {
         LoadStatus status;
-        final HashSet<IJavaProject> projecsToReload = new HashSet<IJavaProject>();
+        final HashSet<IJavaProject> projectsToReload = new HashSet<IJavaProject>();
     }
 
     private final SdkManager mManager;
-    private final DexWrapper mDexWrapper;
+    private final Map<String, DexWrapper> mDexWrappers = Maps.newHashMap();
     private final AvdManager mAvdManager;
+    private final DeviceManager mDeviceManager;
 
     /** Map associating an {@link IAndroidTarget} to an {@link AndroidTargetData} */
     private final HashMap<IAndroidTarget, AndroidTargetData> mTargetDataMap =
@@ -131,8 +152,6 @@ public final class Sdk  {
     private boolean mDontLoadTargetData = false;
 
     private final String mDocBaseUrl;
-
-    private final LayoutDeviceManager mLayoutDeviceManager = new LayoutDeviceManager();
 
     /**
      * Classes implementing this interface will receive notification when targets are changed.
@@ -174,12 +193,14 @@ public final class Sdk  {
          */
         public abstract void reload();
 
+        @Override
         public void onProjectTargetChange(IProject changedProject) {
             if (changedProject != null && changedProject.equals(getProject())) {
                 reload();
             }
         }
 
+        @Override
         public void onTargetLoaded(IAndroidTarget target) {
             IProject project = getProject();
             if (target != null && target.equals(Sdk.getCurrent().getTarget(project))) {
@@ -187,6 +208,7 @@ public final class Sdk  {
             }
         }
 
+        @Override
         public void onSdkLoaded() {
             // do nothing;
         }
@@ -196,6 +218,7 @@ public final class Sdk  {
      * Returns the lock object used to synchronize all operations dealing with SDK, targets and
      * projects.
      */
+    @NonNull
     public static final Object getLock() {
         return LOCK;
     }
@@ -205,6 +228,7 @@ public final class Sdk  {
      * <p/>If the SDK failed to load, it displays an error to the user.
      * @param sdkLocation the OS path to the SDK.
      */
+    @Nullable
     public static Sdk loadSdk(String sdkLocation) {
         synchronized (LOCK) {
             if (sCurrentSdk != null) {
@@ -213,8 +237,10 @@ public final class Sdk  {
             }
 
             final ArrayList<String> logMessages = new ArrayList<String>();
-            ISdkLog log = new ISdkLog() {
-                public void error(Throwable throwable, String errorFormat, Object... arg) {
+            ILogger log = new ILogger() {
+                @Override
+                public void error(@Nullable Throwable throwable, @Nullable String errorFormat,
+                        Object... arg) {
                     if (errorFormat != null) {
                         logMessages.add(String.format("Error: " + errorFormat, arg));
                     }
@@ -224,37 +250,33 @@ public final class Sdk  {
                     }
                 }
 
-                public void warning(String warningFormat, Object... arg) {
+                @Override
+                public void warning(@NonNull String warningFormat, Object... arg) {
                     logMessages.add(String.format("Warning: " + warningFormat, arg));
                 }
 
-                public void printf(String msgFormat, Object... arg) {
+                @Override
+                public void info(@NonNull String msgFormat, Object... arg) {
                     logMessages.add(String.format(msgFormat, arg));
+                }
+
+                @Override
+                public void verbose(@NonNull String msgFormat, Object... arg) {
+                    info(msgFormat, arg);
                 }
             };
 
             // get an SdkManager object for the location
             SdkManager manager = SdkManager.createManager(sdkLocation, log);
             if (manager != null) {
-                // load DX.
-                DexWrapper dexWrapper = new DexWrapper();
-                String dexLocation =
-                        sdkLocation + File.separator +
-                        SdkConstants.OS_SDK_PLATFORM_TOOLS_LIB_FOLDER + SdkConstants.FN_DX_JAR;
-                IStatus res = dexWrapper.loadDex(dexLocation);
-                if (res != Status.OK_STATUS) {
-                    log.error(null, res.getMessage());
-                    dexWrapper = null;
-                }
-
                 // create the AVD Manager
                 AvdManager avdManager = null;
                 try {
-                    avdManager = new AvdManager(manager, log);
+                    avdManager = AvdManager.getInstance(manager, log);
                 } catch (AndroidLocationException e) {
                     log.error(e, "Error parsing the AVDs");
                 }
-                sCurrentSdk = new Sdk(manager, dexWrapper, avdManager);
+                sCurrentSdk = new Sdk(manager, avdManager);
                 return sCurrentSdk;
             } else {
                 StringBuilder sb = new StringBuilder("Error Loading the SDK:\n");
@@ -271,6 +293,7 @@ public final class Sdk  {
     /**
      * Returns the current {@link Sdk} object.
      */
+    @Nullable
     public static Sdk getCurrent() {
         synchronized (LOCK) {
             return sCurrentSdk;
@@ -285,11 +308,31 @@ public final class Sdk  {
     }
 
     /**
+     * Returns a <em>new</em> {@link SdkManager} that can parse the SDK located
+     * at the current {@link #getSdkLocation()}.
+     * <p/>
+     * Implementation detail: The {@link Sdk} has its own internal manager with
+     * a custom logger which is not designed to be useful for outsiders. Callers
+     * who need their own {@link SdkManager} for parsing will often want to control
+     * the logger for their own need.
+     * <p/>
+     * This is just a convenient method equivalent to writing:
+     * <pre>SdkManager.createManager(Sdk.getCurrent().getSdkLocation(), log);</pre>
+     *
+     * @param log The logger for the {@link SdkManager}.
+     * @return A new {@link SdkManager} parsing the same location.
+     */
+    public @Nullable SdkManager getNewSdkManager(@NonNull ILogger log) {
+        return SdkManager.createManager(getSdkLocation(), log);
+    }
+
+    /**
      * Returns the URL to the local documentation.
      * Can return null if no documentation is found in the current SDK.
      *
      * @return A file:// URL on the local documentation folder if it exists or null.
      */
+    @Nullable
     public String getDocumentationBaseUrl() {
         return mDocBaseUrl;
     }
@@ -302,24 +345,57 @@ public final class Sdk  {
     }
 
     /**
+     * Queries the underlying SDK Manager to check whether the platforms or addons
+     * directories have changed on-disk. Does not reload the SDK.
+     * <p/>
+     * This is a quick test based on the presence of the directories, their timestamps
+     * and a quick checksum of the source.properties files. It's possible to have
+     * false positives (e.g. if a file is manually modified in a platform) or false
+     * negatives (e.g. if a platform data file is changed manually in a 2nd level
+     * directory without altering the source.properties.)
+     */
+    public boolean haveTargetsChanged() {
+        return mManager.hasChanged();
+    }
+
+    /**
      * Returns a target from a hash that was generated by {@link IAndroidTarget#hashString()}.
      *
      * @param hash the {@link IAndroidTarget} hash string.
      * @return The matching {@link IAndroidTarget} or null.
      */
-    public IAndroidTarget getTargetFromHashString(String hash) {
+    @Nullable
+    public IAndroidTarget getTargetFromHashString(@NonNull String hash) {
         return mManager.getTargetFromHashString(hash);
+    }
+
+    @Nullable
+    public BuildToolInfo getBuildToolInfo(@Nullable String buildToolVersion) {
+        if (buildToolVersion != null) {
+            try {
+                return mManager.getBuildTool(FullRevision.parseRevision(buildToolVersion));
+            } catch (Exception e) {
+                // ignore, return null below.
+            }
+        }
+
+        return null;
+    }
+
+    @Nullable
+    public BuildToolInfo getLatestBuildTool() {
+        return mManager.getLatestBuildTool();
     }
 
     /**
      * Initializes a new project with a target. This creates the <code>project.properties</code>
      * file.
-     * @param project the project to intialize
+     * @param project the project to initialize
      * @param target the project's target.
      * @throws IOException if creating the file failed in any way.
-     * @throws StreamException
+     * @throws StreamException if processing the project property file fails
      */
-    public void initProject(IProject project, IAndroidTarget target)
+    public void initProject(@Nullable IProject project, @Nullable IAndroidTarget target)
             throws IOException, StreamException {
         if (project == null || target == null) {
             return;
@@ -363,6 +439,7 @@ public final class Sdk  {
      * @param project the request project
      * @return the ProjectState for the project.
      */
+    @Nullable
     @SuppressWarnings("deprecation")
     public static ProjectState getProjectState(IProject project) {
         if (project == null) {
@@ -404,6 +481,10 @@ public final class Sdk  {
 
                             // delete the old file.
                             ProjectProperties.delete(projectLocation, PropertyType.LEGACY_DEFAULT);
+
+                            // make sure to use the new properties
+                            properties = ProjectProperties.load(projectLocation,
+                                    PropertyType.PROJECT);
                         } catch (Exception e) {
                             AdtPlugin.log(IStatus.ERROR,
                                     "Failed to rename properties file to %1$s for project '%s2$'",
@@ -417,7 +498,7 @@ public final class Sdk  {
 
                 // try to resolve the target
                 if (AdtPlugin.getDefault().getSdkLoadStatus() == LoadStatus.LOADED) {
-                    sCurrentSdk.loadTarget(state);
+                    sCurrentSdk.loadTargetAndBuildTools(state);
                 }
             }
 
@@ -428,6 +509,7 @@ public final class Sdk  {
     /**
      * Returns the {@link IAndroidTarget} object associated with the given {@link IProject}.
      */
+    @Nullable
     public IAndroidTarget getTarget(IProject project) {
         if (project == null) {
             return null;
@@ -442,22 +524,81 @@ public final class Sdk  {
     }
 
     /**
-     * Loads the {@link IAndroidTarget} for a given project.
+     * Loads the {@link IAndroidTarget} and BuildTools for a given project.
      * <p/>This method will get the target hash string from the project properties, and resolve
      * it to an {@link IAndroidTarget} object and store it inside the {@link ProjectState}.
      * @param state the state representing the project to load.
      * @return the target that was loaded.
      */
-    public IAndroidTarget loadTarget(ProjectState state) {
+    @Nullable
+    public IAndroidTarget loadTargetAndBuildTools(ProjectState state) {
         IAndroidTarget target = null;
         if (state != null) {
             String hash = state.getTargetHashString();
             if (hash != null) {
                 state.setTarget(target = getTargetFromHashString(hash));
             }
+
+            String markerMessage = null;
+            String buildToolInfoVersion = state.getBuildToolInfoVersion();
+            if (buildToolInfoVersion != null) {
+                BuildToolInfo buildToolsInfo = getBuildToolInfo(buildToolInfoVersion);
+
+                if (buildToolsInfo != null) {
+                    state.setBuildToolInfo(buildToolsInfo);
+                } else {
+                    markerMessage = String.format("Unable to resolve %s property value '%s'",
+                                        ProjectProperties.PROPERTY_BUILD_TOOLS,
+                                        buildToolInfoVersion);
+                }
+            } else {
+                // this is ok, we'll use the latest one automatically.
+                state.setBuildToolInfo(null);
+            }
+
+            handleBuildToolsMarker(state.getProject(), markerMessage);
         }
 
         return target;
+    }
+
+    /**
+     * Adds or edit a build tools marker from the given project. This is done through a Job.
+     * @param project the project
+     * @param markerMessage the message. if null the marker is removed.
+     */
+    private void handleBuildToolsMarker(final IProject project, final String markerMessage) {
+        Job markerJob = new Job("Android SDK: Build Tools Marker") {
+            @Override
+            protected IStatus run(IProgressMonitor monitor) {
+                try {
+                    if (project.isAccessible()) {
+                        // always delete existing marker first
+                        project.deleteMarkers(AdtConstants.MARKER_BUILD_TOOLS, true,
+                                IResource.DEPTH_ZERO);
+
+                        // add the new one if needed.
+                        if (markerMessage != null) {
+                            BaseProjectHelper.markProject(project,
+                                    AdtConstants.MARKER_BUILD_TOOLS,
+                                    markerMessage, IMarker.SEVERITY_ERROR,
+                                    IMarker.PRIORITY_HIGH);
+                        }
+                    }
+                } catch (CoreException e2) {
+                    AdtPlugin.log(e2, null);
+                    // Don't return e2.getStatus(); the job control will then produce
+                    // a popup with this error, which isn't very interesting for the
+                    // user.
+                }
+
+                return Status.OK_STATUS;
+            }
+        };
+
+        // build jobs are run after other interactive jobs
+        markerJob.setPriority(Job.BUILD);
+        markerJob.schedule();
     }
 
     /**
@@ -473,6 +614,7 @@ public final class Sdk  {
      * If the target is already loaded, nothing happens.
      * @return The load status if the target data is already loaded.
      */
+    @NonNull
     public LoadStatus checkAndLoadTargetData(final IAndroidTarget target, IJavaProject project) {
         boolean loadData = false;
 
@@ -491,7 +633,7 @@ public final class Sdk  {
 
                 // add project to bundle
                 if (project != null) {
-                    bundle.projecsToReload.add(project);
+                    bundle.projectsToReload.add(project);
                 }
 
                 // and set the flag to start the loading below
@@ -499,7 +641,7 @@ public final class Sdk  {
             } else if (bundle.status == LoadStatus.LOADING) {
                 // add project to bundle
                 if (project != null) {
-                    bundle.projecsToReload.add(project);
+                    bundle.projectsToReload.add(project);
                 }
 
                 return bundle.status;
@@ -523,14 +665,14 @@ public final class Sdk  {
 
                             if (status.getCode() != IStatus.OK) {
                                 bundle.status = LoadStatus.FAILED;
-                                bundle.projecsToReload.clear();
+                                bundle.projectsToReload.clear();
                             } else {
                                 bundle.status = LoadStatus.LOADED;
 
                                 // Prepare the array of project to recompile.
                                 // The call is done outside of the synchronized block.
-                                javaProjectArray = bundle.projecsToReload.toArray(
-                                        new IJavaProject[bundle.projecsToReload.size()]);
+                                javaProjectArray = bundle.projectsToReload.toArray(
+                                        new IJavaProject[bundle.projectsToReload.size()]);
 
                                 // and update the UI of the editors that depend on the target data.
                                 plugin.updateTargetListeners(target);
@@ -538,7 +680,7 @@ public final class Sdk  {
                         }
 
                         if (javaProjectArray != null) {
-                            AndroidClasspathContainerInitializer.updateProjects(javaProjectArray);
+                            ProjectHelper.updateProjects(javaProjectArray);
                         }
 
                         return status;
@@ -569,6 +711,7 @@ public final class Sdk  {
     /**
      * Return the {@link AndroidTargetData} for a given {@link IAndroidTarget}.
      */
+    @Nullable
     public AndroidTargetData getTargetData(IAndroidTarget target) {
         synchronized (LOCK) {
             return mTargetDataMap.get(target);
@@ -578,6 +721,7 @@ public final class Sdk  {
     /**
      * Return the {@link AndroidTargetData} for a given {@link IProject}.
      */
+    @Nullable
     public AndroidTargetData getTargetData(IProject project) {
         synchronized (LOCK) {
             IAndroidTarget target = getTarget(project);
@@ -593,19 +737,51 @@ public final class Sdk  {
      * Returns a {@link DexWrapper} object to be used to execute dx commands. If dx.jar was not
      * loaded properly, then this will return <code>null</code>.
      */
-    public DexWrapper getDexWrapper() {
-        return mDexWrapper;
+    @Nullable
+    public DexWrapper getDexWrapper(@Nullable BuildToolInfo buildToolInfo) {
+        if (buildToolInfo == null) {
+            return null;
+        }
+        synchronized (LOCK) {
+            String dexLocation = buildToolInfo.getPath(BuildToolInfo.PathId.DX_JAR);
+            DexWrapper dexWrapper = mDexWrappers.get(dexLocation);
+
+            if (dexWrapper == null) {
+                // load DX.
+                dexWrapper = new DexWrapper();
+                IStatus res = dexWrapper.loadDex(dexLocation);
+                if (res != Status.OK_STATUS) {
+                    AdtPlugin.log(null, res.getMessage());
+                    dexWrapper = null;
+                } else {
+                    mDexWrappers.put(dexLocation, dexWrapper);
+                }
+            }
+
+            return dexWrapper;
+        }
+    }
+
+    public void unloadDexWrappers() {
+        synchronized (LOCK) {
+            for (DexWrapper wrapper : mDexWrappers.values()) {
+                wrapper.unload();
+            }
+            mDexWrappers.clear();
+        }
     }
 
     /**
      * Returns the {@link AvdManager}. If the AvdManager failed to parse the AVD folder, this could
      * be <code>null</code>.
      */
+    @Nullable
     public AvdManager getAvdManager() {
         return mAvdManager;
     }
 
-    public static AndroidVersion getDeviceVersion(IDevice device) {
+    @Nullable
+    public static AndroidVersion getDeviceVersion(@NonNull IDevice device) {
         try {
             Map<String, String> props = device.getProperties();
             String apiLevel = props.get(IDevice.PROP_BUILD_API_LEVEL);
@@ -620,8 +796,9 @@ public final class Sdk  {
         }
     }
 
-    public LayoutDeviceManager getLayoutDeviceManager() {
-        return mLayoutDeviceManager;
+    @NonNull
+    public DeviceManager getDeviceManager() {
+        return mDeviceManager;
     }
 
     /**
@@ -630,10 +807,11 @@ public final class Sdk  {
      * @param project the library project.
      * @return a possibly empty list of ProjectState.
      */
+    @NonNull
     public static Set<ProjectState> getMainProjectsFor(IProject project) {
         synchronized (LOCK) {
             // first get the project directly depending on this.
-            HashSet<ProjectState> list = new HashSet<ProjectState>();
+            Set<ProjectState> list = new HashSet<ProjectState>();
 
             // loop on all project and see if ProjectState.getLibrary returns a non null
             // project.
@@ -684,9 +862,8 @@ public final class Sdk  {
         }
     }
 
-    private Sdk(SdkManager manager, DexWrapper dexWrapper, AvdManager avdManager) {
+    private Sdk(SdkManager manager, AvdManager avdManager) {
         mManager = manager;
-        mDexWrapper = dexWrapper;
         mAvdManager = avdManager;
 
         // listen to projects closing
@@ -695,22 +872,20 @@ public final class Sdk  {
         // is called back during registration with project opened in the workspace.
         monitor.addResourceEventListener(mResourceEventListener);
         monitor.addProjectListener(mProjectListener);
-        monitor.addFileListener(mFileListener, IResourceDelta.CHANGED | IResourceDelta.ADDED);
+        monitor.addFileListener(mFileListener,
+                IResourceDelta.CHANGED | IResourceDelta.ADDED | IResourceDelta.REMOVED);
 
         // pre-compute some paths
-        mDocBaseUrl = getDocumentationBaseUrl(mManager.getLocation() +
+        mDocBaseUrl = getDocumentationBaseUrl(manager.getLocation() +
                 SdkConstants.OS_SDK_DOCS_FOLDER);
 
-        // load the built-in and user layout devices
-        mLayoutDeviceManager.loadDefaultAndUserDevices(mManager.getLocation());
-        // and the ones from the add-on
-        loadLayoutDevices();
+        mDeviceManager = DeviceManager.createInstance(manager.getLocation(),
+                                                      AdtPlugin.getDefault());
 
         // update whatever ProjectState is already present with new IAndroidTarget objects.
         synchronized (LOCK) {
             for (Entry<IProject, ProjectState> entry: sProjectStateMap.entrySet()) {
-                entry.getValue().setTarget(
-                        getTargetFromHashString(entry.getValue().getTargetHashString()));
+                loadTargetAndBuildTools(entry.getValue());
             }
         }
     }
@@ -783,46 +958,20 @@ public final class Sdk  {
     }
 
     /**
-     * Parses the SDK add-ons to look for files called {@link SdkConstants#FN_DEVICES_XML} to
-     * load {@link LayoutDevice} from them.
-     */
-    private void loadLayoutDevices() {
-        IAndroidTarget[] targets = mManager.getTargets();
-        for (IAndroidTarget target : targets) {
-            if (target.isPlatform() == false) {
-                File deviceXml = new File(target.getLocation(), SdkConstants.FN_DEVICES_XML);
-                if (deviceXml.isFile()) {
-                    mLayoutDeviceManager.parseAddOnLayoutDevice(deviceXml);
-                }
-            }
-        }
-
-        mLayoutDeviceManager.sealAddonLayoutDevices();
-    }
-
-    /**
      * Delegate listener for project changes.
      */
     private IProjectListener mProjectListener = new IProjectListener() {
+        @Override
         public void projectClosed(IProject project) {
             onProjectRemoved(project, false /*deleted*/);
         }
 
+        @Override
         public void projectDeleted(IProject project) {
             onProjectRemoved(project, true /*deleted*/);
         }
 
         private void onProjectRemoved(IProject removedProject, boolean deleted) {
-            try {
-                if (removedProject.hasNature(AdtConstants.NATURE_DEFAULT) == false) {
-                    return;
-                }
-            } catch (CoreException e) {
-                // this can only happen if the project does not exist or is not open, neither
-                // of which can happen here since we're processing a Project removed/deleted event
-                // which is processed before the project is actually removed/closed.
-            }
-
             if (DEBUG) {
                 System.out.println(">>> CLOSED: " + removedProject.getName());
             }
@@ -878,25 +1027,24 @@ public final class Sdk  {
             }
         }
 
+        @Override
         public void projectOpened(IProject project) {
             onProjectOpened(project);
         }
 
+        @Override
         public void projectOpenedWithWorkspace(IProject project) {
             // no need to force recompilation when projects are opened with the workspace.
             onProjectOpened(project);
         }
 
-        private void onProjectOpened(final IProject openedProject) {
-            try {
-                if (openedProject.hasNature(AdtConstants.NATURE_DEFAULT) == false) {
-                    return;
-                }
-            } catch (CoreException e) {
-                // this can only happen if the project does not exist or is not open, neither
-                // of which can happen here since we're processing a Project opened event.
-            }
+        @Override
+        public void allProjectsOpenedWithWorkspace() {
+            // Correct currently open editors
+            fixOpenLegacyEditors();
+        }
 
+        private void onProjectOpened(final IProject openedProject) {
 
             ProjectState openedState = getProjectState(openedProject);
             if (openedState != null) {
@@ -965,6 +1113,7 @@ public final class Sdk  {
             }
         }
 
+        @Override
         public void projectRenamed(IProject project, IPath from) {
             // we don't actually care about this anymore.
         }
@@ -974,7 +1123,13 @@ public final class Sdk  {
      * Delegate listener for file changes.
      */
     private IFileListener mFileListener = new IFileListener() {
-        public void fileChanged(final IFile file, IMarkerDelta[] markerDeltas, int kind) {
+        @Override
+        public void fileChanged(final @NonNull IFile file, @NonNull IMarkerDelta[] markerDeltas,
+                int kind, @Nullable String extension, int flags, boolean isAndroidPRoject) {
+            if (!isAndroidPRoject) {
+                return;
+            }
+
             if (SdkConstants.FN_PROJECT_PROPERTIES.equals(file.getName()) &&
                     file.getParent() == file.getProject()) {
                 try {
@@ -982,13 +1137,9 @@ public final class Sdk  {
                     // the target.
                     IProject iProject = file.getProject();
 
-                    if (iProject.hasNature(AdtConstants.NATURE_DEFAULT) == false) {
-                        return;
-                    }
-
                     ProjectState state = Sdk.getProjectState(iProject);
 
-                    // get the current target
+                    // get the current target and build tools
                     IAndroidTarget oldTarget = state.getTarget();
 
                     // get the current library flag
@@ -997,7 +1148,7 @@ public final class Sdk  {
                     LibraryDifference diff = state.reloadProperties();
 
                     // load the (possibly new) target.
-                    IAndroidTarget newTarget = loadTarget(state);
+                    IAndroidTarget newTarget = loadTargetAndBuildTools(state);
 
                     // reload the libraries if needed
                     if (diff.hasDiff()) {
@@ -1023,8 +1174,7 @@ public final class Sdk  {
                         IJavaProject javaProject = BaseProjectHelper.getJavaProject(
                                 file.getProject());
                         if (javaProject != null) {
-                            AndroidClasspathContainerInitializer.updateProjects(
-                                    new IJavaProject[] { javaProject });
+                            ProjectHelper.updateProject(javaProject);
                         }
 
                         // update the editors to reload with the new target
@@ -1034,6 +1184,49 @@ public final class Sdk  {
                     // This can't happen as it's only for closed project (or non existing)
                     // but in that case we can't get a fileChanged on this file.
                 }
+            } else if (kind == IResourceDelta.ADDED || kind == IResourceDelta.REMOVED) {
+                // check if it's an add/remove on a jar files inside libs
+                if (EXT_JAR.equals(extension) &&
+                        file.getProjectRelativePath().segmentCount() == 2 &&
+                        file.getParent().getName().equals(SdkConstants.FD_NATIVE_LIBS)) {
+                    // need to update the project and whatever depend on it.
+
+                    processJarFileChange(file);
+                }
+            }
+        }
+
+        private void processJarFileChange(final IFile file) {
+            try {
+                IProject iProject = file.getProject();
+
+                if (iProject.hasNature(AdtConstants.NATURE_DEFAULT) == false) {
+                    return;
+                }
+
+                List<IJavaProject> projectList = new ArrayList<IJavaProject>();
+                IJavaProject javaProject = BaseProjectHelper.getJavaProject(iProject);
+                if (javaProject != null) {
+                    projectList.add(javaProject);
+                }
+
+                ProjectState state = Sdk.getProjectState(iProject);
+
+                if (state != null) {
+                    Collection<ProjectState> parents = state.getFullParentProjects();
+                    for (ProjectState s : parents) {
+                        javaProject = BaseProjectHelper.getJavaProject(s.getProject());
+                        if (javaProject != null) {
+                            projectList.add(javaProject);
+                        }
+                    }
+
+                    ProjectHelper.updateProjects(
+                            projectList.toArray(new IJavaProject[projectList.size()]));
+                }
+            } catch (CoreException e) {
+                // This can't happen as it's only for closed project (or non existing)
+                // but in that case we can't get a fileChanged on this file.
             }
         }
     };
@@ -1072,11 +1265,13 @@ public final class Sdk  {
      * project and file listeners (for a given resource change event).
      */
     private IResourceEventListener mResourceEventListener = new IResourceEventListener() {
+        @Override
         public void resourceChangeEventStart() {
             mModifiedProjects.clear();
             mModifiedChildProjects.clear();
         }
 
+        @Override
         public void resourceChangeEventEnd() {
             if (mModifiedProjects.size() == 0) {
                 return;
@@ -1119,7 +1314,6 @@ public final class Sdk  {
      * Updates all existing projects with a given list of new/updated libraries.
      * This loops through all opened projects and check if they depend on any of the given
      * library project, and if they do, they are linked together.
-     * @param libraries the list of new/updated library projects.
      */
     private void updateParentProjects() {
         if (mModifiedChildProjects.size() == 0) {
@@ -1150,13 +1344,14 @@ public final class Sdk  {
         updateParentProjects();
     }
 
-    /** Fix editor associations for the given project, if not already done.
-     * <p>
+    /**
+     * Fix editor associations for the given project, if not already done.
+     * <p/>
      * Eclipse has a per-file setting for which editor should be used for each file
      * (see {@link IDE#setDefaultEditor(IFile, String)}).
      * We're using this flag to pick between the various XML editors (layout, drawable, etc)
      * since they all have the same file name extension.
-     * <p>
+     * <p/>
      * Unfortunately, the file setting can be "wrong" for two reasons:
      * <ol>
      *   <li> The editor type was added <b>after</b> a file had been seen by the IDE.
@@ -1168,7 +1363,7 @@ public final class Sdk  {
      *        is fixed in ADT 16, the fix only affects new files, it cannot retroactively
      *        fix editor associations that were set incorrectly by ADT 14 or 15.
      * </ol>
-     * <p>
+     * <p/>
      * This method attempts to fix the editor bindings retroactively by scanning all the
      * resource XML files and resetting the editor associations.
      * Since this is a potentially slow operation, this is only done "once"; we use a
@@ -1180,15 +1375,28 @@ public final class Sdk  {
 
         try {
             String value = project.getPersistentProperty(KEY);
-
+            int currentVersion = 0;
             if (value != null) {
+                try {
+                    currentVersion = Integer.parseInt(value);
+                } catch (Exception ingore) {
+                }
+            }
+
+            // The target version we're comparing to. This must be incremented each time
+            // we change the processing here so that a new version of the plugin would
+            // try to fix existing user projects.
+            final int targetVersion = 2;
+
+            if (currentVersion >= targetVersion) {
                 return;
             }
 
             // Set to specific version such that we can rev the version in the future
             // to trigger further scanning
-            project.setPersistentProperty(KEY, "1"); //$NON-NLS-1$
+            project.setPersistentProperty(KEY, Integer.toString(targetVersion));
 
+            // Now update the actual editor associations.
             Job job = new Job("Update Android editor bindings") { //$NON-NLS-1$
                 @Override
                 protected IStatus run(IProgressMonitor monitor) {
@@ -1197,30 +1405,35 @@ public final class Sdk  {
                             if (folderResource instanceof IFolder) {
                                 IFolder folder = (IFolder) folderResource;
 
-                                String[] folderSegments = folder.getName().split(
-                                        AndroidConstants.RES_QUALIFIER_SEP);
-
-                                ResourceFolderType type = ResourceFolderType.getTypeByName(
-                                        folderSegments[0]);
-
-                                if (type == null) {
-                                    continue;
-                                }
-
                                 for (IResource resource : folder.members()) {
-                                    if (endsWith(resource.getName(), DOT_XML)
-                                            && resource instanceof IFile) {
-                                        IFile file = (IFile) resource;
-                                        AdtPlugin.assignEditor(file, type);
+                                    if (resource instanceof IFile &&
+                                            resource.getName().endsWith(DOT_XML)) {
+                                        fixXmlFile((IFile) resource);
                                     }
                                 }
                             }
                         }
+
+                        // TODO change AndroidManifest.xml ID too
+
                     } catch (CoreException e) {
                         AdtPlugin.log(e, null);
                     }
 
                     return Status.OK_STATUS;
+                }
+
+                /**
+                 * Attempt to fix the editor ID for the given /res XML file.
+                 */
+                private void fixXmlFile(final IFile file) {
+                    // Fix the default editor ID for this resource.
+                    // This has no effect on currently open editors.
+                    IEditorDescriptor desc = IDE.getDefaultEditor(file);
+
+                    if (desc == null || !CommonXmlEditor.ID.equals(desc.getId())) {
+                        IDE.setDefaultEditor(file, CommonXmlEditor.ID);
+                    }
                 }
             };
             job.setPriority(Job.BUILD);
@@ -1228,5 +1441,99 @@ public final class Sdk  {
         } catch (CoreException e) {
             AdtPlugin.log(e, null);
         }
+    }
+
+    /**
+     * Tries to fix all currently open Android legacy editors.
+     * <p/>
+     * If an editor is found to match one of the legacy ids, we'll try to close it.
+     * If that succeeds, we try to reopen it using the new common editor ID.
+     * <p/>
+     * This method must be run from the UI thread.
+     */
+    private void fixOpenLegacyEditors() {
+
+        AdtPlugin adt = AdtPlugin.getDefault();
+        if (adt == null) {
+            return;
+        }
+
+        final IPreferenceStore store = adt.getPreferenceStore();
+        int currentValue = store.getInt(AdtPrefs.PREFS_FIX_LEGACY_EDITORS);
+        // The target version we're comparing to. This must be incremented each time
+        // we change the processing here so that a new version of the plugin would
+        // try to fix existing editors.
+        final int targetValue = 1;
+
+        if (currentValue >= targetValue) {
+            return;
+        }
+
+        // To be able to close and open editors we need to make sure this is done
+        // in the UI thread, which this isn't invoked from.
+        PlatformUI.getWorkbench().getDisplay().asyncExec(new Runnable() {
+            @Override
+            public void run() {
+                HashSet<String> legacyIds =
+                    new HashSet<String>(Arrays.asList(CommonXmlEditor.LEGACY_EDITOR_IDS));
+
+                for (IWorkbenchWindow win : PlatformUI.getWorkbench().getWorkbenchWindows()) {
+                    for (IWorkbenchPage page : win.getPages()) {
+                        for (IEditorReference ref : page.getEditorReferences()) {
+                            try {
+                                IEditorInput input = ref.getEditorInput();
+                                if (input instanceof IFileEditorInput) {
+                                    IFile file = ((IFileEditorInput)input).getFile();
+                                    IEditorPart part = ref.getEditor(true /*restore*/);
+                                    if (part != null) {
+                                        IWorkbenchPartSite site = part.getSite();
+                                        if (site != null) {
+                                            String id = site.getId();
+                                            if (legacyIds.contains(id)) {
+                                                // This editor matches one of legacy editor IDs.
+                                                fixEditor(page, part, input, file, id);
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (Exception e) {
+                                // ignore
+                            }
+                        }
+                    }
+                }
+
+                // Remember that we managed to do fix all editors
+                store.setValue(AdtPrefs.PREFS_FIX_LEGACY_EDITORS, targetValue);
+            }
+
+            private void fixEditor(
+                    IWorkbenchPage page,
+                    IEditorPart part,
+                    IEditorInput input,
+                    IFile file,
+                    String id) {
+                IDE.setDefaultEditor(file, CommonXmlEditor.ID);
+
+                boolean ok = page.closeEditor(part, true /*save*/);
+
+                AdtPlugin.log(IStatus.INFO,
+                    "Closed legacy editor ID %s for %s: %s", //$NON-NLS-1$
+                    id,
+                    file.getFullPath(),
+                    ok ? "Success" : "Failed");//$NON-NLS-1$ //$NON-NLS-2$
+
+                if (ok) {
+                    // Try to reopen it with the new ID
+                    try {
+                        page.openEditor(input, CommonXmlEditor.ID);
+                    } catch (PartInitException e) {
+                        AdtPlugin.log(e,
+                            "Failed to reopen %s",          //$NON-NLS-1$
+                            file.getFullPath());
+                    }
+                }
+            }
+        });
     }
 }

@@ -2,7 +2,7 @@
 <feature
       id="com.android.ide.eclipse.ddms"
       label="Android DDMS"
-      version="16.0.0.qualifier"
+      version="22.0.0.qualifier"
       provider-name="The Android Open Source Project"
       plugin="com.android.ide.eclipse.ddms">
 
@@ -234,8 +234,14 @@
       <import plugin="org.eclipse.core.resources"/>
       <import plugin="org.eclipse.ui.ide"/>
       <import plugin="org.eclipse.core.filesystem"/>
-      <import plugin="org.eclipse.jdt.core"/>
    </requires>
+
+   <plugin
+         id="com.android.ide.eclipse.base"
+         download-size="0"
+         install-size="0"
+         version="0.0.0"
+         unpack="false"/>
 
    <plugin
          id="com.android.ide.eclipse.ddms"

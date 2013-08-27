@@ -16,14 +16,34 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_STRING_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.SCROLL_VIEW;
-import static com.android.ide.common.layout.LayoutConstants.STRING_PREFIX;
-import static com.android.ide.eclipse.adt.AdtConstants.ANDROID_PKG;
+import static com.android.SdkConstants.ANDROID_PKG;
+import static com.android.SdkConstants.ANDROID_STRING_PREFIX;
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ATTR_CONTEXT;
+import static com.android.SdkConstants.ATTR_ID;
+import static com.android.SdkConstants.ATTR_LAYOUT_HEIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_WIDTH;
+import static com.android.SdkConstants.FD_GEN_SOURCES;
+import static com.android.SdkConstants.GRID_LAYOUT;
+import static com.android.SdkConstants.SCROLL_VIEW;
+import static com.android.SdkConstants.STRING_PREFIX;
+import static com.android.SdkConstants.VALUE_FILL_PARENT;
+import static com.android.SdkConstants.VALUE_MATCH_PARENT;
+import static com.android.SdkConstants.VALUE_WRAP_CONTENT;
+import static com.android.ide.eclipse.adt.internal.editors.layout.configuration.Configuration.CFG_DEVICE;
+import static com.android.ide.eclipse.adt.internal.editors.layout.configuration.Configuration.CFG_DEVICE_STATE;
+import static com.android.ide.eclipse.adt.internal.editors.layout.configuration.Configuration.CFG_FOLDER;
+import static com.android.ide.eclipse.adt.internal.editors.layout.configuration.Configuration.CFG_TARGET;
 import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.ViewElementDescriptor.viewNeedsPackage;
-import static com.android.sdklib.SdkConstants.FD_GEN_SOURCES;
+import static org.eclipse.wb.core.controls.flyout.IFlyoutPreferences.DOCK_EAST;
+import static org.eclipse.wb.core.controls.flyout.IFlyoutPreferences.DOCK_WEST;
+import static org.eclipse.wb.core.controls.flyout.IFlyoutPreferences.STATE_COLLAPSED;
+import static org.eclipse.wb.core.controls.flyout.IFlyoutPreferences.STATE_OPEN;
 
-import com.android.ide.common.api.Rect;
+import com.android.SdkConstants;
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
+import com.android.ide.common.layout.BaseLayoutRule;
 import com.android.ide.common.rendering.LayoutLibrary;
 import com.android.ide.common.rendering.StaticRenderSession;
 import com.android.ide.common.rendering.api.Capability;
@@ -32,7 +52,6 @@ import com.android.ide.common.rendering.api.RenderSession;
 import com.android.ide.common.rendering.api.ResourceValue;
 import com.android.ide.common.rendering.api.Result;
 import com.android.ide.common.rendering.api.SessionParams.RenderingMode;
-import com.android.ide.common.resources.ResourceFile;
 import com.android.ide.common.resources.ResourceRepository;
 import com.android.ide.common.resources.ResourceResolver;
 import com.android.ide.common.resources.configuration.FolderConfiguration;
@@ -43,37 +62,42 @@ import com.android.ide.eclipse.adt.AdtUtils;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.IPageImageProvider;
 import com.android.ide.eclipse.adt.internal.editors.IconFactory;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.common.CommonXmlDelegate;
+import com.android.ide.eclipse.adt.internal.editors.common.CommonXmlEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.LayoutReloadMonitor;
 import com.android.ide.eclipse.adt.internal.editors.layout.LayoutReloadMonitor.ChangeFlags;
 import com.android.ide.eclipse.adt.internal.editors.layout.LayoutReloadMonitor.ILayoutReloadListener;
 import com.android.ide.eclipse.adt.internal.editors.layout.ProjectCallback;
-import com.android.ide.eclipse.adt.internal.editors.layout.configuration.ConfigurationComposite;
-import com.android.ide.eclipse.adt.internal.editors.layout.configuration.ConfigurationComposite.IConfigListener;
+import com.android.ide.eclipse.adt.internal.editors.layout.configuration.Configuration;
+import com.android.ide.eclipse.adt.internal.editors.layout.configuration.ConfigurationChooser;
+import com.android.ide.eclipse.adt.internal.editors.layout.configuration.ConfigurationClient;
+import com.android.ide.eclipse.adt.internal.editors.layout.configuration.ConfigurationDescription;
+import com.android.ide.eclipse.adt.internal.editors.layout.configuration.ConfigurationMatcher;
 import com.android.ide.eclipse.adt.internal.editors.layout.configuration.LayoutCreatorDialog;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.IncludeFinder.Reference;
+import com.android.ide.eclipse.adt.internal.editors.layout.gle2.PaletteControl.PalettePage;
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.RulesEngine;
+import com.android.ide.eclipse.adt.internal.editors.layout.properties.PropertyFactory;
 import com.android.ide.eclipse.adt.internal.editors.manifest.ManifestInfo;
-import com.android.ide.eclipse.adt.internal.editors.ui.DecorComposite;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiDocumentNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
-import com.android.ide.eclipse.adt.internal.lint.EclipseLintClient;
+import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
+import com.android.ide.eclipse.adt.internal.resources.ResourceHelper;
 import com.android.ide.eclipse.adt.internal.resources.manager.ProjectResources;
 import com.android.ide.eclipse.adt.internal.resources.manager.ResourceManager;
 import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetData;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk.ITargetChangeListener;
-import com.android.ide.eclipse.adt.io.IFileWrapper;
 import com.android.resources.Density;
 import com.android.resources.ResourceFolderType;
 import com.android.resources.ResourceType;
 import com.android.sdklib.IAndroidTarget;
-import com.android.sdklib.SdkConstants;
-import com.android.util.Pair;
+import com.android.tools.lint.detector.api.LintUtils;
+import com.android.utils.Pair;
 
 import org.eclipse.core.resources.IFile;
-import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IMarker;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
@@ -97,11 +121,16 @@ import org.eclipse.jdt.core.JavaModelException;
 import org.eclipse.jdt.internal.ui.preferences.BuildPathsPropertyPage;
 import org.eclipse.jdt.ui.actions.OpenNewClassWizardAction;
 import org.eclipse.jdt.ui.wizards.NewClassWizardPage;
+import org.eclipse.jface.action.MenuManager;
+import org.eclipse.jface.dialogs.MessageDialog;
+import org.eclipse.jface.preference.IPreferenceStore;
 import org.eclipse.jface.text.BadLocationException;
 import org.eclipse.jface.text.IDocument;
 import org.eclipse.jface.text.source.ISourceViewer;
 import org.eclipse.jface.viewers.ISelection;
+import org.eclipse.jface.viewers.ISelectionChangedListener;
 import org.eclipse.jface.viewers.ISelectionProvider;
+import org.eclipse.jface.viewers.SelectionChangedEvent;
 import org.eclipse.jface.window.Window;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.custom.SashForm;
@@ -113,17 +142,22 @@ import org.eclipse.swt.graphics.Image;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Display;
+import org.eclipse.swt.widgets.Shell;
 import org.eclipse.text.edits.MalformedTreeException;
 import org.eclipse.text.edits.MultiTextEdit;
 import org.eclipse.text.edits.ReplaceEdit;
+import org.eclipse.ui.IActionBars;
 import org.eclipse.ui.IEditorInput;
+import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.IEditorSite;
 import org.eclipse.ui.INullSelectionListener;
 import org.eclipse.ui.ISelectionListener;
 import org.eclipse.ui.IWorkbench;
 import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.IWorkbenchPart;
+import org.eclipse.ui.IWorkbenchPartSite;
 import org.eclipse.ui.IWorkbenchWindow;
 import org.eclipse.ui.PartInitException;
 import org.eclipse.ui.PlatformUI;
@@ -131,14 +165,15 @@ import org.eclipse.ui.dialogs.PreferencesUtil;
 import org.eclipse.ui.ide.IDE;
 import org.eclipse.ui.part.EditorPart;
 import org.eclipse.ui.part.FileEditorInput;
-import org.eclipse.ui.part.IPage;
+import org.eclipse.ui.part.IPageSite;
 import org.eclipse.ui.part.PageBookView;
+import org.eclipse.wb.core.controls.flyout.FlyoutControlComposite;
+import org.eclipse.wb.core.controls.flyout.IFlyoutListener;
+import org.eclipse.wb.core.controls.flyout.PluginFlyoutPreferences;
+import org.eclipse.wb.internal.core.editor.structure.PageSiteComposite;
+import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -158,16 +193,17 @@ import java.util.Set;
  * <p/>
  * This part is also an {@link ISelectionListener}. It listens to the site's selection
  * service and thus receives selection changes from itself as well as the associated
- * outline and property sheet (these are registered by {@link LayoutEditor#getAdapter(Class)}).
+ * outline and property sheet (these are registered by {@link LayoutEditorDelegate#delegateGetAdapter(Class)}).
  *
  * @since GLE2
  */
 public class GraphicalEditorPart extends EditorPart
-    implements IPageImageProvider, ISelectionListener, INullSelectionListener {
+    implements IPageImageProvider, INullSelectionListener, IFlyoutListener,
+            ConfigurationClient {
 
     /*
      * Useful notes:
-     * To understand Drag'n'drop:
+     * To understand Drag & drop:
      *   http://www.eclipse.org/articles/Article-Workbench-DND/drag_drop.html
      *
      * To understand the site's selection listener, selection provider, and the
@@ -181,6 +217,12 @@ public class GraphicalEditorPart extends EditorPart
      * - The editor part, the outline and the property sheet are listeners
      *   which all listen to each others indirectly.
      */
+
+    /** Property key for the window preferences for the structure flyout */
+    private static final String PREF_STRUCTURE = "design.structure";     //$NON-NLS-1$
+
+    /** Property key for the window preferences for the palette flyout */
+    private static final String PREF_PALETTE = "design.palette";         //$NON-NLS-1$
 
     /**
      * Session-property on files which specifies the initial config state to be used on
@@ -197,16 +239,13 @@ public class GraphicalEditorPart extends EditorPart
         new QualifiedName(AdtPlugin.PLUGIN_ID, "includer");//$NON-NLS-1$
 
     /** Reference to the layout editor */
-    private final LayoutEditor mLayoutEditor;
+    private final LayoutEditorDelegate mEditorDelegate;
 
     /** Reference to the file being edited. Can also be used to access the {@link IProject}. */
     private IFile mEditedFile;
 
-    /** The configuration composite at the top of the layout editor. */
-    private ConfigurationComposite mConfigComposite;
-
-    /** The sash that splits the palette from the canvas. */
-    private SashForm mSashPalette;
+    /** The configuration chooser at the top of the layout editor. */
+    private ConfigurationChooser mConfigChooser;
 
     /** The sash that splits the palette from the error view.
      * The error view is shown only when needed. */
@@ -235,12 +274,16 @@ public class GraphicalEditorPart extends EditorPart
     private ProjectCallback mProjectCallback;
     private boolean mNeedsRecompute = false;
     private TargetListener mTargetListener;
-    private ConfigListener mConfigListener;
     private ResourceResolver mResourceResolver;
     private ReloadListener mReloadListener;
     private int mMinSdkVersion;
     private int mTargetSdkVersion;
     private LayoutActionBar mActionBar;
+    private OutlinePage mOutlinePage;
+    private FlyoutControlComposite mStructureFlyout;
+    private FlyoutControlComposite mPaletteComposite;
+    private PropertyFactory mPropertyFactory;
+    private boolean mRenderedOnce;
 
     /**
      * Flags which tracks whether this editor is currently active which is set whenever
@@ -250,8 +293,13 @@ public class GraphicalEditorPart extends EditorPart
      */
     private boolean mActive;
 
-    public GraphicalEditorPart(LayoutEditor layoutEditor) {
-        mLayoutEditor = layoutEditor;
+    /**
+     * Constructs a new {@link GraphicalEditorPart}
+     *
+     * @param editorDelegate the associated XML editor delegate
+     */
+    public GraphicalEditorPart(@NonNull LayoutEditorDelegate editorDelegate) {
+        mEditorDelegate = editorDelegate;
         setPartName("Graphical Layout");
     }
 
@@ -271,6 +319,10 @@ public class GraphicalEditorPart extends EditorPart
         if (mTargetListener == null) {
             mTargetListener = new TargetListener();
             AdtPlugin.getDefault().addTargetListener(mTargetListener);
+
+            // Trigger a check to see if the SDK needs to be reloaded (which will
+            // invoke onSdkLoaded asynchronously as needed).
+            AdtPlugin.getDefault().refreshSdk();
         }
     }
 
@@ -282,6 +334,7 @@ public class GraphicalEditorPart extends EditorPart
         }
     }
 
+    @Override
     public Image getPageImage() {
         return IconFactory.getInstance().getIcon("editor_page_design");  //$NON-NLS-1$
     }
@@ -295,15 +348,13 @@ public class GraphicalEditorPart extends EditorPart
         parent.setLayout(gl);
         gl.marginHeight = gl.marginWidth = 0;
 
-        mConfigListener = new ConfigListener();
-
         // Check whether somebody has requested an initial state for the newly opened file.
         // The initial state is a serialized version of the state compatible with
         // {@link ConfigurationComposite#CONFIG_STATE}.
         String initialState = null;
         IFile file = mEditedFile;
         if (file == null) {
-            IEditorInput input = mLayoutEditor.getEditorInput();
+            IEditorInput input = mEditorDelegate.getEditor().getEditorInput();
             if (input instanceof FileEditorInput) {
                 file = ((FileEditorInput) input).getFile();
             }
@@ -321,34 +372,57 @@ public class GraphicalEditorPart extends EditorPart
             }
         }
 
-        mConfigComposite = new ConfigurationComposite(mConfigListener, parent,
-                SWT.BORDER, initialState);
+        IPreferenceStore preferenceStore = AdtPlugin.getDefault().getPreferenceStore();
+        PluginFlyoutPreferences preferences;
+        preferences = new PluginFlyoutPreferences(preferenceStore, PREF_PALETTE);
+        preferences.initializeDefaults(DOCK_WEST, STATE_OPEN, 200);
+        mPaletteComposite = new FlyoutControlComposite(parent, SWT.NONE, preferences);
+        mPaletteComposite.setTitleText("Palette");
+        mPaletteComposite.setMinWidth(100);
+        Composite paletteParent = mPaletteComposite.getFlyoutParent();
+        Composite editorParent = mPaletteComposite.getClientParent();
+        mPaletteComposite.setListener(this);
 
-        mSashPalette = new SashForm(parent, SWT.HORIZONTAL);
-        mSashPalette.setLayoutData(new GridData(GridData.FILL_BOTH));
+        mPaletteComposite.setLayoutData(new GridData(GridData.FILL_BOTH));
 
-        DecorComposite paletteDecor = new DecorComposite(mSashPalette, SWT.BORDER);
-        paletteDecor.setContent(new PaletteControl.PaletteDecor(this));
-        mPalette = (PaletteControl) paletteDecor.getContentControl();
+        PageSiteComposite paletteComposite = new PageSiteComposite(paletteParent, SWT.BORDER);
+        paletteComposite.setTitleText("Palette");
+        paletteComposite.setTitleImage(IconFactory.getInstance().getIcon("palette"));
+        PalettePage decor = new PalettePage(this);
+        paletteComposite.setPage(decor);
+        mPalette = (PaletteControl) decor.getControl();
+        decor.createToolbarItems(paletteComposite.getToolBar());
 
-        Composite layoutBarAndCanvas = new Composite(mSashPalette, SWT.NONE);
+        // Create the shared structure+editor area
+        preferences = new PluginFlyoutPreferences(preferenceStore, PREF_STRUCTURE);
+        preferences.initializeDefaults(DOCK_EAST, STATE_OPEN, 300);
+        mStructureFlyout = new FlyoutControlComposite(editorParent, SWT.NONE, preferences);
+        mStructureFlyout.setTitleText("Structure");
+        mStructureFlyout.setMinWidth(150);
+        mStructureFlyout.setListener(this);
+
+        Composite layoutBarAndCanvas = new Composite(mStructureFlyout.getClientParent(), SWT.NONE);
         GridLayout gridLayout = new GridLayout(1, false);
         gridLayout.horizontalSpacing = 0;
         gridLayout.verticalSpacing = 0;
         gridLayout.marginWidth = 0;
         gridLayout.marginHeight = 0;
         layoutBarAndCanvas.setLayout(gridLayout);
+
+        mConfigChooser = new ConfigurationChooser(this, layoutBarAndCanvas, initialState);
+        mConfigChooser.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
+
         mActionBar = new LayoutActionBar(layoutBarAndCanvas, SWT.NONE, this);
-        GridData detailsData = new GridData(SWT.FILL, SWT.FILL, false, false, 1, 1);
+        GridData detailsData = new GridData(SWT.FILL, SWT.FILL, true, false, 1, 1);
         mActionBar.setLayoutData(detailsData);
         if (file != null) {
-            mActionBar.updateErrorIndicator(EclipseLintClient.hasMarkers(file));
+            mActionBar.updateErrorIndicator(file);
         }
 
         mSashError = new SashForm(layoutBarAndCanvas, SWT.VERTICAL | SWT.BORDER);
         mSashError.setLayoutData(new GridData(GridData.FILL_BOTH));
 
-        mCanvasViewer = new LayoutCanvasViewer(mLayoutEditor, mRulesEngine, mSashError, SWT.NONE);
+        mCanvasViewer = new LayoutCanvasViewer(mEditorDelegate, mRulesEngine, mSashError, SWT.NONE);
         mSashError.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true, 1, 1));
 
         mErrorLabel = new StyledText(mSashError, SWT.READ_ONLY | SWT.WRAP | SWT.V_SCROLL);
@@ -357,29 +431,173 @@ public class GraphicalEditorPart extends EditorPart
         mErrorLabel.setForeground(d.getSystemColor(SWT.COLOR_INFO_FOREGROUND));
         mErrorLabel.addMouseListener(new ErrorLabelListener());
 
-        mSashPalette.setWeights(new int[] { 20, 80 });
         mSashError.setWeights(new int[] { 80, 20 });
         mSashError.setMaximizedControl(mCanvasViewer.getControl());
+
+        // Create the structure views. We really should do this *lazily*, but that
+        // seems to cause a bug: property sheet won't update. Track this down later.
+        createStructureViews(mStructureFlyout.getFlyoutParent(), false);
+        showStructureViews(false, false, false);
 
         // Initialize the state
         reloadPalette();
 
-        getSite().setSelectionProvider(mCanvasViewer);
-        getSite().getPage().addSelectionListener(this);
+        IWorkbenchPartSite site = getSite();
+        site.setSelectionProvider(mCanvasViewer);
+        site.getPage().addSelectionListener(this);
+    }
+
+    private void createStructureViews(Composite parent, boolean createPropertySheet) {
+        mOutlinePage = new OutlinePage(this);
+        mOutlinePage.setShowPropertySheet(createPropertySheet);
+        mOutlinePage.setShowHeader(true);
+
+        IPageSite pageSite = new IPageSite() {
+
+            @Override
+            public IWorkbenchPage getPage() {
+                return getSite().getPage();
+            }
+
+            @Override
+            public ISelectionProvider getSelectionProvider() {
+                return getSite().getSelectionProvider();
+            }
+
+            @Override
+            public Shell getShell() {
+                return getSite().getShell();
+            }
+
+            @Override
+            public IWorkbenchWindow getWorkbenchWindow() {
+                return getSite().getWorkbenchWindow();
+            }
+
+            @Override
+            public void setSelectionProvider(ISelectionProvider provider) {
+                getSite().setSelectionProvider(provider);
+            }
+
+            @Override
+            public Object getAdapter(Class adapter) {
+                return getSite().getAdapter(adapter);
+            }
+
+            @Override
+            public Object getService(Class api) {
+                return getSite().getService(api);
+            }
+
+            @Override
+            public boolean hasService(Class api) {
+                return getSite().hasService(api);
+            }
+
+            @Override
+            public void registerContextMenu(String menuId, MenuManager menuManager,
+                    ISelectionProvider selectionProvider) {
+            }
+
+            @Override
+            public IActionBars getActionBars() {
+                return null;
+            }
+        };
+        mOutlinePage.init(pageSite);
+        mOutlinePage.createControl(parent);
+        mOutlinePage.addSelectionChangedListener(new ISelectionChangedListener() {
+            @Override
+            public void selectionChanged(SelectionChangedEvent event) {
+                getCanvasControl().getSelectionManager().setSelection(event.getSelection());
+            }
+        });
+    }
+
+    /** Shows the embedded (within the layout editor) outline and or properties */
+    void showStructureViews(final boolean showOutline, final boolean showProperties,
+            final boolean updateLayout) {
+        Display display = mConfigChooser.getDisplay();
+        if (display.getThread() != Thread.currentThread()) {
+            display.asyncExec(new Runnable() {
+                @Override
+                public void run() {
+                    if (!mConfigChooser.isDisposed()) {
+                        showStructureViews(showOutline, showProperties, updateLayout);
+                    }
+                }
+
+            });
+            return;
+        }
+
+        boolean show = showOutline || showProperties;
+
+        Control[] children = mStructureFlyout.getFlyoutParent().getChildren();
+        if (children.length == 0) {
+            if (show) {
+                createStructureViews(mStructureFlyout.getFlyoutParent(), showProperties);
+            }
+            return;
+        }
+
+        mOutlinePage.setShowPropertySheet(showProperties);
+
+        Control control = children[0];
+        if (show != control.getVisible()) {
+            control.setVisible(show);
+            mOutlinePage.setActive(show); // disable/re-enable listeners etc
+            if (show) {
+                ISelection selection = getCanvasControl().getSelectionManager().getSelection();
+                mOutlinePage.selectionChanged(getEditorDelegate().getEditor(), selection);
+            }
+            if (updateLayout) {
+                mStructureFlyout.layout();
+            }
+            // TODO: *dispose* the non-showing widgets to save memory?
+        }
     }
 
     /**
-     * Listens to workbench selections that does NOT come from {@link LayoutEditor}
+     * Returns the property factory associated with this editor
+     *
+     * @return the factory
+     */
+    @NonNull
+    public PropertyFactory getPropertyFactory() {
+        if (mPropertyFactory == null) {
+            mPropertyFactory = new PropertyFactory(this);
+        }
+
+        return mPropertyFactory;
+    }
+
+    /**
+     * Invoked by {@link LayoutCanvas} to set the model (a.k.a. the root view info).
+     *
+     * @param rootViewInfo The root of the view info hierarchy. Can be null.
+     */
+    public void setModel(CanvasViewInfo rootViewInfo) {
+        if (mOutlinePage != null) {
+            mOutlinePage.setModel(rootViewInfo);
+        }
+    }
+
+    /**
+     * Listens to workbench selections that does NOT come from {@link LayoutEditorDelegate}
      * (those are generated by ourselves).
      * <p/>
      * Selection can be null, as indicated by this class implementing
      * {@link INullSelectionListener}.
      */
+    @Override
     public void selectionChanged(IWorkbenchPart part, ISelection selection) {
-        if (!(part instanceof LayoutEditor)) {
+        Object delegate = part instanceof IEditorPart ?
+                LayoutEditorDelegate.fromEditor((IEditorPart) part) : null;
+        if (delegate == null) {
             if (part instanceof PageBookView) {
                 PageBookView pbv = (PageBookView) part;
-                IPage currentPage = pbv.getCurrentPage();
+                 org.eclipse.ui.part.IPage currentPage = pbv.getCurrentPage();
                 if (currentPage instanceof OutlinePage) {
                     LayoutCanvas canvas = getCanvasControl();
                     if (canvas != null && canvas.getOutlinePage() != currentPage) {
@@ -424,319 +642,253 @@ public class GraphicalEditorPart extends EditorPart
         mCanvasViewer.getCanvas().getSelectionManager().select(xmlNode);
     }
 
-    /**
-     * Listens to changes from the Configuration UI banner and triggers layout rendering when
-     * changed. Also provide the Configuration UI with the list of resources/layout to display.
-     */
-    private class ConfigListener implements IConfigListener {
-
-        /**
-         * Looks for a file matching the new {@link FolderConfiguration} and attempts to open it.
-         * <p/>If there is no match, notify the user.
-         */
-        public void onConfigurationChange() {
-            mConfiguredFrameworkRes = mConfiguredProjectRes = null;
-            mResourceResolver = null;
-
-            if (mEditedFile == null || mConfigComposite.getEditedConfig() == null) {
-                return;
-            }
-
-            // Before doing the normal process, test for the following case.
-            // - the editor is being opened (or reset for a new input)
-            // - the file being opened is not the best match for any possible configuration
-            // - another random compatible config was chosen in the config composite.
-            // The result is that 'match' will not be the file being edited, but because this is not
-            // due to a config change, we should not trigger opening the actual best match (also,
-            // because the editor is still opening the MatchingStrategy woudln't answer true
-            // and the best match file would open in a different editor).
-            // So the solution is that if the editor is being created, we just call recomputeLayout
-            // without looking for a better matching layout file.
-            if (mLayoutEditor.isCreatingPages()) {
-                recomputeLayout();
-            } else {
-                // get the resources of the file's project.
-                ProjectResources resources = ResourceManager.getInstance().getProjectResources(
-                        mEditedFile.getProject());
-
-                // from the resources, look for a matching file
-                ResourceFile match = null;
-                if (resources != null) {
-                    match = resources.getMatchingFile(mEditedFile.getName(),
-                                                      ResourceFolderType.LAYOUT,
-                                                      mConfigComposite.getCurrentConfig());
-                }
-
-                if (match != null) {
-                    // since this is coming from Eclipse, this is always an instance of IFileWrapper
-                    IFileWrapper iFileWrapper = (IFileWrapper) match.getFile();
-                    IFile iFile = iFileWrapper.getIFile();
-                    if (iFile.equals(mEditedFile) == false) {
-                        try {
-                            // tell the editor that the next replacement file is due to a config
-                            // change.
-                            mLayoutEditor.setNewFileOnConfigChange(true);
-
-                            // ask the IDE to open the replacement file.
-                            IDE.openEditor(getSite().getWorkbenchWindow().getActivePage(), iFile);
-
-                            // we're done!
-                            return;
-                        } catch (PartInitException e) {
-                            // FIXME: do something!
-                        }
-                    }
-
-                    // at this point, we have not opened a new file.
-
-                    // Store the state in the current file
-                    mConfigComposite.storeState();
-
-                    // Even though the layout doesn't change, the config changed, and referenced
-                    // resources need to be updated.
-                    recomputeLayout();
-                } else {
-                    // display the error.
-                    FolderConfiguration currentConfig = mConfigComposite.getCurrentConfig();
-                    displayError(
-                            "No resources match the configuration\n \n\t%1$s\n \nChange the configuration or create:\n \n\tres/%2$s/%3$s\n \nYou can also click the 'Create' button above.",
-                            currentConfig.toDisplayString(),
-                            currentConfig.getFolderName(ResourceFolderType.LAYOUT),
-                            mEditedFile.getName());
-                }
-            }
-
-            reloadPalette();
-        }
-
-        public void onThemeChange() {
-            // Store the state in the current file
-            mConfigComposite.storeState();
-            mResourceResolver = null;
-
-            recomputeLayout();
-
-            reloadPalette();
-        }
-
-        public void onCreate() {
-            LayoutCreatorDialog dialog = new LayoutCreatorDialog(mConfigComposite.getShell(),
-                    mEditedFile.getName(), mConfigComposite.getCurrentConfig());
-            if (dialog.open() == Window.OK) {
-                final FolderConfiguration config = new FolderConfiguration();
-                dialog.getConfiguration(config);
-
-                createAlternateLayout(config);
-            }
-        }
-
-        public void onRenderingTargetPreChange(IAndroidTarget oldTarget) {
+    // ---- Implements ConfigurationClient ----
+    @Override
+    public void aboutToChange(int flags) {
+        if ((flags & CFG_TARGET) != 0) {
+            IAndroidTarget oldTarget = mConfigChooser.getConfiguration().getTarget();
             preRenderingTargetChangeCleanUp(oldTarget);
         }
+    }
 
-        public void onRenderingTargetPostChange(IAndroidTarget target) {
-            AndroidTargetData targetData = Sdk.getCurrent().getTargetData(target);
-            updateCapabilities(targetData);
+    @Override
+    public boolean changed(int flags) {
+        mConfiguredFrameworkRes = mConfiguredProjectRes = null;
+        mResourceResolver = null;
 
-            mPalette.reloadPalette(target);
+        if (mEditedFile == null) {
+            return true;
         }
 
-        public Map<ResourceType, Map<String, ResourceValue>> getConfiguredFrameworkResources() {
-            if (mConfiguredFrameworkRes == null && mConfigComposite != null) {
-                ResourceRepository frameworkRes = getFrameworkResources();
-
-                if (frameworkRes == null) {
-                    AdtPlugin.log(IStatus.ERROR, "Failed to get ProjectResource for the framework");
-                } else {
-                    // get the framework resource values based on the current config
-                    mConfiguredFrameworkRes = frameworkRes.getConfiguredResources(
-                            mConfigComposite.getCurrentConfig());
-                }
+        // Before doing the normal process, test for the following case.
+        // - the editor is being opened (or reset for a new input)
+        // - the file being opened is not the best match for any possible configuration
+        // - another random compatible config was chosen in the config composite.
+        // The result is that 'match' will not be the file being edited, but because this is not
+        // due to a config change, we should not trigger opening the actual best match (also,
+        // because the editor is still opening the MatchingStrategy woudln't answer true
+        // and the best match file would open in a different editor).
+        // So the solution is that if the editor is being created, we just call recomputeLayout
+        // without looking for a better matching layout file.
+        if (mEditorDelegate.getEditor().isCreatingPages()) {
+            recomputeLayout();
+        } else {
+            boolean affectsFileSelection = (flags & Configuration.MASK_FILE_ATTRS) != 0;
+            IFile best = null;
+            // get the resources of the file's project.
+            if (affectsFileSelection) {
+                best = ConfigurationMatcher.getBestFileMatch(mConfigChooser);
             }
-
-            return mConfiguredFrameworkRes;
-        }
-
-        public Map<ResourceType, Map<String, ResourceValue>> getConfiguredProjectResources() {
-            if (mConfiguredProjectRes == null && mConfigComposite != null) {
-                ProjectResources project = getProjectResources();
-
-                // get the project resource values based on the current config
-                mConfiguredProjectRes = project.getConfiguredResources(
-                        mConfigComposite.getCurrentConfig());
-            }
-
-            return mConfiguredProjectRes;
-        }
-
-        /**
-         * Returns a {@link ProjectResources} for the framework resources based on the current
-         * configuration selection.
-         * @return the framework resources or null if not found.
-         */
-        public ResourceRepository getFrameworkResources() {
-            return getFrameworkResources(getRenderingTarget());
-        }
-
-        /**
-         * Returns a {@link ProjectResources} for the framework resources of a given
-         * target.
-         * @param target the target for which to return the framework resources.
-         * @return the framework resources or null if not found.
-         */
-        public ResourceRepository getFrameworkResources(IAndroidTarget target) {
-            if (target != null) {
-                AndroidTargetData data = Sdk.getCurrent().getTargetData(target);
-
-                if (data != null) {
-                    return data.getFrameworkResources();
-                }
-            }
-
-            return null;
-        }
-
-        public ProjectResources getProjectResources() {
-            if (mEditedFile != null) {
-                ResourceManager manager = ResourceManager.getInstance();
-                return manager.getProjectResources(mEditedFile.getProject());
-            }
-
-            return null;
-        }
-
-        /**
-         * Creates a new layout file from the specified {@link FolderConfiguration}.
-         */
-        private void createAlternateLayout(final FolderConfiguration config) {
-            new Job("Create Alternate Resource") {
-                @Override
-                protected IStatus run(IProgressMonitor monitor) {
-                    // get the folder name
-                    String folderName = config.getFolderName(ResourceFolderType.LAYOUT);
+            if (best != null) {
+                if (!best.equals(mEditedFile)) {
                     try {
+                        // tell the editor that the next replacement file is due to a config
+                        // change.
+                        mEditorDelegate.setNewFileOnConfigChange(true);
 
-                        // look to see if it exists.
-                        // get the res folder
-                        IFolder res = (IFolder)mEditedFile.getParent().getParent();
-                        String path = res.getLocation().toOSString();
-
-                        File newLayoutFolder = new File(path + File.separator + folderName);
-                        if (newLayoutFolder.isFile()) {
-                            // this should not happen since aapt would have complained
-                            // before, but if one disable the automatic build, this could
-                            // happen.
-                            String message = String.format("File 'res/%1$s' is in the way!",
-                                    folderName);
-
-                            AdtPlugin.displayError("Layout Creation", message);
-
-                            return new Status(IStatus.ERROR, AdtPlugin.PLUGIN_ID, message);
-                        } else if (newLayoutFolder.exists() == false) {
-                            // create it.
-                            newLayoutFolder.mkdir();
+                        boolean reuseEditor = AdtPrefs.getPrefs().isSharedLayoutEditor();
+                        if (!reuseEditor) {
+                            String data = ConfigurationDescription.getDescription(best);
+                            if (data == null) {
+                                // Not previously opened: duplicate the current state as
+                                // much as possible
+                                data = mConfigChooser.getConfiguration().toPersistentString();
+                                ConfigurationDescription.setDescription(best, data);
+                            }
                         }
 
-                        // now create the file
-                        File newLayoutFile = new File(newLayoutFolder.getAbsolutePath() +
-                                    File.separator + mEditedFile.getName());
+                        // ask the IDE to open the replacement file.
+                        IDE.openEditor(getSite().getWorkbenchWindow().getActivePage(), best,
+                                CommonXmlEditor.ID);
 
-                        newLayoutFile.createNewFile();
-
-                        InputStream input = mEditedFile.getContents();
-
-                        FileOutputStream fos = new FileOutputStream(newLayoutFile);
-
-                        byte[] data = new byte[512];
-                        int count;
-                        while ((count = input.read(data)) != -1) {
-                            fos.write(data, 0, count);
-                        }
-
-                        input.close();
-                        fos.close();
-
-                        // refreshes the res folder to show up the new
-                        // layout folder (if needed) and the file.
-                        // We use a progress monitor to catch the end of the refresh
-                        // to trigger the edit of the new file.
-                        res.refreshLocal(IResource.DEPTH_INFINITE, new IProgressMonitor() {
-                            public void done() {
-                                mConfigComposite.getDisplay().asyncExec(new Runnable() {
-                                    public void run() {
-                                        onConfigurationChange();
-                                    }
-                                });
-                            }
-
-                            public void beginTask(String name, int totalWork) {
-                                // pass
-                            }
-
-                            public void internalWorked(double work) {
-                                // pass
-                            }
-
-                            public boolean isCanceled() {
-                                // pass
-                                return false;
-                            }
-
-                            public void setCanceled(boolean value) {
-                                // pass
-                            }
-
-                            public void setTaskName(String name) {
-                                // pass
-                            }
-
-                            public void subTask(String name) {
-                                // pass
-                            }
-
-                            public void worked(int work) {
-                                // pass
-                            }
-                        });
-                    } catch (IOException e2) {
-                        String message = String.format(
-                                "Failed to create File 'res/%1$s/%2$s' : %3$s",
-                                folderName, mEditedFile.getName(), e2.getMessage());
-
-                        AdtPlugin.displayError("Layout Creation", message);
-
-                        return new Status(IStatus.ERROR, AdtPlugin.PLUGIN_ID,
-                                message, e2);
-                    } catch (CoreException e2) {
-                        String message = String.format(
-                                "Failed to create File 'res/%1$s/%2$s' : %3$s",
-                                folderName, mEditedFile.getName(), e2.getMessage());
-
-                        AdtPlugin.displayError("Layout Creation", message);
-
-                        return e2.getStatus();
+                        // we're done!
+                        return reuseEditor;
+                    } catch (PartInitException e) {
+                        // FIXME: do something!
                     }
-
-                    return Status.OK_STATUS;
-
                 }
-            }.schedule();
-        }
 
-        /**
-         * When the device changes, zoom the view to fit, but only up to 100% (e.g. zoom
-         * out to fit the content, or zoom back in if we were zoomed out more from the
-         * previous view, but only up to 100% such that we never blow up pixels
-         */
-        public void onDevicePostChange() {
-            if (mActionBar.isZoomingAllowed()) {
-                getCanvasControl().setFitScale(true);
+                // at this point, we have not opened a new file.
+
+                // Store the state in the current file
+                mConfigChooser.saveConstraints();
+
+                // Even though the layout doesn't change, the config changed, and referenced
+                // resources need to be updated.
+                recomputeLayout();
+            } else if (affectsFileSelection) {
+                // display the error.
+                Configuration configuration = mConfigChooser.getConfiguration();
+                FolderConfiguration currentConfig = configuration.getFullConfig();
+                displayError(
+                        "No resources match the configuration\n" +
+                        " \n" +
+                        "\t%1$s\n" +
+                        " \n" +
+                        "Change the configuration or create:\n" +
+                        " \n" +
+                        "\tres/%2$s/%3$s\n" +
+                        " \n" +
+                        "You can also click the 'Create New...' item in the configuration " +
+                        "dropdown menu above.",
+                        currentConfig.toDisplayString(),
+                        currentConfig.getFolderName(ResourceFolderType.LAYOUT),
+                        mEditedFile.getName());
+            } else {
+                // Something else changed, such as the theme - just recompute existing
+                // layout
+                mConfigChooser.saveConstraints();
+                recomputeLayout();
             }
         }
 
-        public String getIncludedWithin() {
-            return mIncludedWithin != null ? mIncludedWithin.getName() : null;
+        if ((flags & CFG_TARGET) != 0) {
+            Configuration configuration = mConfigChooser.getConfiguration();
+            IAndroidTarget target = configuration.getTarget();
+            Sdk current = Sdk.getCurrent();
+            if (current != null) {
+                AndroidTargetData targetData = current.getTargetData(target);
+                updateCapabilities(targetData);
+            }
         }
+
+        if ((flags & (CFG_DEVICE | CFG_DEVICE_STATE)) != 0) {
+            // When the device changes, zoom the view to fit, but only up to 100% (e.g. zoom
+            // out to fit the content, or zoom back in if we were zoomed out more from the
+            // previous view, but only up to 100% such that we never blow up pixels
+            if (mActionBar.isZoomingAllowed()) {
+                getCanvasControl().setFitScale(true,  true /*allowZoomIn*/);
+            }
+        }
+
+        reloadPalette();
+
+        getCanvasControl().getPreviewManager().configurationChanged(flags);
+
+        return true;
+    }
+
+    @Override
+    public void setActivity(@NonNull String activity) {
+        ManifestInfo manifest = ManifestInfo.get(mEditedFile.getProject());
+        String pkg = manifest.getPackage();
+        if (activity.startsWith(pkg) && activity.length() > pkg.length()
+                && activity.charAt(pkg.length()) == '.') {
+            activity = activity.substring(pkg.length());
+        }
+        CommonXmlEditor editor = getEditorDelegate().getEditor();
+        Element element = editor.getUiRootNode().getXmlDocument().getDocumentElement();
+        AdtUtils.setToolsAttribute(editor,
+                element, "Choose Activity", ATTR_CONTEXT,
+                activity, false /*reveal*/, false /*append*/);
+    }
+
+    /**
+     * Returns a {@link ProjectResources} for the framework resources based on the current
+     * configuration selection.
+     * @return the framework resources or null if not found.
+     */
+    @Override
+    @Nullable
+    public ResourceRepository getFrameworkResources() {
+        return getFrameworkResources(getRenderingTarget());
+    }
+
+    /**
+     * Returns a {@link ProjectResources} for the framework resources of a given
+     * target.
+     * @param target the target for which to return the framework resources.
+     * @return the framework resources or null if not found.
+     */
+    @Override
+    @Nullable
+    public ResourceRepository getFrameworkResources(@Nullable IAndroidTarget target) {
+        if (target != null) {
+            AndroidTargetData data = Sdk.getCurrent().getTargetData(target);
+
+            if (data != null) {
+                return data.getFrameworkResources();
+            }
+        }
+
+        return null;
+    }
+
+    @Override
+    @Nullable
+    public ProjectResources getProjectResources() {
+        if (mEditedFile != null) {
+            ResourceManager manager = ResourceManager.getInstance();
+            return manager.getProjectResources(mEditedFile.getProject());
+        }
+
+        return null;
+    }
+
+
+    @Override
+    @NonNull
+    public Map<ResourceType, Map<String, ResourceValue>> getConfiguredFrameworkResources() {
+        if (mConfiguredFrameworkRes == null && mConfigChooser != null) {
+            ResourceRepository frameworkRes = getFrameworkResources();
+
+            if (frameworkRes == null) {
+                AdtPlugin.log(IStatus.ERROR, "Failed to get ProjectResource for the framework");
+            } else {
+                // get the framework resource values based on the current config
+                mConfiguredFrameworkRes = frameworkRes.getConfiguredResources(
+                        mConfigChooser.getConfiguration().getFullConfig());
+            }
+        }
+
+        return mConfiguredFrameworkRes;
+    }
+
+    @Override
+    @NonNull
+    public Map<ResourceType, Map<String, ResourceValue>> getConfiguredProjectResources() {
+        if (mConfiguredProjectRes == null && mConfigChooser != null) {
+            ProjectResources project = getProjectResources();
+
+            // get the project resource values based on the current config
+            mConfiguredProjectRes = project.getConfiguredResources(
+                    mConfigChooser.getConfiguration().getFullConfig());
+        }
+
+        return mConfiguredProjectRes;
+    }
+
+    @Override
+    public void createConfigFile() {
+        LayoutCreatorDialog dialog = new LayoutCreatorDialog(mConfigChooser.getShell(),
+                mEditedFile.getName(), mConfigChooser.getConfiguration().getFullConfig());
+        if (dialog.open() != Window.OK) {
+            return;
+        }
+
+        FolderConfiguration config = new FolderConfiguration();
+        dialog.getConfiguration(config);
+
+        // Creates a new layout file from the specified {@link FolderConfiguration}.
+        CreateNewConfigJob job = new CreateNewConfigJob(this, mEditedFile, config);
+        job.schedule();
+    }
+
+    /**
+     * Returns the resource name of the file that is including this current layout, if any
+     * (may be null)
+     *
+     * @return the resource name of an including layout, or null
+     */
+    @Override
+    public Reference getIncludedWithin() {
+        return mIncludedWithin;
+    }
+
+    @Override
+    @Nullable
+    public LayoutCanvas getCanvas() {
+        return getCanvasControl();
     }
 
     /**
@@ -744,12 +896,14 @@ public class GraphicalEditorPart extends EditorPart
      */
     private class TargetListener implements ITargetChangeListener {
 
+        @Override
         public void onProjectTargetChange(IProject changedProject) {
             if (changedProject != null && changedProject.equals(getProject())) {
                 updateEditor();
             }
         }
 
+        @Override
         public void onTargetLoaded(IAndroidTarget loadedTarget) {
             IAndroidTarget target = getRenderingTarget();
             if (target != null && target.equals(loadedTarget)) {
@@ -757,6 +911,7 @@ public class GraphicalEditorPart extends EditorPart
             }
         }
 
+        @Override
         public void onSdkLoaded() {
             // get the current rendering target to unload it
             IAndroidTarget oldTarget = getRenderingTarget();
@@ -769,14 +924,14 @@ public class GraphicalEditorPart extends EditorPart
             if (currentSdk != null) {
                 IAndroidTarget target = currentSdk.getTarget(mEditedFile.getProject());
                 if (target != null) {
-                    mConfigComposite.onSdkLoaded(target);
-                    mConfigListener.onConfigurationChange();
+                    mConfigChooser.onSdkLoaded(target);
+                    changed(CFG_FOLDER | CFG_TARGET);
                 }
             }
         }
 
         private void updateEditor() {
-            mLayoutEditor.commitPages(false /* onSave */);
+            mEditorDelegate.getEditor().commitPages(false /* onSave */);
 
             // because the target changed we must reset the configured resources.
             mConfiguredFrameworkRes = mConfiguredProjectRes = null;
@@ -788,11 +943,11 @@ public class GraphicalEditorPart extends EditorPart
 
             // recreate the ui root node always, this will also call onTargetChange
             // on the config composite
-            mLayoutEditor.initUiRootNode(true /*force*/);
+            mEditorDelegate.delegateInitUiRootNode(true /*force*/);
         }
 
         private IProject getProject() {
-            return getLayoutEditor().getProject();
+            return getEditorDelegate().getEditor().getProject();
         }
     }
 
@@ -891,9 +1046,10 @@ public class GraphicalEditorPart extends EditorPart
         if (!mActive) {
             mActive = true;
 
+            syncDockingState();
             mActionBar.updateErrorIndicator();
 
-            boolean changed = mConfigComposite.syncRenderState();
+            boolean changed = mConfigChooser.syncRenderState();
             if (changed) {
                 // Will also force recomputeLayout()
                 return;
@@ -902,7 +1058,56 @@ public class GraphicalEditorPart extends EditorPart
             if (mNeedsRecompute) {
                 recomputeLayout();
             }
+
+            mCanvasViewer.getCanvas().syncPreviewMode();
         }
+    }
+
+    /**
+     * The global docking state version. This number is incremented each time
+     * the user customizes the window layout in any layout.
+     */
+    private static int sDockingStateVersion;
+
+    /**
+     * The window docking state version that this window is currently showing;
+     * when a different window is reconfigured, the global version number is
+     * incremented, and when this window is shown, and the current version is
+     * less than the global version, the window layout will be synced.
+     */
+    private int mDockingStateVersion;
+
+    /**
+     * Syncs the window docking state.
+     * <p>
+     * The layout editor lets you change the docking state -- e.g. you can minimize the
+     * palette, and drag the structure view to the bottom, and so on. When you restart
+     * the IDE, the window comes back up with your customized state.
+     * <p>
+     * <b>However</b>, when you have multiple editor files open, if you minimize the palette
+     * in one editor and then switch to another, the other editor will have the old window
+     * state. That's because each editor has its own set of windows.
+     * <p>
+     * This method fixes this. Whenever a window is shown, this method is called, and the
+     * docking state is synced such that the editor will match the current persistent docking
+     * state.
+     */
+    private void syncDockingState() {
+        if (mDockingStateVersion == sDockingStateVersion) {
+            // No changes to apply
+            return;
+        }
+        mDockingStateVersion = sDockingStateVersion;
+
+        IPreferenceStore preferenceStore = AdtPlugin.getDefault().getPreferenceStore();
+        PluginFlyoutPreferences preferences;
+        preferences = new PluginFlyoutPreferences(preferenceStore, PREF_PALETTE);
+        mPaletteComposite.apply(preferences);
+        preferences = new PluginFlyoutPreferences(preferenceStore, PREF_STRUCTURE);
+        mStructureFlyout.apply(preferences);
+        mPaletteComposite.layout();
+        mStructureFlyout.layout();
+        mPaletteComposite.redraw(); // the structure view is nested within the palette
     }
 
     /**
@@ -910,6 +1115,11 @@ public class GraphicalEditorPart extends EditorPart
      */
     public void deactivated() {
         mActive = false;
+
+        LayoutCanvas canvas = getCanvasControl();
+        if (canvas != null) {
+            canvas.deactivated();
+        }
     }
 
     /**
@@ -918,7 +1128,7 @@ public class GraphicalEditorPart extends EditorPart
      */
     public void openFile(IFile file) {
         mEditedFile = file;
-        mConfigComposite.setFile(mEditedFile);
+        mConfigChooser.setFile(mEditedFile);
 
         if (mReloadListener == null) {
             mReloadListener = new ReloadListener();
@@ -955,7 +1165,7 @@ public class GraphicalEditorPart extends EditorPart
      */
     public void replaceFile(IFile file) {
         mEditedFile = file;
-        mConfigComposite.replaceFile(mEditedFile);
+        mConfigChooser.replaceFile(mEditedFile);
         computeSdkVersion();
     }
 
@@ -966,31 +1176,37 @@ public class GraphicalEditorPart extends EditorPart
      */
     public void changeFileOnNewConfig(IFile file) {
         mEditedFile = file;
-        mConfigComposite.changeFileOnNewConfig(mEditedFile);
+        mConfigChooser.changeFileOnNewConfig(mEditedFile);
     }
 
     /**
      * Responds to a target change for the project of the edited file
      */
     public void onTargetChange() {
-        AndroidTargetData targetData = mConfigComposite.onXmlModelLoaded();
+        AndroidTargetData targetData = mConfigChooser.onXmlModelLoaded();
         updateCapabilities(targetData);
 
-        mConfigListener.onConfigurationChange();
+        changed(CFG_FOLDER | CFG_TARGET);
     }
 
     /** Updates the capabilities for the given target data (which may be null) */
     private void updateCapabilities(AndroidTargetData targetData) {
         if (targetData != null) {
             LayoutLibrary layoutLib = targetData.getLayoutLibrary();
-            if (mIncludedWithin != null &&  !layoutLib.supports(Capability.EMBEDDED_LAYOUT)) {
+            if (mIncludedWithin != null && !layoutLib.supports(Capability.EMBEDDED_LAYOUT)) {
                 showIn(null);
             }
         }
     }
 
-    public LayoutEditor getLayoutEditor() {
-        return mLayoutEditor;
+    /**
+     * Returns the {@link CommonXmlDelegate} for this editor
+     *
+     * @return the {@link CommonXmlDelegate} for this editor
+     */
+    @NonNull
+    public LayoutEditorDelegate getEditorDelegate() {
+        return mEditorDelegate;
     }
 
     /**
@@ -1014,8 +1230,13 @@ public class GraphicalEditorPart extends EditorPart
         return null;
     }
 
+    /**
+     * Returns the {@link UiDocumentNode} for the XML model edited by this editor
+     *
+     * @return the associated model
+     */
     public UiDocumentNode getModel() {
-        return mLayoutEditor.getUiRootNode();
+        return mEditorDelegate.getUiRootNode();
     }
 
     /**
@@ -1035,7 +1256,7 @@ public class GraphicalEditorPart extends EditorPart
         //
         // TODO find a way to really query whether the pane is visible, not just active.
 
-        if (mLayoutEditor.isGraphicalEditorActive()) {
+        if (mEditorDelegate.isGraphicalEditorActive()) {
             recomputeLayout();
         } else {
             // Remember we want to recompute as soon as the editor becomes active.
@@ -1043,6 +1264,9 @@ public class GraphicalEditorPart extends EditorPart
         }
     }
 
+    /**
+     * Recomputes the layout
+     */
     public void recomputeLayout() {
         try {
             if (!ensureFileValid()) {
@@ -1050,6 +1274,7 @@ public class GraphicalEditorPart extends EditorPart
             }
 
             UiDocumentNode model = getModel();
+            LayoutCanvas canvas = mCanvasViewer.getCanvas();
             if (!ensureModelValid(model)) {
                 // Although we display an error, we still treat an empty document as a
                 // successful layout result so that we can drop new elements in it.
@@ -1057,7 +1282,7 @@ public class GraphicalEditorPart extends EditorPart
                 // For that purpose, create a special LayoutScene that has no image,
                 // no root view yet indicates success and then update the canvas with it.
 
-                mCanvasViewer.getCanvas().setSession(
+                canvas.setSession(
                         new StaticRenderSession(
                                 Result.Status.SUCCESS.createResult(),
                                 null /*rootViewInfo*/, null /*image*/),
@@ -1075,6 +1300,8 @@ public class GraphicalEditorPart extends EditorPart
 
                 IProject project = mEditedFile.getProject();
                 renderWithBridge(project, model, layoutLib);
+
+                canvas.getPreviewManager().renderPreviews();
             }
         } finally {
             // no matter the result, we are done doing the recompute based on the latest
@@ -1083,6 +1310,9 @@ public class GraphicalEditorPart extends EditorPart
         }
     }
 
+    /**
+     * Reloads the palette
+     */
     public void reloadPalette() {
         if (mPalette != null) {
             IAndroidTarget renderingTarget = getRenderingTarget();
@@ -1104,22 +1334,14 @@ public class GraphicalEditorPart extends EditorPart
     }
 
     /**
-     * Returns the current bounds of the Android device screen, in canvas control pixels.
-     *
-     * @return the bounds of the screen, never null
-     */
-    public Rect getScreenBounds() {
-        return mConfigComposite.getScreenBounds();
-    }
-
-    /**
      * Returns the scale to multiply pixels in the layout coordinate space with to obtain
      * the corresponding dip (device independent pixel)
      *
      * @return the scale to multiple layout coordinates with to obtain the dip position
      */
     public float getDipScale() {
-        return Density.DEFAULT_DENSITY / (float) mConfigComposite.getDensity().getDpiValue();
+        float dpi = mConfigChooser.getConfiguration().getDensity().getDpiValue();
+        return Density.DEFAULT_DENSITY / dpi;
     }
 
     // --- private methods ---
@@ -1228,7 +1450,7 @@ public class GraphicalEditorPart extends EditorPart
                 }
 
             } else if (displayError) { // target == null
-                displayError("The project target is not set.");
+                displayError("The project target is not set. Right click project, choose Properties | Android.");
             }
         } else if (displayError) { // currentSdk == null
             displayError("Eclipse is loading the SDK.\n%1$s will refresh automatically once the process is finished.",
@@ -1255,10 +1477,8 @@ public class GraphicalEditorPart extends EditorPart
             return null;
         }
 
-        assert mConfigComposite.getDisplay().getThread() == Thread.currentThread();
-
         // attempt to get a target from the configuration selector.
-        IAndroidTarget renderingTarget = mConfigComposite.getRenderingTarget();
+        IAndroidTarget renderingTarget = mConfigChooser.getConfiguration().getTarget();
         if (renderingTarget != null) {
             return renderingTarget;
         }
@@ -1291,6 +1511,10 @@ public class GraphicalEditorPart extends EditorPart
     private boolean ensureModelValid(UiDocumentNode model) {
         // check there is actually a model (maybe the file is empty).
         if (model.getUiChildren().size() == 0) {
+            if (mEditorDelegate.getEditor().isCreatingPages()) {
+                displayError("Loading editor");
+                return false;
+            }
             displayError(
                     "No XML content. Please add a root view or layout to your document.");
             return false;
@@ -1303,7 +1527,6 @@ public class GraphicalEditorPart extends EditorPart
             LayoutLibrary layoutLib) {
         LayoutCanvas canvas = getCanvasControl();
         Set<UiElementNode> explodeNodes = canvas.getNodesToExplode();
-        Rect rect = getScreenBounds();
         RenderLogger logger = new RenderLogger(mEditedFile.getName());
         RenderingMode renderingMode = RenderingMode.NORMAL;
         // FIXME set the rendering mode using ViewRule or something.
@@ -1315,7 +1538,6 @@ public class GraphicalEditorPart extends EditorPart
 
         RenderSession session = RenderService.create(this)
             .setModel(model)
-            .setSize(rect.w, rect.h)
             .setLog(logger)
             .setRenderingMode(renderingMode)
             .setIncludedWithin(mIncludedWithin)
@@ -1351,11 +1573,30 @@ public class GraphicalEditorPart extends EditorPart
         if (logger.hasProblems()) {
             displayLoggerProblems(iProject, logger);
             displayFailingClasses(missingClasses, brokenClasses, true);
+            displayUserStackTrace(logger, true);
         } else if (missingClasses.size() > 0 || brokenClasses.size() > 0) {
             displayFailingClasses(missingClasses, brokenClasses, false);
-        } else {
+            displayUserStackTrace(logger, true);
+        } else if (session != null) {
             // Nope, no missing or broken classes. Clear success, congrats!
             hideError();
+
+            // First time this layout is opened, run lint on the file (after a delay)
+            if (!mRenderedOnce) {
+                mRenderedOnce = true;
+                Job job = new Job("Run Lint") {
+                    @Override
+                    protected IStatus run(IProgressMonitor monitor) {
+                        getEditorDelegate().delegateRunLint();
+                        return Status.OK_STATUS;
+                    }
+
+                };
+                job.setSystem(true);
+                job.schedule(3000); // 3 seconds
+            }
+
+            mConfigChooser.ensureInitialized();
         }
 
         model.refreshUi();
@@ -1369,19 +1610,19 @@ public class GraphicalEditorPart extends EditorPart
      */
     public ResourceResolver getResourceResolver() {
         if (mResourceResolver == null) {
-            String theme = mConfigComposite.getTheme();
+            String theme = mConfigChooser.getThemeName();
             if (theme == null) {
                 displayError("Missing theme.");
                 return null;
             }
-            boolean isProjectTheme = mConfigComposite.isProjectTheme();
+            boolean isProjectTheme = mConfigChooser.getConfiguration().isProjectTheme();
 
             Map<ResourceType, Map<String, ResourceValue>> configuredProjectRes =
-                mConfigListener.getConfiguredProjectResources();
+                getConfiguredProjectResources();
 
             // Get the framework resources
             Map<ResourceType, Map<String, ResourceValue>> frameworkResources =
-                mConfigListener.getConfiguredFrameworkResources();
+                getConfiguredFrameworkResources();
 
             if (configuredProjectRes == null) {
                 displayError("Missing project resources for current configuration.");
@@ -1424,12 +1665,7 @@ public class GraphicalEditorPart extends EditorPart
      * @return the resource name of this layout, NOT including the @layout/ prefix
      */
     public String getLayoutResourceName() {
-        String name = mEditedFile.getName();
-        int dotIndex = name.indexOf('.');
-        if (dotIndex != -1) {
-            name = name.substring(0, dotIndex);
-        }
-        return name;
+        return ResourceHelper.getLayoutName(mEditedFile);
     }
 
     /**
@@ -1461,12 +1697,14 @@ public class GraphicalEditorPart extends EditorPart
         /**
          * Called when the file changes triggered a redraw of the layout
          */
+        @Override
         public void reloadLayout(final ChangeFlags flags, final boolean libraryChanged) {
-            if (mConfigComposite.isDisposed()) {
+            if (mConfigChooser.isDisposed()) {
                 return;
             }
-            Display display = mConfigComposite.getDisplay();
+            Display display = mConfigChooser.getDisplay();
             display.asyncExec(new Runnable() {
+                @Override
                 public void run() {
                     reloadLayoutSwt(flags, libraryChanged);
                 }
@@ -1475,10 +1713,10 @@ public class GraphicalEditorPart extends EditorPart
 
         /** Reload layout. <b>Must be called on the SWT thread</b> */
         private void reloadLayoutSwt(ChangeFlags flags, boolean libraryChanged) {
-            if (mConfigComposite.isDisposed()) {
+            if (mConfigChooser.isDisposed()) {
                 return;
             }
-            assert mConfigComposite.getDisplay().getThread() == Thread.currentThread();
+            assert mConfigChooser.getDisplay().getThread() == Thread.currentThread();
 
             boolean recompute = false;
             // we only care about the r class of the main project.
@@ -1501,7 +1739,7 @@ public class GraphicalEditorPart extends EditorPart
                 // However there's no recompute, as it could not be needed
                 // (for instance a new layout)
                 // If a resource that's not a layout changed this will trigger a recompute anyway.
-                mConfigComposite.updateLocales();
+                mConfigChooser.updateLocales();
             }
 
             // if a resources was modified.
@@ -1535,7 +1773,7 @@ public class GraphicalEditorPart extends EditorPart
             }
 
             if (recompute) {
-                if (mLayoutEditor.isGraphicalEditorActive()) {
+                if (mEditorDelegate.isGraphicalEditorActive()) {
                     recomputeLayout();
                 } else {
                     mNeedsRecompute = true;
@@ -1565,6 +1803,71 @@ public class GraphicalEditorPart extends EditorPart
     private void hideError() {
         mErrorLabel.setText("");
         mSashError.setMaximizedControl(mCanvasViewer.getControl());
+    }
+
+    /** Display the problem list encountered during a render */
+    private void displayUserStackTrace(RenderLogger logger, boolean append) {
+        List<Throwable> throwables = logger.getFirstTrace();
+        if (throwables == null || throwables.isEmpty()) {
+            return;
+        }
+
+        Throwable throwable = throwables.get(0);
+        StackTraceElement[] frames = throwable.getStackTrace();
+        int end = -1;
+        boolean haveInterestingFrame = false;
+        for (int i = 0; i < frames.length; i++) {
+            StackTraceElement frame = frames[i];
+            if (isInterestingFrame(frame)) {
+                haveInterestingFrame = true;
+            }
+            String className = frame.getClassName();
+            if (className.equals(
+                    "com.android.layoutlib.bridge.impl.RenderSessionImpl")) { //$NON-NLS-1$
+                end = i;
+                break;
+            }
+        }
+
+        if (end == -1 || !haveInterestingFrame) {
+            // Not a recognized stack trace range: just skip it
+            return;
+        }
+
+        if (!append) {
+            mErrorLabel.setText("\n");    //$NON-NLS-1$
+        } else {
+            addText(mErrorLabel, "\n\n"); //$NON-NLS-1$
+        }
+
+        addText(mErrorLabel, throwable.toString() + '\n');
+        for (int i = 0; i < end; i++) {
+            StackTraceElement frame = frames[i];
+            String className = frame.getClassName();
+            String methodName = frame.getMethodName();
+            addText(mErrorLabel, "    at " + className + '.' + methodName + '(');
+            String fileName = frame.getFileName();
+            if (fileName != null && !fileName.isEmpty()) {
+                int lineNumber = frame.getLineNumber();
+                String location = fileName + ':' + lineNumber;
+                if (isInterestingFrame(frame)) {
+                    addActionLink(mErrorLabel, ActionLinkStyleRange.LINK_OPEN_LINE,
+                            location, className, methodName, fileName, lineNumber);
+                } else {
+                    addText(mErrorLabel, location);
+                }
+                addText(mErrorLabel, ")\n"); //$NON-NLS-1$
+            }
+        }
+    }
+
+    private static boolean isInterestingFrame(StackTraceElement frame) {
+        String className = frame.getClassName();
+        return !(className.startsWith("android.")         //$NON-NLS-1$
+                || className.startsWith("com.android.")   //$NON-NLS-1$
+                || className.startsWith("java.")          //$NON-NLS-1$
+                || className.startsWith("javax.")         //$NON-NLS-1$
+                || className.startsWith("sun."));         //$NON-NLS-1$
     }
 
     /**
@@ -1597,15 +1900,15 @@ public class GraphicalEditorPart extends EditorPart
                 addTypoSuggestions(clazz, getAndroidViewClassNames(project), false);
 
                 addActionLink(mErrorLabel,
-                        ActionLinkStyleRange.LINK_FIX_BUILD_PATH, "Fix Build Path", clazz, null);
+                        ActionLinkStyleRange.LINK_FIX_BUILD_PATH, "Fix Build Path", clazz);
                 addText(mErrorLabel, ", ");
                 addActionLink(mErrorLabel,
-                        ActionLinkStyleRange.LINK_EDIT_XML, "Edit XML", clazz, null);
+                        ActionLinkStyleRange.LINK_EDIT_XML, "Edit XML", clazz);
                 if (clazz.indexOf('.') != -1) {
                     // Add "Create Class" link, but only for custom views
                     addText(mErrorLabel, ", ");
                     addActionLink(mErrorLabel,
-                            ActionLinkStyleRange.LINK_CREATE_CLASS, "Create Class", clazz, null);
+                            ActionLinkStyleRange.LINK_CREATE_CLASS, "Create Class", clazz);
                 }
                 addText(mErrorLabel, ")\n");
             }
@@ -1618,12 +1921,13 @@ public class GraphicalEditorPart extends EditorPart
 
             for (String clazz : brokenClasses) {
                 addText(mErrorLabel, "- ");
+                addText(mErrorLabel, clazz);
                 addText(mErrorLabel, " (");
                 addActionLink(mErrorLabel,
-                        ActionLinkStyleRange.LINK_OPEN_CLASS, "Open Class", clazz, null);
+                        ActionLinkStyleRange.LINK_OPEN_CLASS, "Open Class", clazz);
                 addText(mErrorLabel, ", ");
                 addActionLink(mErrorLabel,
-                        ActionLinkStyleRange.LINK_SHOW_LOG, "Show Error Log", clazz, null);
+                        ActionLinkStyleRange.LINK_SHOW_LOG, "Show Error Log", clazz);
                 addText(mErrorLabel, ")\n");
 
                 if (!(clazz.startsWith("android.") || //$NON-NLS-1$
@@ -1635,7 +1939,7 @@ public class GraphicalEditorPart extends EditorPart
             addText(mErrorLabel, "See the Error Log (Window > Show View) for more details.\n");
 
             if (haveCustomClass) {
-                addText(mErrorLabel, "Tip: Use View.isInEditMode() in your custom views "
+                addBoldText(mErrorLabel, "Tip: Use View.isInEditMode() in your custom views "
                         + "to skip code when shown in Eclipse");
             }
         }
@@ -1651,19 +1955,20 @@ public class GraphicalEditorPart extends EditorPart
 
         // Look for typos and try to match with custom views and android views
         String actualBase = actual.substring(actual.lastIndexOf('.') + 1);
+        int maxDistance = actualBase.length() >= 4 ? 2 : 1;
+
         if (views.size() > 0) {
             for (String suggested : views) {
                 String suggestedBase = suggested.substring(suggested.lastIndexOf('.') + 1);
 
                 String matchWith = compareWithPackage ? suggested : suggestedBase;
-                int maxDistance = actualBase.length() >= 4 ? 2 : 1;
                 if (Math.abs(actualBase.length() - matchWith.length()) > maxDistance) {
                     // The string lengths differ more than the allowed edit distance;
                     // no point in even attempting to compute the edit distance (requires
                     // O(n*m) storage and O(n*m) speed, where n and m are the string lengths)
                     continue;
                 }
-                if (AdtUtils.editDistance(actualBase, matchWith) <= maxDistance) {
+                if (LintUtils.editDistance(actualBase, matchWith) <= maxDistance) {
                     // Suggest this class as a typo for the given class
                     String labelClass = (suggestedBase.equals(actual) || actual.indexOf('.') != -1)
                         ? suggested : suggestedBase;
@@ -1673,9 +1978,8 @@ public class GraphicalEditorPart extends EditorPart
                                     // Only show full package name if class name
                                     // is the same
                                     labelClass),
-                                    actual,
-                                    viewNeedsPackage(suggested) ? suggested : suggestedBase
-                    );
+                            actual,
+                            viewNeedsPackage(suggested) ? suggested : suggestedBase);
                     addText(mErrorLabel, ", ");
                 }
             }
@@ -1753,6 +2057,21 @@ public class GraphicalEditorPart extends EditorPart
                         "or fix the theme style references.\n\n");
             }
 
+            List<Throwable> trace = logger.getFirstTrace();
+            if (trace != null
+                    && trace.toString().contains(
+                            "java.lang.IndexOutOfBoundsException: Index: 2, Size: 2") //$NON-NLS-1$
+                    && mConfigChooser.getConfiguration().getDensity() == Density.TV) {
+                addBoldText(mErrorLabel,
+                        "It looks like you are using a render target where the layout library " +
+                        "does not support the tvdpi density.\n\n");
+                addText(mErrorLabel, "Please try either updating to " +
+                        "the latest available version (using the SDK manager), or if no updated " +
+                        "version is available for this specific version of Android, try using " +
+                        "a more recent render target version.\n\n");
+
+            }
+
             if (hasAaptErrors && logger.seenTagPrefix(LayoutLog.TAG_RESOURCES_PREFIX)) {
                 // Text will automatically be wrapped by the error widget so no reason
                 // to insert linebreaks in this error message:
@@ -1771,6 +2090,21 @@ public class GraphicalEditorPart extends EditorPart
                 addBoldText(mErrorLabel, message);
             }
 
+            if (logger.seenTag(RenderLogger.TAG_MISSING_DIMENSION)) {
+                List<UiElementNode> elements = UiDocumentNode.getAllElements(getModel());
+                for (UiElementNode element : elements) {
+                    String width = element.getAttributeValue(ATTR_LAYOUT_WIDTH);
+                    if (width == null || width.length() == 0) {
+                        addSetAttributeLink(element, ATTR_LAYOUT_WIDTH);
+                    }
+
+                    String height = element.getAttributeValue(ATTR_LAYOUT_HEIGHT);
+                    if (height == null || height.length() == 0) {
+                        addSetAttributeLink(element, ATTR_LAYOUT_HEIGHT);
+                    }
+                }
+            }
+
             String problems = logger.getProblems(false /*includeFidelityWarnings*/);
             addText(mErrorLabel, problems);
 
@@ -1782,7 +2116,7 @@ public class GraphicalEditorPart extends EditorPart
                     addText(mErrorLabel, warning + ' ');
                     addActionLink(mErrorLabel,
                             ActionLinkStyleRange.IGNORE_FIDELITY_WARNING,
-                            "(Ignore for this session)\n", warning, null);
+                            "(Ignore for this session)\n", warning);
                 }
             }
 
@@ -1790,6 +2124,44 @@ public class GraphicalEditorPart extends EditorPart
         } else {
             mSashError.setMaximizedControl(mCanvasViewer.getControl());
         }
+    }
+
+    /** Appends an action link to set the given attribute on the given value */
+    private void addSetAttributeLink(UiElementNode element, String attribute) {
+        if (element.getXmlNode().getNodeName().equals(GRID_LAYOUT)) {
+            // GridLayout does not require a layout_width or layout_height to be defined
+            return;
+        }
+
+        String fill = VALUE_FILL_PARENT;
+        // See whether we should offer match_parent instead of fill_parent
+        Sdk currentSdk = Sdk.getCurrent();
+        if (currentSdk != null) {
+            IAndroidTarget target = currentSdk.getTarget(getProject());
+            if (target.getVersion().getApiLevel() >= 8) {
+                fill = VALUE_MATCH_PARENT;
+            }
+        }
+
+        String id = element.getAttributeValue(ATTR_ID);
+        if (id == null || id.length() == 0) {
+            id = '<' + element.getXmlNode().getNodeName() + '>';
+        } else {
+            id = BaseLayoutRule.stripIdPrefix(id);
+        }
+
+        addText(mErrorLabel, String.format("\"%1$s\" does not set the required %2$s attribute:\n",
+                id, attribute));
+        addText(mErrorLabel, " (1) ");
+        addActionLink(mErrorLabel,
+                ActionLinkStyleRange.SET_ATTRIBUTE,
+                String.format("Set to \"%1$s\"", VALUE_WRAP_CONTENT),
+                element, attribute, VALUE_WRAP_CONTENT);
+        addText(mErrorLabel, "\n (2) ");
+        addActionLink(mErrorLabel,
+                ActionLinkStyleRange.SET_ATTRIBUTE,
+                String.format("Set to \"%1$s\"\n", fill),
+                element, attribute, fill);
     }
 
     /** Appends the given text as a bold string in the given text widget */
@@ -1812,12 +2184,12 @@ public class GraphicalEditorPart extends EditorPart
      * action, corresponding to the value fields in {@link ActionLinkStyleRange}.
      */
     private void addActionLink(StyledText styledText, int action, String label,
-            String data1, String data2) {
+            Object... data) {
         String s = styledText.getText();
         int start = (s == null ? 0 : s.length());
         styledText.append(label);
 
-        StyleRange sr = new ActionLinkStyleRange(action, data1, data2);
+        StyleRange sr = new ActionLinkStyleRange(action, data);
         sr.start = start;
         sr.length = label.length();
         sr.fontStyle = SWT.NORMAL;
@@ -1965,39 +2337,51 @@ public class GraphicalEditorPart extends EditorPart
         private static final int LINK_CHANGE_CLASS_TO = 6;
         /** Ignore the given fidelity warning */
         private static final int IGNORE_FIDELITY_WARNING = 7;
+        /** Set an attribute on the given XML element to a given value  */
+        private static final int SET_ATTRIBUTE = 8;
+        /** Open the given file and line number */
+        private static final int LINK_OPEN_LINE = 9;
 
-        /** Client data 1 - usually the class name */
-        private final String mData1;
-        /** Client data 2 - such as the suggested new name */
-        private final String mData2;
+        /** Client data: the contents depend on the specific action */
+        private final Object[] mData;
         /** The action to be taken when the link is clicked */
         private final int mAction;
 
-        private ActionLinkStyleRange(int action, String data1, String data2) {
+        private ActionLinkStyleRange(int action, Object... data) {
             super();
             mAction = action;
-            mData1 = data1;
-            mData2 = data2;
+            mData = data;
         }
 
         /** Performs the click action */
         public void onClick() {
             switch (mAction) {
                 case LINK_CREATE_CLASS:
-                    createNewClass(mData1);
+                    createNewClass((String) mData[0]);
                     break;
                 case LINK_EDIT_XML:
-                    mLayoutEditor.setActivePage(AndroidXmlEditor.TEXT_EDITOR_ID);
+                    mEditorDelegate.getEditor().setActivePage(AndroidXmlEditor.TEXT_EDITOR_ID);
                     break;
                 case LINK_FIX_BUILD_PATH:
                     @SuppressWarnings("restriction")
                     String id = BuildPathsPropertyPage.PROP_ID;
                     PreferencesUtil.createPropertyDialogOn(
-                            AdtPlugin.getDisplay().getActiveShell(),
+                            AdtPlugin.getShell(),
                             getProject(), id, null, null).open();
                     break;
                 case LINK_OPEN_CLASS:
-                    AdtPlugin.openJavaClass(getProject(), mData1);
+                    AdtPlugin.openJavaClass(getProject(), (String) mData[0]);
+                    break;
+                case LINK_OPEN_LINE:
+                    boolean success = AdtPlugin.openStackTraceLine(
+                            (String) mData[0],   // class
+                            (String) mData[1],   // method
+                            (String) mData[2],   // file
+                            (Integer) mData[3]); // line
+                    if (!success) {
+                        MessageDialog.openError(mErrorLabel.getShell(), "Not Found",
+                                String.format("Could not find %1$s.%2$s", mData[0], mData[1]));
+                    }
                     break;
                 case LINK_SHOW_LOG:
                     IWorkbench workbench = PlatformUI.getWorkbench();
@@ -2010,17 +2394,18 @@ public class GraphicalEditorPart extends EditorPart
                     }
                     break;
                 case LINK_CHANGE_CLASS_TO:
-                    // Change class reference of mData1 to mData2
+                    // Change class reference of mData[0] to mData[1]
                     // TODO: run under undo lock
                     MultiTextEdit edits = new MultiTextEdit();
-                    ISourceViewer textViewer = mLayoutEditor.getStructuredSourceViewer();
+                    ISourceViewer textViewer =
+                        mEditorDelegate.getEditor().getStructuredSourceViewer();
                     IDocument document = textViewer.getDocument();
                     String xml = document.get();
                     int index = 0;
                     // Replace <old with <new and </old with </new
                     String prefix = "<"; //$NON-NLS-1$
-                    String find = prefix + mData1;
-                    String replaceWith = prefix + mData2;
+                    String find = prefix + mData[0];
+                    String replaceWith = prefix + mData[1];
                     while (true) {
                         index = xml.indexOf(find, index);
                         if (index == -1) {
@@ -2031,8 +2416,8 @@ public class GraphicalEditorPart extends EditorPart
                     }
                     index = 0;
                     prefix = "</"; //$NON-NLS-1$
-                    find = prefix + mData1;
-                    replaceWith = prefix + mData2;
+                    find = prefix + mData[0];
+                    replaceWith = prefix + mData[1];
                     while (true) {
                         index = xml.indexOf(find, index);
                         if (index == -1) {
@@ -2045,8 +2430,8 @@ public class GraphicalEditorPart extends EditorPart
                     index = 0;
                     prefix = "\""; //$NON-NLS-1$
                     String suffix = "\""; //$NON-NLS-1$
-                    find = prefix + mData1 + suffix;
-                    replaceWith = prefix + mData2 + suffix;
+                    find = prefix + mData[0] + suffix;
+                    replaceWith = prefix + mData[1] + suffix;
                     while (true) {
                         index = xml.indexOf(find, index);
                         if (index == -1) {
@@ -2064,10 +2449,26 @@ public class GraphicalEditorPart extends EditorPart
                     }
                     break;
                 case IGNORE_FIDELITY_WARNING:
-                    RenderLogger.ignoreFidelityWarning(mData1);
+                    RenderLogger.ignoreFidelityWarning((String) mData[0]);
                     recomputeLayout();
                     break;
+                case SET_ATTRIBUTE: {
+                    final UiElementNode element = (UiElementNode) mData[0];
+                    final String attribute = (String) mData[1];
+                    final String value = (String) mData[2];
+                    mEditorDelegate.getEditor().wrapUndoEditXmlModel(
+                            String.format("Set \"%1$s\" to \"%2$s\"", attribute, value),
+                            new Runnable() {
+                        @Override
+                        public void run() {
+                            element.setAttributeValue(attribute, ANDROID_URI, value, true);
+                            element.commitDirtyAttributesToXml();
+                        }
+                    });
+                    break;
+                }
                 default:
+                    assert false : mAction;
                     break;
             }
         }
@@ -2141,7 +2542,8 @@ public class GraphicalEditorPart extends EditorPart
         page.setSuperClass(SdkConstants.CLASS_VIEW, true /* canBeModified */);
 
         // get the source folders as java elements.
-        IPackageFragmentRoot[] roots = getPackageFragmentRoots(mLayoutEditor.getProject(),
+        IPackageFragmentRoot[] roots = getPackageFragmentRoots(
+                mEditorDelegate.getEditor().getProject(),
                 false /*includeContainers*/, true /*skipGenFolder*/);
 
         IPackageFragmentRoot currentRoot = null;
@@ -2325,20 +2727,10 @@ public class GraphicalEditorPart extends EditorPart
 
             // Update configuration
             if (file != null) {
-                mConfigComposite.resetConfigFor(file);
+                mConfigChooser.resetConfigFor(file);
             }
         }
         recomputeLayout();
-    }
-
-    /**
-     * Returns the resource name of the file that is including this current layout, if any
-     * (may be null)
-     *
-     * @return the resource name of an including layout, or null
-     */
-    public Reference getIncludedWithin() {
-        return mIncludedWithin;
     }
 
     /**
@@ -2367,7 +2759,7 @@ public class GraphicalEditorPart extends EditorPart
      * @return the current configuration
      */
     public FolderConfiguration getConfiguration() {
-        return mConfigComposite.getCurrentConfig();
+        return mConfigChooser.getConfiguration().getFullConfig();
     }
 
     /**
@@ -2385,10 +2777,22 @@ public class GraphicalEditorPart extends EditorPart
         return oldMinSdkVersion != mMinSdkVersion || oldTargetSdkVersion != mTargetSdkVersion;
     }
 
-    public ConfigurationComposite getConfigurationComposite() {
-        return mConfigComposite;
+    /**
+     * Returns the associated configuration chooser
+     *
+     * @return the configuration chooser
+     */
+    @NonNull
+    public ConfigurationChooser getConfigurationChooser() {
+        return mConfigChooser;
     }
 
+    /**
+     * Returns the associated layout actions bar
+     *
+     * @return the layout actions bar
+     */
+    @NonNull
     public LayoutActionBar getLayoutActionBar() {
         return mActionBar;
     }
@@ -2409,5 +2813,24 @@ public class GraphicalEditorPart extends EditorPart
      */
     public int getMinSdkVersion() {
         return mMinSdkVersion;
+    }
+
+    /** If the flyout hover is showing, dismiss it */
+    public void dismissHoverPalette() {
+        mPaletteComposite.dismissHover();
+    }
+
+    // ---- Implements IFlyoutListener ----
+
+    @Override
+    public void stateChanged(int oldState, int newState) {
+        // Auto zoom the surface if you open or close flyout windows such as the palette
+        // or the property/outline views
+        if (newState == STATE_OPEN || newState == STATE_COLLAPSED && oldState == STATE_OPEN) {
+            getCanvasControl().setFitScale(true /*onlyZoomOut*/, true /*allowZoomIn*/);
+        }
+
+        sDockingStateVersion++;
+        mDockingStateVersion = sDockingStateVersion;
     }
 }

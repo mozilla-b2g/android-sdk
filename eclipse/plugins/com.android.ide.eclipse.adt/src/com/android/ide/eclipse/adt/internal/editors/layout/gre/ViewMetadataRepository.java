@@ -16,13 +16,15 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.gre;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
-import static com.android.ide.common.layout.LayoutConstants.FQCN_BUTTON;
-import static com.android.ide.common.layout.LayoutConstants.FQCN_SPINNER;
-import static com.android.ide.common.layout.LayoutConstants.FQCN_TOGGLE_BUTTON;
-import static com.android.ide.common.layout.LayoutConstants.ID_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.NEW_ID_PREFIX;
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ATTR_ID;
+import static com.android.SdkConstants.FQCN_BUTTON;
+import static com.android.SdkConstants.FQCN_SPINNER;
+import static com.android.SdkConstants.FQCN_TOGGLE_BUTTON;
+import static com.android.SdkConstants.ID_PREFIX;
+import static com.android.SdkConstants.NEW_ID_PREFIX;
+import static com.android.SdkConstants.VIEW_FRAGMENT;
+import static com.android.SdkConstants.VIEW_INCLUDE;
 
 import com.android.annotations.VisibleForTesting;
 import com.android.ide.common.api.IViewMetadata.FillPreference;
@@ -34,7 +36,9 @@ import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDes
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.ViewElementDescriptor;
 import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetData;
 import com.android.resources.Density;
-import com.android.util.Pair;
+import com.android.utils.Pair;
+import com.google.common.base.Splitter;
+import com.google.common.io.Closeables;
 
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -51,6 +55,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -137,6 +142,8 @@ public class ViewMetadataRepository {
         } catch (Exception e) {
             AdtPlugin.log(e, "Parsing palette file failed");
             return null;
+        } finally {
+            Closeables.closeQuietly(paletteStream);
         }
     }
 
@@ -192,6 +199,7 @@ public class ViewMetadataRepository {
     }
 
     /** Returns an ordered list of categories and views, parsed from a metadata file */
+    @SuppressWarnings("resource") // streams passed to parser InputSource closed by parser
     private List<CategoryData> getCategories() {
         if (mCategories == null) {
             mCategories = new ArrayList<CategoryData>();
@@ -208,7 +216,7 @@ public class ViewMetadataRepository {
                 Document document = builder.parse(is);
                 Map<String, FillPreference> fillTypes = new HashMap<String, FillPreference>();
                 for (FillPreference pref : FillPreference.values()) {
-                    fillTypes.put(pref.toString().toLowerCase(), pref);
+                    fillTypes.put(pref.toString().toLowerCase(Locale.US), pref);
                 }
 
                 NodeList categoryNodes = document.getDocumentElement().getChildNodes();
@@ -440,11 +448,13 @@ public class ViewMetadataRepository {
 
         // Implements Iterable<ViewData> such that we can use for-each on the category to
         // enumerate its views
+        @Override
         public Iterator<ViewData> iterator() {
             return mViews.iterator();
         }
 
         // Implements Comparable<CategoryData> such that categories can be naturally sorted
+        @Override
         public int compareTo(CategoryData other) {
             return mOrdinal - other.mOrdinal;
         }
@@ -514,6 +524,7 @@ public class ViewMetadataRepository {
         }
 
         // Implements Comparable<ViewData> such that views can be sorted naturally
+        @Override
         public int compareTo(ViewData other) {
             return mOrdinal - other.mOrdinal;
         }
@@ -530,13 +541,12 @@ public class ViewMetadataRepository {
             if (mRelatedTo == null || mRelatedTo.length() == 0) {
                 return Collections.emptyList();
             } else {
-                String[] basenames = mRelatedTo.split(","); //$NON-NLS-1$
                 List<String> result = new ArrayList<String>();
                 ViewMetadataRepository repository = ViewMetadataRepository.get();
                 Map<String, ViewData> classToView = repository.getClassToView();
 
                 List<String> fqns = new ArrayList<String>(classToView.keySet());
-                for (String basename : basenames) {
+                for (String basename : Splitter.on(',').split(mRelatedTo)) {
                     boolean found = false;
                     for (String fqcn : fqns) {
                         String suffix = '.' + basename;
@@ -546,7 +556,11 @@ public class ViewMetadataRepository {
                             break;
                         }
                     }
-                    assert found : basename;
+                    if (basename.equals(VIEW_FRAGMENT) || basename.equals(VIEW_INCLUDE)) {
+                        result.add(basename);
+                    } else {
+                        assert found : basename;
+                    }
                 }
 
                 return result;

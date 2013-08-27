@@ -16,9 +16,9 @@
 
 package com.android.ide.eclipse.adt.internal.build;
 
-import static com.android.AndroidConstants.FD_RES_COLOR;
-import static com.android.AndroidConstants.FD_RES_LAYOUT;
-import static com.android.sdklib.SdkConstants.FD_RES;
+import static com.android.SdkConstants.FD_RES;
+import static com.android.SdkConstants.FD_RES_COLOR;
+import static com.android.SdkConstants.FD_RES_LAYOUT;
 
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
@@ -146,14 +146,17 @@ public class AaptQuickFixTest extends AdtProjectTest {
         // Next test quick assist.
 
         IQuickAssistInvocationContext invocationContext = new IQuickAssistInvocationContext() {
+            @Override
             public int getLength() {
                 return 0;
             }
 
+            @Override
             public int getOffset() {
                 return offset;
             }
 
+            @Override
             public ISourceViewer getSourceViewer() {
                 return viewer;
             }
@@ -243,14 +246,17 @@ public class AaptQuickFixTest extends AdtProjectTest {
         // Next test quick assist.
 
         IQuickAssistInvocationContext invocationContext = new IQuickAssistInvocationContext() {
+            @Override
             public int getLength() {
                 return 0;
             }
 
+            @Override
             public int getOffset() {
                 return offset;
             }
 
+            @Override
             public ISourceViewer getSourceViewer() {
                 return viewer;
             }

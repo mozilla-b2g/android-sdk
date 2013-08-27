@@ -16,36 +16,39 @@
 
 package com.android.ide.eclipse.adt.internal.build;
 
+import com.android.SdkConstants;
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.AndroidPrintStream;
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs.BuildVerbosity;
 import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper;
-import com.android.ide.eclipse.adt.internal.project.ProjectHelper;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.prefs.AndroidLocation.AndroidLocationException;
+import com.android.sdklib.BuildToolInfo;
 import com.android.sdklib.IAndroidTarget;
-import com.android.sdklib.SdkConstants;
 import com.android.sdklib.IAndroidTarget.IOptionalLibrary;
 import com.android.sdklib.build.ApkBuilder;
-import com.android.sdklib.build.ApkCreationException;
-import com.android.sdklib.build.DuplicateFileException;
-import com.android.sdklib.build.IArchiveBuilder;
-import com.android.sdklib.build.SealedApkException;
 import com.android.sdklib.build.ApkBuilder.JarStatus;
 import com.android.sdklib.build.ApkBuilder.SigningInfo;
+import com.android.sdklib.build.ApkCreationException;
+import com.android.sdklib.build.DuplicateFileException;
+import com.android.sdklib.build.SealedApkException;
 import com.android.sdklib.internal.build.DebugKeyProvider;
-import com.android.sdklib.internal.build.SignedJarBuilder;
 import com.android.sdklib.internal.build.DebugKeyProvider.KeytoolException;
+import com.android.sdklib.util.GrabProcessOutput;
+import com.android.sdklib.util.GrabProcessOutput.IProcessOutput;
+import com.android.sdklib.util.GrabProcessOutput.Wait;
+import com.google.common.hash.HashCode;
+import com.google.common.hash.HashFunction;
+import com.google.common.hash.Hashing;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
-import org.eclipse.core.resources.IResourceProxy;
-import org.eclipse.core.resources.IResourceProxyVisitor;
-import org.eclipse.core.resources.IWorkspace;
 import org.eclipse.core.resources.IWorkspaceRoot;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
@@ -59,17 +62,19 @@ import org.eclipse.jdt.core.JavaCore;
 import org.eclipse.jdt.core.JavaModelException;
 import org.eclipse.jface.preference.IPreferenceStore;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 /**
@@ -101,17 +106,27 @@ public class BuildHelper {
     private static final String COMMAND_CRUNCH = "crunch";  //$NON-NLS-1$
     private static final String COMMAND_PACKAGE = "package"; //$NON-NLS-1$
 
+    @NonNull
     private final IProject mProject;
+    @NonNull
+    private final BuildToolInfo mBuildToolInfo;
+    @NonNull
     private final AndroidPrintStream mOutStream;
+    @NonNull
     private final AndroidPrintStream mErrStream;
+    private final boolean mForceJumbo;
+    private final boolean mDisableDexMerger;
     private final boolean mVerbose;
     private final boolean mDebugMode;
+
+    private final Set<String> mCompiledCodePaths = new HashSet<String>();
 
     public static final boolean BENCHMARK_FLAG = false;
     public static long sStartOverallTime = 0;
     public static long sStartJavaCTime = 0;
 
     private final static int MILLION = 1000000;
+    private String mProguardFile;
 
     /**
      * An object able to put a marker on a resource.
@@ -127,14 +142,24 @@ public class BuildHelper {
      * @param errStream
      * @param debugMode whether this is a debug build
      * @param verbose
+     * @throws CoreException
      */
-    public BuildHelper(IProject project, AndroidPrintStream outStream,
-            AndroidPrintStream errStream, boolean debugMode, boolean verbose) {
+    public BuildHelper(@NonNull IProject project,
+            @NonNull BuildToolInfo buildToolInfo,
+            @NonNull AndroidPrintStream outStream,
+            @NonNull AndroidPrintStream errStream,
+            boolean forceJumbo, boolean disableDexMerger, boolean debugMode,
+            boolean verbose, ResourceMarker resMarker) throws CoreException {
         mProject = project;
+        mBuildToolInfo = buildToolInfo;
         mOutStream = outStream;
         mErrStream = errStream;
         mDebugMode = debugMode;
         mVerbose = verbose;
+        mForceJumbo = forceJumbo;
+        mDisableDexMerger = disableDexMerger;
+
+        gatherPaths(resMarker);
     }
 
     public void updateCrunchCache() throws AaptExecException, AaptResultException {
@@ -166,11 +191,6 @@ public class BuildHelper {
                             + ((System.nanoTime() - startCrunchTime)/MILLION) + "ms";     //$NON-NLS-1$
             AdtPlugin.printBuildToConsole(BuildVerbosity.ALWAYS, mProject, msg);
         }
-    }
-
-    public static void writeResources(IArchiveBuilder builder, IJavaProject javaProject)
-            throws DuplicateFileException, ApkCreationException, SealedApkException, CoreException {
-        writeStandardResources(builder, javaProject, null);
     }
 
     /**
@@ -286,9 +306,7 @@ public class BuildHelper {
      * @param intermediateApk The path to the temporary resource file.
      * @param dex The path to the dex file.
      * @param output The path to the final package file to create.
-     * @param javaProject the java project being compiled
      * @param libProjects an optional list of library projects (can be null)
-     * @param referencedJavaProjects referenced projects.
      * @return true if success, false otherwise.
      * @throws ApkCreationException
      * @throws AndroidLocationException
@@ -298,8 +316,7 @@ public class BuildHelper {
      * @throws DuplicateFileException
      */
     public void finalDebugPackage(String intermediateApk, String dex, String output,
-            final IJavaProject javaProject, List<IProject> libProjects,
-            List<IJavaProject> referencedJavaProjects, ResourceMarker resMarker)
+            List<IProject> libProjects, ResourceMarker resMarker)
             throws ApkCreationException, KeytoolException, AndroidLocationException,
             NativeLibInJarException, DuplicateFileException, CoreException {
 
@@ -323,8 +340,7 @@ public class BuildHelper {
         // from the keystore, get the signing info
         SigningInfo info = ApkBuilder.getDebugKey(keystoreOsPath, mVerbose ? mOutStream : null);
 
-        finalPackage(intermediateApk, dex, output, javaProject, libProjects,
-                referencedJavaProjects,
+        finalPackage(intermediateApk, dex, output, libProjects,
                 info != null ? info.key : null, info != null ? info.certificate : null, resMarker);
     }
 
@@ -340,9 +356,7 @@ public class BuildHelper {
      * @param dex The path to the dex file.
      * @param output The path to the final package file to create.
      * @param debugSign whether the apk must be signed with the debug key.
-     * @param javaProject the java project being compiled
      * @param libProjects an optional list of library projects (can be null)
-     * @param referencedJavaProjects referenced projects.
      * @param abiFilter an optional filter. If not null, then only the matching ABI is included in
      * the final archive
      * @return true if success, false otherwise.
@@ -352,9 +366,8 @@ public class BuildHelper {
      * @throws DuplicateFileException
      */
     public void finalPackage(String intermediateApk, String dex, String output,
-            final IJavaProject javaProject, List<IProject> libProjects,
-            List<IJavaProject> referencedJavaProjects, PrivateKey key,
-            X509Certificate certificate, ResourceMarker resMarker)
+            List<IProject> libProjects,
+            PrivateKey key, X509Certificate certificate, ResourceMarker resMarker)
             throws NativeLibInJarException, ApkCreationException, DuplicateFileException,
             CoreException {
 
@@ -364,19 +377,24 @@ public class BuildHelper {
                     mVerbose ? mOutStream: null);
             apkBuilder.setDebugMode(mDebugMode);
 
-            // Now we write the standard resources from the project and the referenced projects.
-            writeStandardResources(apkBuilder, javaProject, referencedJavaProjects);
+            // either use the full compiled code paths or just the proguard file
+            // if present
+            Collection<String> pathsCollection = mCompiledCodePaths;
+            if (mProguardFile != null) {
+                pathsCollection = Collections.singletonList(mProguardFile);
+                mProguardFile = null;
+            }
 
-            // Now we write the standard resources from the external jars
-            for (String libraryOsPath : getExternalDependencies(resMarker)) {
-                File libFile = new File(libraryOsPath);
-                if (libFile.isFile()) {
-                    JarStatus jarStatus = apkBuilder.addResourcesFromJar(new File(libraryOsPath));
+            // Now we write the standard resources from all the output paths.
+            for (String path : pathsCollection) {
+                File file = new File(path);
+                if (file.isFile()) {
+                    JarStatus jarStatus = apkBuilder.addResourcesFromJar(file);
 
                     // check if we found native libraries in the external library. This
                     // constitutes an error or warning depending on if they are in lib/
                     if (jarStatus.getNativeLibs().size() > 0) {
-                        String libName = new File(libraryOsPath).getName();
+                        String libName = file.getName();
 
                         String msg = String.format(
                                 "Native libraries detected in '%1$s'. See console for more information.",
@@ -417,11 +435,11 @@ public class BuildHelper {
                             }
                         }
                     }
-                } else if (libFile.isDirectory()) {
+                } else if (file.isDirectory()) {
                     // this is technically not a source folder (class folder instead) but since we
                     // only care about Java resources (ie non class/java files) this will do the
                     // same
-                    apkBuilder.addSourceFolder(libFile);
+                    apkBuilder.addSourceFolder(file);
                 }
             }
 
@@ -452,66 +470,15 @@ public class BuildHelper {
         }
     }
 
-    /**
-     * Return a list of the project output for compiled Java code.
-     * @return
-     * @throws CoreException
-     */
-    public String[] getProjectJavaOutputs() throws CoreException {
-        IFolder outputFolder = BaseProjectHelper.getJavaOutputFolder(mProject);
-
-        // get the list of referenced projects output to add
-        List<IProject> javaProjects = ProjectHelper.getReferencedProjects(mProject);
-        List<IJavaProject> referencedJavaProjects = BuildHelper.getJavaProjects(javaProjects);
-
-        // get the project output, and since it's a new list object, just add the outputFolder
-        // of the project directly to it.
-        List<String> projectOutputs = getProjectJavaOutputs(referencedJavaProjects);
-
-        projectOutputs.add(0, outputFolder.getLocation().toOSString());
-
-        return projectOutputs.toArray(new String[projectOutputs.size()]);
+    public void setProguardOutput(String proguardFile) {
+        mProguardFile = proguardFile;
     }
 
-    /**
-     * Returns an array for all the compiled code for the project. This can include the
-     * code compiled by Eclipse for the main project and dependencies (Java only projects), as well
-     * as external jars used by the project or its library.
-     *
-     * This array of paths is compatible with the input for dx and can be passed as is to
-     * {@link #executeDx(IJavaProject, String[], String)}.
-     *
-     * @param resMarker
-     * @return a array (never empty) containing paths to compiled code.
-     * @throws CoreException
-     */
-    public String[] getCompiledCodePaths(boolean includeProjectOutputs, ResourceMarker resMarker)
-            throws CoreException {
-
-        // get the list of libraries to include with the source code
-        String[] libraries = getExternalDependencies(resMarker);
-
-        int startIndex = 0;
-
-        String[] compiledPaths;
-
-        if (includeProjectOutputs) {
-            String[] projectOutputs = getProjectJavaOutputs();
-
-            compiledPaths = new String[libraries.length + projectOutputs.length];
-
-            System.arraycopy(projectOutputs, 0, compiledPaths, 0, projectOutputs.length);
-            startIndex = projectOutputs.length;
-        } else {
-            compiledPaths = new String[libraries.length];
-        }
-
-        System.arraycopy(libraries, 0, compiledPaths, startIndex, libraries.length);
-
-        return compiledPaths;
+    public Collection<String> getCompiledCodePaths() {
+        return mCompiledCodePaths;
     }
 
-    public void runProguard(File proguardConfig, File inputJar, String[] jarFiles,
+    public void runProguard(List<File> proguardConfigs, File inputJar, Collection<String> jarFiles,
                             File obfuscatedJar, File logOutput)
             throws ProguardResultException, ProguardExecException, IOException {
         IAndroidTarget target = Sdk.getCurrent().getTarget(mProject);
@@ -520,7 +487,10 @@ public class BuildHelper {
         List<String> command = new ArrayList<String>();
         command.add(AdtPlugin.getOsAbsoluteProguard());
 
-        command.add("@" + quotePath(proguardConfig.getAbsolutePath())); //$NON-NLS-1$
+        for (File configFile : proguardConfigs) {
+            command.add("-include"); //$NON-NLS-1$
+            command.add(quotePath(configFile.getAbsolutePath()));
+        }
 
         command.add("-injars"); //$NON-NLS-1$
         StringBuilder sb = new StringBuilder(quotePath(inputJar.getAbsolutePath()));
@@ -719,18 +689,19 @@ public class BuildHelper {
     /**
      * Execute the Dx tool for dalvik code conversion.
      * @param javaProject The java project
-     * @param inputPath the path to the main input of dex
+     * @param inputPaths the input paths for DX
      * @param osOutFilePath the path of the dex file to create.
      *
      * @throws CoreException
      * @throws DexException
      */
-    public void executeDx(IJavaProject javaProject, String[] inputPaths, String osOutFilePath)
+    public void executeDx(IJavaProject javaProject, Collection<String> inputPaths,
+            String osOutFilePath)
             throws CoreException, DexException {
 
         // get the dex wrapper
         Sdk sdk = Sdk.getCurrent();
-        DexWrapper wrapper = sdk.getDexWrapper();
+        DexWrapper wrapper = sdk.getDexWrapper(mBuildToolInfo);
 
         if (wrapper == null) {
             throw new CoreException(new Status(IStatus.ERROR, AdtPlugin.PLUGIN_ID,
@@ -742,8 +713,73 @@ public class BuildHelper {
             mOutStream.setPrefix(CONSOLE_PREFIX_DX);
             mErrStream.setPrefix(CONSOLE_PREFIX_DX);
 
+            IFolder binFolder = BaseProjectHelper.getAndroidOutputFolder(javaProject.getProject());
+            File binFile = binFolder.getLocation().toFile();
+            File dexedLibs = new File(binFile, "dexedLibs");
+            if (dexedLibs.exists() == false) {
+                dexedLibs.mkdir();
+            }
+
+            // replace the libs by their dexed versions (dexing them if needed.)
+            List<String> finalInputPaths = new ArrayList<String>(inputPaths.size());
+            if (mDisableDexMerger || inputPaths.size() == 1) {
+                // only one input, no need to put a pre-dexed version, even if this path is
+                // just a jar file (case for proguard'ed builds)
+                finalInputPaths.addAll(inputPaths);
+            } else {
+
+                for (String input : inputPaths) {
+                    File inputFile = new File(input);
+                    if (inputFile.isDirectory()) {
+                        finalInputPaths.add(input);
+                    } else if (inputFile.isFile()) {
+                        String fileName = getDexFileName(inputFile);
+
+                        File dexedLib = new File(dexedLibs, fileName);
+                        String dexedLibPath = dexedLib.getAbsolutePath();
+
+                        if (dexedLib.isFile() == false ||
+                                dexedLib.lastModified() < inputFile.lastModified()) {
+
+                            if (mVerbose) {
+                                mOutStream.println(
+                                        String.format("Pre-Dexing %1$s -> %2$s", input, fileName));
+                            }
+
+                            if (dexedLib.isFile()) {
+                                dexedLib.delete();
+                            }
+
+                            int res = wrapper.run(dexedLibPath, Collections.singleton(input),
+                                    mForceJumbo, mVerbose, mOutStream, mErrStream);
+
+                            if (res != 0) {
+                                // output error message and mark the project.
+                                String message = String.format(Messages.Dalvik_Error_d, res);
+                                throw new DexException(message);
+                            }
+                        } else {
+                            if (mVerbose) {
+                                mOutStream.println(
+                                        String.format("Using Pre-Dexed %1$s <- %2$s",
+                                                fileName, input));
+                            }
+                        }
+
+                        finalInputPaths.add(dexedLibPath);
+                    }
+                }
+            }
+
+            if (mVerbose) {
+                for (String input : finalInputPaths) {
+                    mOutStream.println("Input: " + input);
+                }
+            }
+
             int res = wrapper.run(osOutFilePath,
-                    inputPaths,
+                    finalInputPaths,
+                    mForceJumbo,
                     mVerbose,
                     mOutStream, mErrStream);
 
@@ -768,6 +804,22 @@ public class BuildHelper {
         }
     }
 
+    private String getDexFileName(File inputFile) {
+        // get the filename
+        String name = inputFile.getName();
+        // remove the extension
+        int pos = name.lastIndexOf('.');
+        if (pos != -1) {
+            name = name.substring(0, pos);
+        }
+
+        // add a hash of the original file path
+        HashFunction hashFunction = Hashing.md5();
+        HashCode hashCode = hashFunction.hashString(inputFile.getAbsolutePath());
+
+        return name + "-" + hashCode.toString() + ".jar";
+    }
+
     /**
      * Executes aapt. If any error happen, files or the project will be marked.
      * @param command The command for aapt to execute. Currently supported: package and crunch
@@ -789,9 +841,11 @@ public class BuildHelper {
             String configFilter, int versionCode) throws AaptExecException, AaptResultException {
         IAndroidTarget target = Sdk.getCurrent().getTarget(mProject);
 
+        String aapt = mBuildToolInfo.getPath(BuildToolInfo.PathId.AAPT);
+
         // Create the command line.
         ArrayList<String> commandArray = new ArrayList<String>();
-        commandArray.add(target.getPath(IAndroidTarget.AAPT));
+        commandArray.add(aapt);
         commandArray.add(aaptCommand);
         if (AdtPrefs.getPrefs().getBuildVerbosity() == BuildVerbosity.VERBOSE) {
             commandArray.add("-v"); //$NON-NLS-1$
@@ -867,31 +921,30 @@ public class BuildHelper {
         }
 
         // launch
-        int execError = 1;
         try {
             // launch the command line process
             Process process = Runtime.getRuntime().exec(command);
 
             // list to store each line of stderr
-            ArrayList<String> results = new ArrayList<String>();
+            ArrayList<String> stdErr = new ArrayList<String>();
 
             // get the output and return code from the process
-            execError = grabProcessOutput(mProject, process, results);
+            int returnCode = grabProcessOutput(mProject, process, stdErr);
 
             if (mVerbose) {
-                for (String resultString : results) {
-                    mOutStream.println(resultString);
+                for (String stdErrString : stdErr) {
+                    mOutStream.println(stdErrString);
                 }
             }
-            if (execError != 0) {
-                throw new AaptResultException(execError,
-                        results.toArray(new String[results.size()]));
+            if (returnCode != 0) {
+                throw new AaptResultException(returnCode,
+                        stdErr.toArray(new String[stdErr.size()]));
             }
         } catch (IOException e) {
-            String msg = String.format(Messages.AAPT_Exec_Error, command[0]);
+            String msg = String.format(Messages.AAPT_Exec_Error_s, command[0]);
             throw new AaptExecException(msg, e);
         } catch (InterruptedException e) {
-            String msg = String.format(Messages.AAPT_Exec_Error, command[0]);
+            String msg = String.format(Messages.AAPT_Exec_Error_s, command[0]);
             throw new AaptExecException(msg, e);
         }
 
@@ -905,161 +958,108 @@ public class BuildHelper {
     }
 
     /**
-     * Writes the standard resources of a project and its referenced projects
-     * into a {@link SignedJarBuilder}.
-     * Standard resources are non java/aidl files placed in the java package folders.
-     * @param builder the archive builder.
-     * @param javaProject the javaProject object.
-     * @param referencedJavaProjects the java projects that this project references.
-     * @throws ApkCreationException if an error occurred
-     * @throws SealedApkException if the APK is already sealed.
-     * @throws DuplicateFileException if a file conflicts with another already added to the APK
-     *                                   at the same location inside the APK archive.
-     * @throws CoreException
-     */
-    private static void writeStandardResources(IArchiveBuilder builder, IJavaProject javaProject,
-            List<IJavaProject> referencedJavaProjects)
-            throws DuplicateFileException, ApkCreationException, SealedApkException,
-            CoreException  {
-        IWorkspace ws = ResourcesPlugin.getWorkspace();
-        IWorkspaceRoot wsRoot = ws.getRoot();
-
-        writeStandardProjectResources(builder, javaProject, wsRoot);
-
-        if (referencedJavaProjects != null) {
-            for (IJavaProject referencedJavaProject : referencedJavaProjects) {
-                // only include output from non android referenced project
-                // (This is to handle the case of reference Android projects in the context of
-                // instrumentation projects that need to reference the projects to be tested).
-                if (referencedJavaProject.getProject().hasNature(
-                        AdtConstants.NATURE_DEFAULT) == false) {
-                    writeStandardProjectResources(builder, referencedJavaProject, wsRoot);
-                }
-            }
-        }
-    }
-
-    /**
-     * Writes the standard resources of a {@link IJavaProject} into a {@link SignedJarBuilder}.
-     * Standard resources are non java/aidl files placed in the java package folders.
-     * @param jarBuilder the {@link ApkBuilder}.
-     * @param javaProject the javaProject object.
-     * @param wsRoot the {@link IWorkspaceRoot}.
-     * @throws ApkCreationException if an error occurred
-     * @throws SealedApkException if the APK is already sealed.
-     * @throws DuplicateFileException if a file conflicts with another already added to the APK
-     *                                   at the same location inside the APK archive.
-     * @throws CoreException
-     */
-    private static void writeStandardProjectResources(IArchiveBuilder builder,
-            IJavaProject javaProject, IWorkspaceRoot wsRoot)
-            throws DuplicateFileException, ApkCreationException, SealedApkException, CoreException {
-        // get the source pathes
-        List<IPath> sourceFolders = BaseProjectHelper.getSourceClasspaths(javaProject);
-
-        // loop on them and then recursively go through the content looking for matching files.
-        for (IPath sourcePath : sourceFolders) {
-            IResource sourceResource = wsRoot.findMember(sourcePath);
-            if (sourceResource != null && sourceResource.getType() == IResource.FOLDER) {
-                writeFolderResources(builder, javaProject, (IFolder) sourceResource);
-            }
-        }
-    }
-
-    private static void writeFolderResources(IArchiveBuilder builder,
-            final IJavaProject javaProject, IFolder root) throws CoreException,
-            ApkCreationException, SealedApkException, DuplicateFileException {
-        final List<IPath> pathsToPackage = new ArrayList<IPath>();
-        root.accept(new IResourceProxyVisitor() {
-            public boolean visit(IResourceProxy proxy) throws CoreException {
-                if (proxy.getType() == IResource.FOLDER) {
-                    // If this folder isn't wanted, don't traverse into it.
-                    return ApkBuilder.checkFolderForPackaging(proxy.getName());
-                }
-                // If it's not a folder, it must be a file.  We won't see any other resource type.
-                if (!ApkBuilder.checkFileForPackaging(proxy.getName())) {
-                    return true;
-                }
-                IResource res = proxy.requestResource();
-                if (!javaProject.isOnClasspath(res)) {
-                    return true;
-                }
-                // Just record that we need to package this.  Packaging here throws
-                // inappropriate checked exceptions.
-                IPath location = res.getLocation();
-                pathsToPackage.add(location);
-                return true;
-            }
-        }, 0);
-        IPath rootLocation = root.getLocation();
-        for (IPath path : pathsToPackage) {
-            IPath archivePath = path.makeRelativeTo(rootLocation);
-            builder.addFile(path.toFile(), archivePath.toString());
-        }
-    }
-
-    /**
-     * Returns an array of external dependencies used the project. This can be paths to jar files
-     * or to source folders.
+     * Computes all the project output and dependencies that must go into building the apk.
      *
-     * @param resMarker if non null, used to put Resource marker on problem files.
-     * @return an array of OS-specific absolute file paths
+     * @param resMarker
+     * @throws CoreException
      */
-    private final String[] getExternalDependencies(ResourceMarker resMarker) {
-        // get a java project from it
-        IJavaProject javaProject = JavaCore.create(mProject);
-
+    private void gatherPaths(ResourceMarker resMarker)
+            throws CoreException {
         IWorkspaceRoot wsRoot = ResourcesPlugin.getWorkspace().getRoot();
 
-        ArrayList<String> oslibraryList = new ArrayList<String>();
+        // get a java project for the project.
+        IJavaProject javaProject = JavaCore.create(mProject);
+
+
+        // get the output of the main project
+        IPath path = javaProject.getOutputLocation();
+        IResource outputResource = wsRoot.findMember(path);
+        if (outputResource != null && outputResource.getType() == IResource.FOLDER) {
+            mCompiledCodePaths.add(outputResource.getLocation().toOSString());
+        }
 
         // we could use IJavaProject.getResolvedClasspath directly, but we actually
         // want to see the containers themselves.
         IClasspathEntry[] classpaths = javaProject.readRawClasspath();
         if (classpaths != null) {
             for (IClasspathEntry e : classpaths) {
-                // if this is a classpath variable reference, we resolve it.
-                if (e.getEntryKind() == IClasspathEntry.CPE_VARIABLE) {
-                    e = JavaCore.getResolvedClasspathEntry(e);
-                }
-
-                if (e.getEntryKind() == IClasspathEntry.CPE_LIBRARY) {
-                    handleClasspathEntry(e, wsRoot, oslibraryList, resMarker);
-                } else if (e.getEntryKind() == IClasspathEntry.CPE_CONTAINER) {
-                    // get the container
-                    try {
-                        IClasspathContainer container = JavaCore.getClasspathContainer(
-                                e.getPath(), javaProject);
-                        // ignore the system and default_system types as they represent
-                        // libraries that are part of the runtime.
-                        if (container.getKind() == IClasspathContainer.K_APPLICATION) {
-                            IClasspathEntry[] entries = container.getClasspathEntries();
-                            for (IClasspathEntry entry : entries) {
-                                handleClasspathEntry(entry, wsRoot, oslibraryList, resMarker);
-                            }
-                        }
-                    } catch (JavaModelException jme) {
-                        // can't resolve the container? ignore it.
-                        AdtPlugin.log(jme, "Failed to resolve ClasspathContainer: %s", e.getPath());
-                    }
+                // ignore non exported entries, unless it's the LIBRARIES container,
+                // in which case we always want it (there may be some older projects that
+                // have it as non exported).
+                if (e.isExported() ||
+                        (e.getEntryKind() == IClasspathEntry.CPE_CONTAINER &&
+                         e.getPath().toString().equals(AdtConstants.CONTAINER_LIBRARIES))) {
+                    handleCPE(e, javaProject, wsRoot, resMarker);
                 }
             }
         }
-
-        return oslibraryList.toArray(new String[oslibraryList.size()]);
     }
 
-    private void handleClasspathEntry(IClasspathEntry e, IWorkspaceRoot wsRoot,
-            ArrayList<String> oslibraryList, ResourceMarker resMarker) {
+    private void handleCPE(IClasspathEntry entry, IJavaProject javaProject,
+            IWorkspaceRoot wsRoot, ResourceMarker resMarker) {
+
+        // if this is a classpath variable reference, we resolve it.
+        if (entry.getEntryKind() == IClasspathEntry.CPE_VARIABLE) {
+            entry = JavaCore.getResolvedClasspathEntry(entry);
+        }
+
+        if (entry.getEntryKind() == IClasspathEntry.CPE_PROJECT) {
+            IProject refProject = wsRoot.getProject(entry.getPath().lastSegment());
+            try {
+                // ignore if it's an Android project, or if it's not a Java Project
+                if (refProject.hasNature(JavaCore.NATURE_ID) &&
+                        refProject.hasNature(AdtConstants.NATURE_DEFAULT) == false) {
+                    IJavaProject refJavaProject = JavaCore.create(refProject);
+
+                    // get the output folder
+                    IPath path = refJavaProject.getOutputLocation();
+                    IResource outputResource = wsRoot.findMember(path);
+                    if (outputResource != null && outputResource.getType() == IResource.FOLDER) {
+                        mCompiledCodePaths.add(outputResource.getLocation().toOSString());
+                    }
+                }
+            } catch (CoreException exception) {
+                // can't query the project nature? ignore
+            }
+
+        } else if (entry.getEntryKind() == IClasspathEntry.CPE_LIBRARY) {
+            handleClasspathLibrary(entry, wsRoot, resMarker);
+        } else if (entry.getEntryKind() == IClasspathEntry.CPE_CONTAINER) {
+            // get the container
+            try {
+                IClasspathContainer container = JavaCore.getClasspathContainer(
+                        entry.getPath(), javaProject);
+                // ignore the system and default_system types as they represent
+                // libraries that are part of the runtime.
+                if (container != null && container.getKind() == IClasspathContainer.K_APPLICATION) {
+                    IClasspathEntry[] entries = container.getClasspathEntries();
+                    for (IClasspathEntry cpe : entries) {
+                        handleCPE(cpe, javaProject, wsRoot, resMarker);
+                    }
+                }
+            } catch (JavaModelException jme) {
+                // can't resolve the container? ignore it.
+                AdtPlugin.log(jme, "Failed to resolve ClasspathContainer: %s", entry.getPath());
+            }
+        }
+    }
+
+    private void handleClasspathLibrary(IClasspathEntry e, IWorkspaceRoot wsRoot,
+            ResourceMarker resMarker) {
         // get the IPath
         IPath path = e.getPath();
 
         IResource resource = wsRoot.findMember(path);
-        // case of a jar file (which could be relative to the workspace or a full path)
-        if (AdtConstants.EXT_JAR.equalsIgnoreCase(path.getFileExtension())) {
+
+        if (resource != null && resource.getType() == IResource.PROJECT) {
+            // if it's a project we should just ignore it because it's going to be added
+            // later when we add all the referenced projects.
+
+        } else if (SdkConstants.EXT_JAR.equalsIgnoreCase(path.getFileExtension())) {
+            // case of a jar file (which could be relative to the workspace or a full path)
             if (resource != null && resource.exists() &&
                     resource.getType() == IResource.FILE) {
-                oslibraryList.add(resource.getLocation().toOSString());
+                mCompiledCodePaths.add(resource.getLocation().toOSString());
             } else {
                 // if the jar path doesn't match a workspace resource,
                 // then we get an OSString and check if this links to a valid file.
@@ -1067,7 +1067,7 @@ public class BuildHelper {
 
                 File f = new File(osFullPath);
                 if (f.isFile()) {
-                    oslibraryList.add(osFullPath);
+                    mCompiledCodePaths.add(osFullPath);
                 } else {
                     String message = String.format( Messages.Couldnt_Locate_s_Error,
                             path);
@@ -1084,7 +1084,7 @@ public class BuildHelper {
             // this can be the case for a class folder.
             if (resource != null && resource.exists() &&
                     resource.getType() == IResource.FOLDER) {
-                oslibraryList.add(resource.getLocation().toOSString());
+                mCompiledCodePaths.add(resource.getLocation().toOSString());
             } else {
                 // if the path doesn't match a workspace resource,
                 // then we get an OSString and check if this links to a valid folder.
@@ -1092,50 +1092,10 @@ public class BuildHelper {
 
                 File f = new File(osFullPath);
                 if (f.isDirectory()) {
-                    oslibraryList.add(osFullPath);
+                    mCompiledCodePaths.add(osFullPath);
                 }
             }
         }
-    }
-
-    /**
-     * Returns the list of the output folders for the specified {@link IJavaProject} objects, if
-     * they are Android projects.
-     *
-     * @param referencedJavaProjects the java projects.
-     * @return a new list object containing the output folder paths.
-     * @throws CoreException
-     */
-    private List<String> getProjectJavaOutputs(List<IJavaProject> referencedJavaProjects)
-            throws CoreException {
-        ArrayList<String> list = new ArrayList<String>();
-
-        IWorkspace ws = ResourcesPlugin.getWorkspace();
-        IWorkspaceRoot wsRoot = ws.getRoot();
-
-        for (IJavaProject javaProject : referencedJavaProjects) {
-            // only include output from non android referenced project
-            // (This is to handle the case of reference Android projects in the context of
-            // instrumentation projects that need to reference the projects to be tested).
-            if (javaProject.getProject().hasNature(AdtConstants.NATURE_DEFAULT) == false) {
-                // get the output folder
-                IPath path = null;
-                try {
-                    path = javaProject.getOutputLocation();
-                } catch (JavaModelException e) {
-                    continue;
-                }
-
-                IResource outputResource = wsRoot.findMember(path);
-                if (outputResource != null && outputResource.getType() == IResource.FOLDER) {
-                    String outputOsPath = outputResource.getLocation().toOSString();
-
-                    list.add(outputOsPath);
-                }
-            }
-        }
-
-        return list;
     }
 
     /**
@@ -1181,51 +1141,25 @@ public class BuildHelper {
 
     /**
      * Get the stderr output of a process and return when the process is done.
-     * @param process The process to get the ouput from
-     * @param results The array to store the stderr output
+     * @param process The process to get the output from
+     * @param stderr The array to store the stderr output
      * @return the process return code.
      * @throws InterruptedException
      */
-    public final static int grabProcessOutput(final IProject project, final Process process,
-            final ArrayList<String> results)
+    public final static int grabProcessOutput(
+            final IProject project,
+            final Process process,
+            final ArrayList<String> stderr)
             throws InterruptedException {
-        // Due to the limited buffer size on windows for the standard io (stderr, stdout), we
-        // *need* to read both stdout and stderr all the time. If we don't and a process output
-        // a large amount, this could deadlock the process.
 
-        // read the lines as they come. if null is returned, it's
-        // because the process finished
-        new Thread("") { //$NON-NLS-1$
-            @Override
-            public void run() {
-                // create a buffer to read the stderr output
-                InputStreamReader is = new InputStreamReader(process.getErrorStream());
-                BufferedReader errReader = new BufferedReader(is);
+        return GrabProcessOutput.grabProcessOutput(
+                process,
+                Wait.WAIT_FOR_READERS, // we really want to make sure we get all the output!
+                new IProcessOutput() {
 
-                try {
-                    while (true) {
-                        String line = errReader.readLine();
-                        if (line != null) {
-                            results.add(line);
-                        } else {
-                            break;
-                        }
-                    }
-                } catch (IOException e) {
-                    // do nothing.
-                }
-            }
-        }.start();
-
-        new Thread("") { //$NON-NLS-1$
-            @Override
-            public void run() {
-                InputStreamReader is = new InputStreamReader(process.getInputStream());
-                BufferedReader outReader = new BufferedReader(is);
-
-                try {
-                    while (true) {
-                        String line = outReader.readLine();
+                    @SuppressWarnings("unused")
+                    @Override
+                    public void out(@Nullable String line) {
                         if (line != null) {
                             // If benchmarking always print the lines that
                             // correspond to benchmarking info returned by ADT
@@ -1236,18 +1170,18 @@ public class BuildHelper {
                                 AdtPlugin.printBuildToConsole(BuildVerbosity.VERBOSE,
                                         project, line);
                             }
-                        } else {
-                            break;
                         }
                     }
-                } catch (IOException e) {
-                    // do nothing.
-                }
-            }
 
-        }.start();
-
-        // get the return code from the process
-        return process.waitFor();
+                    @Override
+                    public void err(@Nullable String line) {
+                        if (line != null) {
+                            stderr.add(line);
+                            if (BuildVerbosity.VERBOSE == AdtPrefs.getPrefs().getBuildVerbosity()) {
+                                AdtPlugin.printErrorToConsole(project, line);
+                            }
+                        }
+                    }
+                });
     }
 }

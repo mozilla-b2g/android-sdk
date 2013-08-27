@@ -72,6 +72,7 @@ import java.net.URL;
  * Derived classes must implement createFormPages to create the forms before the
  * source editor. This can be a no-op if desired.
  */
+@SuppressWarnings("restriction")
 public abstract class AndroidTextEditor extends FormEditor implements IResourceChangeListener {
 
     /** Preference name for the current page of this file */
@@ -283,12 +284,14 @@ public abstract class AndroidTextEditor extends FormEditor implements IResourceC
      * Closes all project files on project close.
      * @see IResourceChangeListener
      */
+    @Override
     public void resourceChanged(final IResourceChangeEvent event) {
         if (event.getType() == IResourceChangeEvent.PRE_CLOSE) {
             Display.getDefault().asyncExec(new Runnable() {
+                @Override
                 public void run() {
-                    IWorkbenchPage[] pages = getSite().getWorkbenchWindow()
-                            .getPages();
+                    @SuppressWarnings("hiding")
+                    IWorkbenchPage[] pages = getSite().getWorkbenchWindow().getPages();
                     for (int i = 0; i < pages.length; i++) {
                         if (((FileEditorInput)mTextEditor.getEditorInput())
                                 .getFile().getProject().equals(
@@ -502,10 +505,12 @@ public abstract class AndroidTextEditor extends FormEditor implements IResourceC
             mDocument = provider.getDocument(getEditorInput());
 
             mDocument.addDocumentListener(new IDocumentListener() {
+                @Override
                 public void documentChanged(DocumentEvent event) {
                     onDocumentChanged(event);
                 }
 
+                @Override
                 public void documentAboutToBeChanged(DocumentEvent event) {
                     // ignore
                 }

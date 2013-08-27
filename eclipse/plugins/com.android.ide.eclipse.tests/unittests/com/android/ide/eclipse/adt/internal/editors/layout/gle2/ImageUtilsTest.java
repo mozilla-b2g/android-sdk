@@ -30,6 +30,7 @@ import java.util.List;
 
 import junit.framework.TestCase;
 
+@SuppressWarnings("javadoc")
 public class ImageUtilsTest extends TestCase {
     public void testCropBlank() throws Exception {
         BufferedImage image = new BufferedImage(100, 100, BufferedImage.TYPE_INT_ARGB_PRE);
@@ -156,12 +157,6 @@ public class ImageUtilsTest extends TestCase {
         assertEquals(0xFFFF0000, crop.getRGB(0, 0));
         assertEquals(0xFFFF0000, crop.getRGB(49, 49));
     }
-
-    public void testNullOk() throws Exception {
-        ImageUtils.cropBlank(null, null);
-        ImageUtils.cropColor(null, 0, null);
-    }
-
 
     public void testNothingTodo() throws Exception {
         BufferedImage image = new BufferedImage(100, 100, BufferedImage.TYPE_INT_ARGB_PRE);
@@ -345,6 +340,21 @@ public class ImageUtilsTest extends TestCase {
         assertEquals(0xFF00FF00, scaled.getRGB(48, 48));
         assertEquals(0xFFFF0000, scaled.getRGB(100, 100));
         assertEquals(0xFF00FF00, scaled.getRGB(199, 199));
+
+        scaled = ImageUtils.scale(image, 0.25, 0.25);
+        assertEquals(25, scaled.getWidth());
+        assertEquals(25, scaled.getHeight());
+        assertEquals(0xFF00FF00, scaled.getRGB(0, 0));
+        assertEquals(0xFF00FF00, scaled.getRGB(24, 24));
+        assertEquals(0xFFFF0000, scaled.getRGB(13, 13));
+
+        scaled = ImageUtils.scale(image, 0.25, 0.25, 75, 95);
+        assertEquals(100, scaled.getWidth());
+        assertEquals(120, scaled.getHeight());
+        assertEquals(0xFF00FF00, scaled.getRGB(0, 0));
+        assertEquals(0xFF00FF00, scaled.getRGB(24, 24));
+        assertEquals(0xFFFF0000, scaled.getRGB(13, 13));
+
     }
 
     public void testCreateColoredImage() throws Exception {
@@ -355,5 +365,4 @@ public class ImageUtilsTest extends TestCase {
         assertEquals(0xFFFEFDFC, image.getRGB(50, 50));
         assertEquals(0xFFFEFDFC, image.getRGB(119, 109));
     }
-
 }

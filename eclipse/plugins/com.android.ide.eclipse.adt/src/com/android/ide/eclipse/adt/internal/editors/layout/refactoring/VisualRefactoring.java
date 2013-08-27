@@ -15,26 +15,27 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.layout.refactoring;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_NS_NAME;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_WIDGET_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_HEIGHT;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_WIDTH;
-import static com.android.ide.common.layout.LayoutConstants.ID_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.NEW_ID_PREFIX;
-import static com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor.XMLNS;
-import static com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor.XMLNS_COLON;
+import static com.android.SdkConstants.ANDROID_NS_NAME;
+import static com.android.SdkConstants.ANDROID_URI;
+import static com.android.SdkConstants.ANDROID_WIDGET_PREFIX;
+import static com.android.SdkConstants.ATTR_ID;
+import static com.android.SdkConstants.ATTR_LAYOUT_HEIGHT;
+import static com.android.SdkConstants.ATTR_LAYOUT_RESOURCE_PREFIX;
+import static com.android.SdkConstants.ATTR_LAYOUT_WIDTH;
+import static com.android.SdkConstants.ID_PREFIX;
+import static com.android.SdkConstants.NEW_ID_PREFIX;
+import static com.android.SdkConstants.XMLNS;
+import static com.android.SdkConstants.XMLNS_PREFIX;
 
+import com.android.annotations.NonNull;
 import com.android.annotations.VisibleForTesting;
+import com.android.ide.common.xml.XmlFormatStyle;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
-import com.android.ide.eclipse.adt.internal.editors.formatting.XmlFormatPreferences;
-import com.android.ide.eclipse.adt.internal.editors.formatting.XmlFormatStyle;
-import com.android.ide.eclipse.adt.internal.editors.formatting.XmlPrettyPrinter;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
-import com.android.ide.eclipse.adt.internal.editors.layout.configuration.ConfigurationComposite;
+import com.android.ide.eclipse.adt.internal.editors.formatting.EclipseXmlFormatPreferences;
+import com.android.ide.eclipse.adt.internal.editors.formatting.EclipseXmlPrettyPrinter;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
+import com.android.ide.eclipse.adt.internal.editors.layout.configuration.ConfigurationDescription;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.ViewElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.CanvasViewInfo;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.DomUtilities;
@@ -43,7 +44,7 @@ import com.android.ide.eclipse.adt.internal.editors.layout.uimodel.UiViewElement
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
 import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetData;
-import com.android.util.Pair;
+import com.android.utils.Pair;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
@@ -53,7 +54,6 @@ import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
 import org.eclipse.core.runtime.Path;
-import org.eclipse.core.runtime.QualifiedName;
 import org.eclipse.jface.text.BadLocationException;
 import org.eclipse.jface.text.IDocument;
 import org.eclipse.jface.text.IRegion;
@@ -95,6 +95,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -110,7 +111,7 @@ public abstract class VisualRefactoring extends Refactoring {
     private static final String KEY_SEL_END = "sel-end";                //$NON-NLS-1$
 
     protected final IFile mFile;
-    protected final LayoutEditor mEditor;
+    protected final LayoutEditorDelegate mDelegate;
     protected final IProject mProject;
     protected int mSelectionStart = -1;
     protected int mSelectionEnd = -1;
@@ -142,19 +143,19 @@ public abstract class VisualRefactoring extends Refactoring {
         mSelectionEnd = Integer.parseInt(arguments.get(KEY_SEL_END));
         mOriginalSelectionStart = mSelectionStart;
         mOriginalSelectionEnd = mSelectionEnd;
-        mEditor = null;
+        mDelegate = null;
         mElements = null;
         mSelection = null;
         mTreeSelection = null;
     }
 
     @VisibleForTesting
-    VisualRefactoring(List<Element> elements, LayoutEditor editor) {
+    VisualRefactoring(List<Element> elements, LayoutEditorDelegate delegate) {
         mElements = elements;
-        mEditor = editor;
+        mDelegate = delegate;
 
-        mFile = editor != null ? editor.getInputFile() : null;
-        mProject = editor != null ? editor.getProject() : null;
+        mFile = delegate != null ? delegate.getEditor().getInputFile() : null;
+        mProject = delegate != null ? delegate.getEditor().getProject() : null;
         mSelectionStart = 0;
         mSelectionEnd = 0;
         mOriginalSelectionStart = 0;
@@ -179,10 +180,10 @@ public abstract class VisualRefactoring extends Refactoring {
         }
     }
 
-    public VisualRefactoring(IFile file, LayoutEditor editor, ITextSelection selection,
+    public VisualRefactoring(IFile file, LayoutEditorDelegate editor, ITextSelection selection,
             ITreeSelection treeSelection) {
         mFile = file;
-        mEditor = editor;
+        mDelegate = editor;
         mProject = file.getProject();
         mSelection = selection;
         mTreeSelection = treeSelection;
@@ -231,6 +232,7 @@ public abstract class VisualRefactoring extends Refactoring {
         mElements = initElements();
     }
 
+    @NonNull
     protected abstract List<Change> computeChanges(IProgressMonitor monitor);
 
     @Override
@@ -292,17 +294,20 @@ public abstract class VisualRefactoring extends Refactoring {
         return args;
     }
 
+    IFile getFile() {
+        return mFile;
+    }
+
     // ---- Shared functionality ----
 
 
     protected void openFile(IFile file) {
-        GraphicalEditorPart graphicalEditor = mEditor.getGraphicalEditor();
+        GraphicalEditorPart graphicalEditor = mDelegate.getGraphicalEditor();
         IFile leavingFile = graphicalEditor.getEditedFile();
 
         try {
             // Duplicate the current state into the newly created file
-            QualifiedName qname = ConfigurationComposite.NAME_CONFIG_STATE;
-            String state = AdtPlugin.getFileProperty(leavingFile, qname);
+            String state = ConfigurationDescription.getDescription(leavingFile);
 
             // TODO: Look for a ".NoTitleBar.Fullscreen" theme version of the current
             // theme to show.
@@ -325,7 +330,8 @@ public abstract class VisualRefactoring extends Refactoring {
         */
 
         try {
-            IEditorPart part = IDE.openEditor(mEditor.getEditorSite().getPage(), file);
+            IEditorPart part =
+                IDE.openEditor(mDelegate.getEditor().getEditorSite().getPage(), file);
             if (part instanceof AndroidXmlEditor && AdtPrefs.getPrefs().getFormatGuiXml()) {
                 AndroidXmlEditor newEditor = (AndroidXmlEditor) part;
                 newEditor.reformatDocument();
@@ -357,7 +363,7 @@ public abstract class VisualRefactoring extends Refactoring {
             return Collections.emptyList();
         }
 
-        String namePrefix = androidNamePrefix + ':' + ATTR_LAYOUT_PREFIX;
+        String namePrefix = androidNamePrefix + ':' + ATTR_LAYOUT_RESOURCE_PREFIX;
         List<TextEdit> edits = new ArrayList<TextEdit>();
 
         IStructuredDocumentRegion region = doc.getFirstStructuredDocumentRegion();
@@ -421,9 +427,9 @@ public abstract class VisualRefactoring extends Refactoring {
                     String value = attributeNode.getNodeValue();
                     if (value.equals(ANDROID_URI)) {
                         mAndroidNamespacePrefix = name;
-                        if (mAndroidNamespacePrefix.startsWith(XMLNS_COLON)) {
+                        if (mAndroidNamespacePrefix.startsWith(XMLNS_PREFIX)) {
                             mAndroidNamespacePrefix =
-                                mAndroidNamespacePrefix.substring(XMLNS_COLON.length());
+                                mAndroidNamespacePrefix.substring(XMLNS_PREFIX.length());
                         }
                     }
                 }
@@ -447,9 +453,9 @@ public abstract class VisualRefactoring extends Refactoring {
                 String value = attributeNode.getNodeValue();
                 if (value.equals(ANDROID_URI)) {
                     nsPrefix = name;
-                    if (nsPrefix.startsWith(XMLNS_COLON)) {
+                    if (nsPrefix.startsWith(XMLNS_PREFIX)) {
                         nsPrefix =
-                            nsPrefix.substring(XMLNS_COLON.length());
+                            nsPrefix.substring(XMLNS_PREFIX.length());
                     }
                 }
             }
@@ -498,7 +504,7 @@ public abstract class VisualRefactoring extends Refactoring {
             Node attributeNode = attributes.item(i);
 
             String name = attributeNode.getLocalName();
-            if (name.startsWith(ATTR_LAYOUT_PREFIX)
+            if (name.startsWith(ATTR_LAYOUT_RESOURCE_PREFIX)
                     && ANDROID_URI.equals(attributeNode.getNamespaceURI())) {
                 result.add((Attr) attributeNode);
             }
@@ -533,7 +539,7 @@ public abstract class VisualRefactoring extends Refactoring {
             for (int i = 0, n = attributes.getLength(); i < n; i++) {
                 Node attr = attributes.item(i);
                 String name = attr.getLocalName();
-                if (name.startsWith(ATTR_LAYOUT_PREFIX)
+                if (name.startsWith(ATTR_LAYOUT_RESOURCE_PREFIX)
                         && ANDROID_URI.equals(attr.getNamespaceURI())) {
                     if (name.equals(ATTR_LAYOUT_WIDTH) || name.equals(ATTR_LAYOUT_HEIGHT)) {
                         // These are special and are left in
@@ -548,6 +554,7 @@ public abstract class VisualRefactoring extends Refactoring {
             if (skip.size() > 0) {
                 Collections.sort(skip, new Comparator<IndexedRegion>() {
                     // Sort in start order
+                    @Override
                     public int compare(IndexedRegion r1, IndexedRegion r2) {
                         return r1.getStartOffset() - r2.getStartOffset();
                     }
@@ -636,7 +643,7 @@ public abstract class VisualRefactoring extends Refactoring {
 
     protected String getText(int start, int end) {
         try {
-            IStructuredDocument document = mEditor.getStructuredDocument();
+            IStructuredDocument document = mDelegate.getEditor().getStructuredDocument();
             return document.get(start, end - start);
         } catch (BadLocationException e) {
             // the region offset was invalid. ignore.
@@ -689,7 +696,7 @@ public abstract class VisualRefactoring extends Refactoring {
             mOriginalSelectionEnd = mSelectionEnd;
 
             // Figure out the range of selected nodes from the document offsets
-            IStructuredDocument doc = mEditor.getStructuredDocument();
+            IStructuredDocument doc = mDelegate.getEditor().getStructuredDocument();
             Pair<Element, Element> range = DomUtilities.getElementRange(doc,
                     mSelectionStart, mSelectionEnd);
             if (range != null) {
@@ -750,8 +757,8 @@ public abstract class VisualRefactoring extends Refactoring {
     }
 
     protected Document getDomDocument() {
-        if (mEditor.getUiRootNode() != null) {
-            return mEditor.getUiRootNode().getXmlDocument();
+        if (mDelegate.getUiRootNode() != null) {
+            return mDelegate.getUiRootNode().getXmlDocument();
         } else {
             return getElements().get(0).getOwnerDocument();
         }
@@ -852,7 +859,7 @@ public abstract class VisualRefactoring extends Refactoring {
         String oldTypeBase = oldType.substring(oldType.lastIndexOf('.') + 1);
         String id = getId(element);
         if (id == null || id.length() == 0
-                || id.toLowerCase().contains(oldTypeBase.toLowerCase())) {
+                || id.toLowerCase(Locale.US).contains(oldTypeBase.toLowerCase(Locale.US))) {
             String newTypeBase = newType.substring(newType.lastIndexOf('.') + 1);
             return ensureHasId(rootEdit, element, newTypeBase);
         }
@@ -875,6 +882,11 @@ public abstract class VisualRefactoring extends Refactoring {
     }
 
     protected String ensureHasId(MultiTextEdit rootEdit, Element element, String prefix) {
+        return ensureHasId(rootEdit, element, prefix, true);
+    }
+
+    protected String ensureHasId(MultiTextEdit rootEdit, Element element, String prefix,
+            boolean apply) {
         String id = mGeneratedIdMap.get(element);
         if (id != null) {
             return NEW_ID_PREFIX + id;
@@ -887,8 +899,10 @@ public abstract class VisualRefactoring extends Refactoring {
             mGeneratedIds.add(id);
             mGeneratedIdMap.put(element, id);
             id = NEW_ID_PREFIX + id;
-            setAttribute(rootEdit, element,
-                    ANDROID_URI, getAndroidNamespacePrefix(), ATTR_ID, id);
+            if (apply) {
+                setAttribute(rootEdit, element,
+                        ANDROID_URI, getAndroidNamespacePrefix(), ATTR_ID, id);
+            }
             return id;
         }
 
@@ -981,7 +995,7 @@ public abstract class VisualRefactoring extends Refactoring {
             Element element, String attributePrefix, String attributeUri,
             String attributeName, String attributeValue) {
         // Find attribute value and replace it
-        IStructuredModel model = mEditor.getModelForRead();
+        IStructuredModel model = mDelegate.getEditor().getModelForRead();
         try {
             IStructuredDocument doc = model.getStructuredDocument();
 
@@ -1069,7 +1083,7 @@ public abstract class VisualRefactoring extends Refactoring {
         }
 
         // Look for the opening tag
-        IStructuredModel model = mEditor.getModelForRead();
+        IStructuredModel model = mDelegate.getEditor().getModelForRead();
         try {
             int startLineInclusive = -1;
             int endLineInclusive = -1;
@@ -1256,7 +1270,7 @@ public abstract class VisualRefactoring extends Refactoring {
      * applied, but the resulting range is also formatted
      */
     protected MultiTextEdit reformat(MultiTextEdit edit, XmlFormatStyle style) {
-        String xml = mEditor.getStructuredDocument().get();
+        String xml = mDelegate.getEditor().getStructuredDocument().get();
         return reformat(xml, edit, style);
     }
 
@@ -1298,8 +1312,8 @@ public abstract class VisualRefactoring extends Refactoring {
         //int end = actual.length() - distanceFromEnd;
         //int length = end - start;
         //TextEdit format = AndroidXmlFormattingStrategy.format(model, start, length);
-        XmlFormatPreferences formatPrefs = XmlFormatPreferences.create();
-        String formatted = XmlPrettyPrinter.prettyPrint(actual, formatPrefs, style,
+        EclipseXmlFormatPreferences formatPrefs = EclipseXmlFormatPreferences.create();
+        String formatted = EclipseXmlPrettyPrinter.prettyPrint(actual, formatPrefs, style,
                 null /*lineSeparator*/);
 
 
@@ -1349,7 +1363,7 @@ public abstract class VisualRefactoring extends Refactoring {
     }
 
     protected ViewElementDescriptor getElementDescriptor(String fqcn) {
-        AndroidTargetData data = mEditor.getTargetData();
+        AndroidTargetData data = mDelegate.getEditor().getTargetData();
         if (data != null) {
             return data.getLayoutDescriptors().findDescriptorByClass(fqcn);
         }
