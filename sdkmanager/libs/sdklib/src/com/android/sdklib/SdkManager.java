@@ -16,6 +16,7 @@
 
 package com.android.sdklib;
 
+import com.android.annotations.NonNull;
 import com.android.annotations.VisibleForTesting;
 import com.android.annotations.VisibleForTesting.Visibility;
 import com.android.io.FileWrapper;
@@ -24,6 +25,11 @@ import com.android.prefs.AndroidLocation.AndroidLocationException;
 import com.android.sdklib.AndroidVersion.AndroidVersionException;
 import com.android.sdklib.ISystemImage.LocationType;
 import com.android.sdklib.internal.project.ProjectProperties;
+import com.android.sdklib.internal.repository.LocalSdkParser;
+import com.android.sdklib.internal.repository.NullTaskMonitor;
+import com.android.sdklib.internal.repository.archives.Archive;
+import com.android.sdklib.internal.repository.packages.ExtraPackage;
+import com.android.sdklib.internal.repository.packages.Package;
 import com.android.sdklib.repository.PkgProps;
 import com.android.util.Pair;
 
@@ -39,6 +45,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -111,6 +118,7 @@ public class SdkManager {
             return mRevision;
         }
 
+        @Override
         public int compareTo(LayoutlibVersion rhs) {
             boolean useRev = this.mRevision > NOT_SPECIFIED && rhs.mRevision > NOT_SPECIFIED;
             int lhsValue = (this.mApi << 16) + (useRev ? this.mRevision : 0);
@@ -148,8 +156,8 @@ public class SdkManager {
 
             manager.setTargets(list.toArray(new IAndroidTarget[list.size()]));
 
-            // load the samples, after the targets have been set.
-            manager.loadSamples(log);
+            // Initialize the targets' sample paths, after the targets have been set.
+            manager.initializeSamplePaths(log);
 
             return manager;
         } catch (IllegalArgumentException e) {
@@ -259,7 +267,7 @@ public class SdkManager {
         setTargets(list.toArray(new IAndroidTarget[list.size()]));
 
         // load the samples, after the targets have been set.
-        loadSamples(log);
+        initializeSamplePaths(log);
     }
 
     /**
@@ -271,7 +279,7 @@ public class SdkManager {
      * version defined.
      *
      * @return The greatest {@link LayoutlibVersion} or null if none is found.
-     * @deprecated This does NOT solve the right problem and will be changed in Tools R15.
+     * @deprecated This does NOT solve the right problem and will be changed later.
      */
     @Deprecated
     public LayoutlibVersion getMaxLayoutlibVersion() {
@@ -290,6 +298,74 @@ public class SdkManager {
 
         return maxVersion;
     }
+
+    /**
+     * Returns a map of the <em>root samples directories</em> located in the SDK/extras packages.
+     * No guarantee is made that the extras' samples directory actually contain any valid samples.
+     * The only guarantee is that the root samples directory actually exists.
+     * The map is { File: Samples root directory => String: Extra package display name. }
+     *
+     * @return A non-null possibly empty map of extra samples directories and their associated
+     *   extra package display name.
+     */
+    public @NonNull Map<File, String> getExtraSamples() {
+        LocalSdkParser parser = new LocalSdkParser();
+        Package[] packages = parser.parseSdk(mOsSdkPath,
+                                             this,
+                                             LocalSdkParser.PARSE_EXTRAS,
+                                             new NullTaskMonitor(new NullSdkLog()));
+
+        Map<File, String> samples = new HashMap<File, String>();
+
+        for (Package pkg : packages) {
+            if (pkg instanceof ExtraPackage && pkg.isLocal()) {
+                // isLocal()==true implies there's a single locally-installed archive.
+                assert pkg.getArchives() != null && pkg.getArchives().length == 1;
+                Archive a = pkg.getArchives()[0];
+                assert a != null;
+                File path = new File(a.getLocalOsPath(), SdkConstants.FD_SAMPLES);
+                if (path.isDirectory()) {
+                    samples.put(path, pkg.getListDescription());
+                }
+            }
+        }
+
+        return samples;
+    }
+
+    /**
+     * Returns a map of all the extras found in the <em>local</em> SDK with their major revision.
+     * <p/>
+     * Map keys are in the form "vendor-id/path-id". These ids uniquely identify an extra package.
+     * The version is the incremental integer major revision of the package.
+     *
+     * @return A non-null possibly empty map of { string "vendor/path" => integer major revision }
+     */
+    public @NonNull Map<String, Integer> getExtrasVersions() {
+        LocalSdkParser parser = new LocalSdkParser();
+        Package[] packages = parser.parseSdk(mOsSdkPath,
+                                             this,
+                                             LocalSdkParser.PARSE_EXTRAS,
+                                             new NullTaskMonitor(new NullSdkLog()));
+
+        Map<String, Integer> extraVersions = new TreeMap<String, Integer>();
+
+        for (Package pkg : packages) {
+            if (pkg instanceof ExtraPackage && pkg.isLocal()) {
+                ExtraPackage ep = (ExtraPackage) pkg;
+                String vendor = ep.getVendorId();
+                String path = ep.getPath();
+                int majorRev = ep.getRevision().getMajor();
+
+                extraVersions.put(vendor + '/' + path, majorRev);
+            }
+        }
+
+        return extraVersions;
+    }
+
+
+    // -------- private methods ----------
 
     /**
      * Loads the Platforms from the SDK.
@@ -393,12 +469,10 @@ public class SdkManager {
                 }
             }
 
-            // codename (optional)
-            String apiCodename = platformProp.get(PROP_VERSION_CODENAME);
-            if (apiCodename != null && apiCodename.equals("REL")) {
-                apiCodename = null; // REL means it's a release version and therefore the
-                                    // codename is irrelevant at this point.
-            }
+            // Codename must be either null or a platform codename.
+            // REL means it's a release version and therefore the codename should be null.
+            AndroidVersion apiVersion =
+                new AndroidVersion(apiNumber, platformProp.get(PROP_VERSION_CODENAME));
 
             // version string
             String apiName = platformProp.get(PkgProps.PLATFORM_VERSION);
@@ -445,14 +519,13 @@ public class SdkManager {
             }
 
             ISystemImage[] systemImages =
-                getPlatformSystemImages(sdkOsPath, platformFolder, apiNumber, apiCodename);
+                getPlatformSystemImages(sdkOsPath, platformFolder, apiVersion);
 
             // create the target.
             PlatformTarget target = new PlatformTarget(
                     sdkOsPath,
                     platformFolder.getAbsolutePath(),
-                    apiNumber,
-                    apiCodename,
+                    apiVersion,
                     apiName,
                     revision,
                     layoutlibVersion,
@@ -530,16 +603,14 @@ public class SdkManager {
      *
      * @param sdkOsPath The path to the SDK.
      * @param root Root of the platform target being loaded.
-     * @param apiNumber API level of platform being loaded
-     * @param apiCodename Optional codename of platform being loaded
+     * @param version API level + codename of platform being loaded.
      * @return an array of ISystemImage containing all the system images for the target.
      *              The list can be empty.
     */
     private static ISystemImage[] getPlatformSystemImages(
             String sdkOsPath,
             File root,
-            int apiNumber,
-            String apiCodename) {
+            AndroidVersion version) {
         Set<ISystemImage> found = new TreeSet<ISystemImage>();
         Set<String> abiFound = new HashSet<String>();
 
@@ -547,8 +618,6 @@ public class SdkManager {
         // We require/enforce the system image to have a valid properties file.
         // The actual directory names are irrelevant.
         // If we find multiple occurrences of the same platform/abi, the first one read wins.
-
-        AndroidVersion version = new AndroidVersion(apiNumber, apiCodename);
 
         File[] firstLevelFiles = new File(sdkOsPath, SdkConstants.FD_SYSTEM_IMAGES).listFiles();
         if (firstLevelFiles != null) {
@@ -993,11 +1062,15 @@ public class SdkManager {
     }
 
     /**
-     * Loads all samples from the {@link SdkConstants#FD_SAMPLES} directory.
+     * Initialize the sample folders for all known targets (platforms and addons).
+     * <p/>
+     * Samples used to be located at SDK/Target/samples. We then changed this to
+     * have a separate SDK/samples/samples-API directory. This parses either directories
+     * and sets the targets' sample path accordingly.
      *
      * @param log Logger. Cannot be null.
      */
-    private void loadSamples(ISdkLog log) {
+    private void initializeSamplePaths(ISdkLog log) {
         File sampleFolder = new File(mOsSdkPath, SdkConstants.FD_SAMPLES);
         if (sampleFolder.isDirectory()) {
             File[] platforms  = sampleFolder.listFiles();

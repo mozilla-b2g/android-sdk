@@ -44,21 +44,28 @@ import java.util.Map;
 /**
  * Base Source Viewer Configuration for Android resources.
  */
-@SuppressWarnings("restriction") // XMLContentAssistProcessor etc
-public class AndroidSourceViewerConfig extends StructuredTextViewerConfigurationXML {
+@SuppressWarnings({"restriction", "deprecation"}) // XMLContentAssistProcessor etc
+public abstract class AndroidSourceViewerConfig extends StructuredTextViewerConfigurationXML {
 
-    /** Content Assist Processor to use for all handled partitions. */
-    private IContentAssistProcessor mProcessor;
-
-    public AndroidSourceViewerConfig(IContentAssistProcessor processor) {
+    public AndroidSourceViewerConfig() {
         super();
-        mProcessor = processor;
     }
 
     @Override
     public IContentAssistant getContentAssistant(ISourceViewer sourceViewer) {
         return super.getContentAssistant(sourceViewer);
     }
+
+    /**
+     * Returns the IContentAssistProcessor that
+     * {@link #getContentAssistProcessors(ISourceViewer, String)} should use
+     * for XML and default/unknown partitions.
+     *
+     * @return An {@link IContentAssistProcessor} or null.
+     */
+    public abstract IContentAssistProcessor getAndroidContentAssistProcessor(
+            ISourceViewer sourceViewer,
+            String partitionType);
 
     /**
      * Returns the content assist processors that will be used for content
@@ -70,7 +77,6 @@ public class AndroidSourceViewerConfig extends StructuredTextViewerConfiguration
      *        processors are applicable
      * @return IContentAssistProcessors or null if should not be supported
      */
-    @SuppressWarnings("deprecation") // XMLContentAssistProcessor
     @Override
     protected IContentAssistProcessor[] getContentAssistProcessors(
             ISourceViewer sourceViewer, String partitionType) {
@@ -78,7 +84,13 @@ public class AndroidSourceViewerConfig extends StructuredTextViewerConfiguration
         if (partitionType == IStructuredPartitions.UNKNOWN_PARTITION ||
             partitionType == IStructuredPartitions.DEFAULT_PARTITION ||
             partitionType == IXMLPartitions.XML_DEFAULT) {
-            processors.add(mProcessor);
+
+            IContentAssistProcessor processor =
+                getAndroidContentAssistProcessor(sourceViewer, partitionType);
+
+            if (processor != null) {
+                processors.add(processor);
+            }
         }
 
         IContentAssistProcessor[] others = super.getContentAssistProcessors(sourceViewer,
@@ -114,7 +126,6 @@ public class AndroidSourceViewerConfig extends StructuredTextViewerConfiguration
         return super.getTextHover(sourceViewer, contentType);
     }
 
-    @SuppressWarnings("deprecation")
     @Override
     public IAutoEditStrategy[] getAutoEditStrategies(
             ISourceViewer sourceViewer, String contentType) {
@@ -169,6 +180,7 @@ public class AndroidSourceViewerConfig extends StructuredTextViewerConfiguration
             mDelegate = delegate;
         }
 
+        @Override
         public ICompletionProposal[] computeCompletionProposals(ITextViewer viewer, int offset) {
             ICompletionProposal[] result = mDelegate.computeCompletionProposals(viewer, offset);
             if (result == null) {
@@ -203,22 +215,27 @@ public class AndroidSourceViewerConfig extends StructuredTextViewerConfiguration
             }
         }
 
+        @Override
         public IContextInformation[] computeContextInformation(ITextViewer viewer, int offset) {
             return mDelegate.computeContextInformation(viewer, offset);
         }
 
+        @Override
         public char[] getCompletionProposalAutoActivationCharacters() {
             return mDelegate.getCompletionProposalAutoActivationCharacters();
         }
 
+        @Override
         public char[] getContextInformationAutoActivationCharacters() {
             return mDelegate.getContextInformationAutoActivationCharacters();
         }
 
+        @Override
         public IContextInformationValidator getContextInformationValidator() {
             return mDelegate.getContextInformationValidator();
         }
 
+        @Override
         public String getErrorMessage() {
             return mDelegate.getErrorMessage();
         }

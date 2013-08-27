@@ -31,6 +31,8 @@ import java.util.Set;
  * single summary at the end
  */
 class RenderLogger extends LayoutLog {
+    static final String TAG_MISSING_DIMENSION = "missing.dimension";     //$NON-NLS-1$
+
     private final String mName;
     private List<String> mFidelityWarnings;
     private List<String> mWarnings;
@@ -142,7 +144,20 @@ class RenderLogger extends LayoutLog {
     @Override
     public void warning(String tag, String message, Object data) {
         String description = describe(message);
-        AdtPlugin.log(IStatus.WARNING, "%1$s: %2$s", mName, description);
+
+        boolean log = true;
+        if (TAG_RESOURCES_FORMAT.equals(tag)) {
+            if (description.equals("You must supply a layout_width attribute.")       //$NON-NLS-1$
+                || description.equals("You must supply a layout_height attribute.")) {//$NON-NLS-1$
+                tag = TAG_MISSING_DIMENSION;
+                log = false;
+            }
+        }
+
+        if (log) {
+            AdtPlugin.log(IStatus.WARNING, "%1$s: %2$s", mName, description);
+        }
+
         addWarning(tag, description);
     }
 

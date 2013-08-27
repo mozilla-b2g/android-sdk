@@ -16,28 +16,34 @@
 
 package com.android.tools.lint;
 
+import static com.android.tools.lint.client.api.IssueRegistry.LINT_ERROR;
+import static com.android.tools.lint.client.api.IssueRegistry.PARSER_ERROR;
 import static com.android.tools.lint.detector.api.LintConstants.DOT_XML;
 import static com.android.tools.lint.detector.api.LintUtils.endsWith;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.tools.lint.checks.BuiltinIssueRegistry;
 import com.android.tools.lint.client.api.Configuration;
 import com.android.tools.lint.client.api.DefaultConfiguration;
 import com.android.tools.lint.client.api.IDomParser;
+import com.android.tools.lint.client.api.IJavaParser;
 import com.android.tools.lint.client.api.IssueRegistry;
-import com.android.tools.lint.client.api.Lint;
 import com.android.tools.lint.client.api.LintClient;
+import com.android.tools.lint.client.api.LintDriver;
 import com.android.tools.lint.client.api.LintListener;
 import com.android.tools.lint.detector.api.Category;
 import com.android.tools.lint.detector.api.Context;
 import com.android.tools.lint.detector.api.Issue;
+import com.android.tools.lint.detector.api.LintUtils;
 import com.android.tools.lint.detector.api.Location;
 import com.android.tools.lint.detector.api.Position;
 import com.android.tools.lint.detector.api.Project;
 import com.android.tools.lint.detector.api.Severity;
+import com.google.common.io.Closeables;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileReader;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.io.PrintWriter;
@@ -48,19 +54,14 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 
 /**
- * Command line driver for the rules framework
- * <p>
- * TODO:
- * <ul>
- * <li>Offer priority or category sorting
- * <li>Offer suppressing violations
- * </ul>
+ * Command line driver for the lint framework
  */
 public class Main extends LintClient {
-    private static final int MAX_LINE_WIDTH = 78;
+    static final int MAX_LINE_WIDTH = 78;
     private static final String ARG_ENABLE     = "--enable";       //$NON-NLS-1$
     private static final String ARG_DISABLE    = "--disable";      //$NON-NLS-1$
     private static final String ARG_CHECK      = "--check";        //$NON-NLS-1$
@@ -69,6 +70,7 @@ public class Main extends LintClient {
     private static final String ARG_SHOW       = "--show";         //$NON-NLS-1$
     private static final String ARG_QUIET      = "--quiet";        //$NON-NLS-1$
     private static final String ARG_FULLPATH   = "--fullpath";     //$NON-NLS-1$
+    private static final String ARG_SHOWALL    = "--showall";      //$NON-NLS-1$
     private static final String ARG_HELP       = "--help";         //$NON-NLS-1$
     private static final String ARG_NOLINES    = "--nolines";      //$NON-NLS-1$
     private static final String ARG_HTML       = "--html";         //$NON-NLS-1$
@@ -76,6 +78,8 @@ public class Main extends LintClient {
     private static final String ARG_XML        = "--xml";          //$NON-NLS-1$
     private static final String ARG_CONFIG     = "--config";       //$NON-NLS-1$
     private static final String ARG_URL        = "--url";          //$NON-NLS-1$
+    private static final String ARG_VERSION    = "--version";      //$NON-NLS-1$
+    private static final String ARG_EXITCODE   = "--exitcode";     //$NON-NLS-1$
 
     private static final String ARG_NOWARN2    = "--nowarn";       //$NON-NLS-1$
     // GCC style flag names for options
@@ -83,18 +87,23 @@ public class Main extends LintClient {
     private static final String ARG_WARNALL    = "-Wall";          //$NON-NLS-1$
     private static final String ARG_ALLERROR   = "-Werror";        //$NON-NLS-1$
 
-    private static final int ERRNO_ERRORS = -1;
-    private static final int ERRNO_USAGE = -2;
-    private static final int ERRNO_EXISTS = -3;
-    private static final int ERRNO_HELP = -4;
-    private static final int ERRNO_INVALIDARGS = -5;
+    private static final String VALUE_NONE     = "none";           //$NON-NLS-1$
+
+    private static final String PROP_WORK_DIR = "com.android.tools.lint.workdir"; //$NON-NLS-1$
+
+    private static final int ERRNO_ERRORS = 1;
+    private static final int ERRNO_USAGE = 2;
+    private static final int ERRNO_EXISTS = 3;
+    private static final int ERRNO_HELP = 4;
+    private static final int ERRNO_INVALIDARGS = 5;
 
     private List<Warning> mWarnings = new ArrayList<Warning>();
     private Set<String> mSuppress = new HashSet<String>();
     private Set<String> mEnabled = new HashSet<String>();
     /** If non-null, only run the specified checks (possibly modified by enable/disables) */
     private Set<String> mCheck = null;
-    private boolean mFatal;
+    private boolean mHasErrors;
+    private boolean mSetExitCode;
     private boolean mFullPath;
     private int mErrorCount;
     private int mWarningCount;
@@ -106,6 +115,9 @@ public class Main extends LintClient {
     private boolean mAllErrors;
 
     private Configuration mDefaultConfiguration;
+    private IssueRegistry mRegistry;
+    private LintDriver mDriver;
+    private boolean mShowAll;
 
     /** Creates a CLI driver */
     public Main() {
@@ -131,7 +143,7 @@ public class Main extends LintClient {
             System.exit(ERRNO_USAGE);
         }
 
-        IssueRegistry registry = new BuiltinIssueRegistry();
+        IssueRegistry registry = mRegistry = new BuiltinIssueRegistry();
 
         // Mapping from file path prefix to URL. Applies only to HTML reports
         String urlMap = null;
@@ -142,6 +154,16 @@ public class Main extends LintClient {
 
             if (arg.equals(ARG_HELP)
                     || arg.equals("-h") || arg.equals("-?")) { //$NON-NLS-1$ //$NON-NLS-2$
+                if (index < args.length - 1) {
+                    String topic = args[index + 1];
+                    if (topic.equals("suppress") || topic.equals("ignore")) {
+                        printHelpTopicSuppress();
+                        System.exit(ERRNO_HELP);
+                    } else {
+                        System.err.println(String.format("Unknown help topic \"%1$s\"", topic));
+                        System.exit(ERRNO_INVALIDARGS);
+                    }
+                }
                 printUsage(System.out);
                 System.exit(ERRNO_HELP);
             } else if (arg.equals(ARG_LISTIDS)) {
@@ -203,10 +225,17 @@ public class Main extends LintClient {
             } else if (arg.equals(ARG_FULLPATH)
                     || arg.equals(ARG_FULLPATH + "s")) { // allow "--fullpaths" too
                 mFullPath = true;
+            } else if (arg.equals(ARG_SHOWALL)) {
+                mShowAll = true;
             } else if (arg.equals(ARG_QUIET) || arg.equals("-q")) {
                 mQuiet = true;
             } else if (arg.equals(ARG_NOLINES)) {
                 mShowLines = false;
+            } else if (arg.equals(ARG_EXITCODE)) {
+                mSetExitCode = true;
+            } else if (arg.equals(ARG_VERSION)) {
+                printVersion();
+                System.exit(0);
             } else if (arg.equals(ARG_URL)) {
                 if (index == args.length - 1) {
                     System.err.println("Missing URL mapping string");
@@ -224,8 +253,7 @@ public class Main extends LintClient {
                     System.err.println("Missing XML configuration file argument");
                     System.exit(ERRNO_INVALIDARGS);
                 }
-                String filename = args[++index];
-                File file = new File(filename);
+                File file = getInArgumentPath(args[++index]);
                 if (!file.exists()) {
                     System.err.println(file.getAbsolutePath() + " does not exist");
                     System.exit(ERRNO_INVALIDARGS);
@@ -236,7 +264,32 @@ public class Main extends LintClient {
                     System.err.println("Missing HTML output file name");
                     System.exit(ERRNO_INVALIDARGS);
                 }
-                File output = new File(args[++index]);
+                File output = getOutArgumentPath(args[++index]);
+                // Get an absolute path such that we can ask its parent directory for
+                // write permission etc.
+                output = output.getAbsoluteFile();
+                if (output.isDirectory() ||
+                        (!output.exists() && output.getName().indexOf('.') == -1)) {
+                    if (!output.exists()) {
+                        boolean mkdirs = output.mkdirs();
+                        if (!mkdirs) {
+                            log(null, "Could not create output directory %1$s", output);
+                            System.exit(ERRNO_EXISTS);
+                        }
+                    }
+                    try {
+                        MultiProjectHtmlReporter reporter =
+                                new MultiProjectHtmlReporter(this, output);
+                        if (arg.equals(ARG_SIMPLEHTML)) {
+                            reporter.setSimpleFormat(true);
+                        }
+                        mReporter = reporter;
+                    } catch (IOException e) {
+                        log(e, null);
+                        System.exit(ERRNO_INVALIDARGS);
+                    }
+                    continue;
+                }
                 if (output.exists()) {
                     boolean delete = output.delete();
                     if (!delete) {
@@ -244,7 +297,7 @@ public class Main extends LintClient {
                         System.exit(ERRNO_EXISTS);
                     }
                 }
-                if (output.canWrite()) {
+                if (output.getParentFile() != null && !output.getParentFile().canWrite()) {
                     System.err.println("Cannot write HTML output file " + output);
                     System.exit(ERRNO_EXISTS);
                 }
@@ -263,7 +316,7 @@ public class Main extends LintClient {
                     System.err.println("Missing XML output file name");
                     System.exit(ERRNO_INVALIDARGS);
                 }
-                File output = new File(args[++index]);
+                File output = getOutArgumentPath(args[++index]);
                 if (output.exists()) {
                     boolean delete = output.delete();
                     if (!delete) {
@@ -276,7 +329,7 @@ public class Main extends LintClient {
                     System.exit(ERRNO_EXISTS);
                 }
                 try {
-                    mReporter = new XmlReporter(output);
+                    mReporter = new XmlReporter(this, output);
                 } catch (IOException e) {
                     log(e, null);
                     System.exit(ERRNO_INVALIDARGS);
@@ -370,14 +423,14 @@ public class Main extends LintClient {
                 System.exit(ERRNO_INVALIDARGS);
             } else {
                 String filename = arg;
-                File file = new File(filename);
+                File file = getInArgumentPath(filename);
+
                 if (!file.exists()) {
                     System.err.println(String.format("%1$s does not exist.", filename));
                     System.exit(ERRNO_EXISTS);
                 }
                 files.add(file);
             }
-            // TODO: Add flag to point to a file of specific errors to suppress
         }
 
         if (files.size() == 0) {
@@ -393,38 +446,44 @@ public class Main extends LintClient {
             }
 
             mReporter = new TextReporter(this, new PrintWriter(System.out, true));
-        } else if (mReporter instanceof HtmlReporter) {
-            HtmlReporter htmlReporter = (HtmlReporter) mReporter;
-
+        } else {
             if (urlMap == null) {
                 // By default just map from /foo to file:///foo
                 // TODO: Find out if we need file:// on Windows.
                 urlMap = "=file://"; //$NON-NLS-1$
-                if (!htmlReporter.isSimpleFormat()) {
-                    htmlReporter.setBundleResources(true);
+            } else {
+                if (!mReporter.isSimpleFormat()) {
+                    mReporter.setBundleResources(true);
                 }
             }
-            Map<String, String> map = new HashMap<String, String>();
-            String[] replace = urlMap.split(","); //$NON-NLS-1$
-            for (String s : replace) {
-                String[] v = s.split("="); //$NON-NLS-1$
-                if (v.length != 2) {
-                    System.err.println(
+
+            if (!urlMap.equals(VALUE_NONE)) {
+                Map<String, String> map = new HashMap<String, String>();
+                String[] replace = urlMap.split(","); //$NON-NLS-1$
+                for (String s : replace) {
+                    // Allow ='s in the suffix part
+                    int index = s.indexOf('=');
+                    if (index == -1) {
+                        System.err.println(
                             "The URL map argument must be of the form 'path_prefix=url_prefix'");
-                    System.exit(ERRNO_INVALIDARGS);
+                        System.exit(ERRNO_INVALIDARGS);
+                    }
+                    String key = s.substring(0, index);
+                    String value = s.substring(index + 1);
+                    map.put(key, value);
                 }
-                map.put(v[0], v[1]);
+                mReporter.setUrlMap(map);
             }
-            htmlReporter.setUrlMap(map);
         }
 
-        Lint analyzer = new Lint(registry, this);
+        mDriver = new LintDriver(registry, this);
 
+        mDriver.setAbbreviating(!mShowAll);
         if (!mQuiet) {
-            analyzer.addLintListener(new ProgressPrinter());
+            mDriver.addLintListener(new ProgressPrinter());
         }
 
-        analyzer.analyze(files, null /* scope */);
+        mDriver.analyze(files, null /* scope */);
 
         Collections.sort(mWarnings);
 
@@ -435,7 +494,174 @@ public class Main extends LintClient {
             System.exit(ERRNO_INVALIDARGS);
         }
 
-        System.exit(mFatal ? ERRNO_ERRORS : 0);
+        System.exit(mSetExitCode ? (mHasErrors ? ERRNO_ERRORS : 0) : 0);
+    }
+
+    /**
+     * Converts a relative or absolute command-line argument into an input file.
+     *
+     * @param filename The filename given as a command-line argument.
+     * @return A File matching filename, either absolute or relative to lint.workdir if defined.
+     */
+    private File getInArgumentPath(String filename) {
+        File file = new File(filename);
+
+        if (!file.isAbsolute()) {
+            File workDir = getLintWorkDir();
+            if (workDir != null) {
+                File file2 = new File(workDir, filename);
+                if (file2.exists()) {
+                    try {
+                        file = file2.getCanonicalFile();
+                    } catch (IOException e) {
+                        file = file2;
+                    }
+                }
+            }
+        }
+        return file;
+    }
+
+    /**
+     * Converts a relative or absolute command-line argument into an output file.
+     * <p/>
+     * The difference with {@code getInArgumentPath} is that we can't check whether the
+     * a relative path turned into an absolute compared to lint.workdir actually exists.
+     *
+     * @param filename The filename given as a command-line argument.
+     * @return A File matching filename, either absolute or relative to lint.workdir if defined.
+     */
+    private File getOutArgumentPath(String filename) {
+        File file = new File(filename);
+
+        if (!file.isAbsolute()) {
+            File workDir = getLintWorkDir();
+            if (workDir != null) {
+                File file2 = new File(workDir, filename);
+                try {
+                    file = file2.getCanonicalFile();
+                } catch (IOException e) {
+                    file = file2;
+                }
+            }
+        }
+        return file;
+    }
+
+
+    /**
+     * Returns the File corresponding to the system property or the environment variable
+     * for {@link #PROP_WORK_DIR}.
+     * This property is typically set by the SDK/tools/lint[.bat] wrapper.
+     * It denotes the path where the command-line client was originally invoked from
+     * and can be used to convert relative input/output paths.
+     *
+     * @return A new File corresponding to {@link #PROP_WORK_DIR} or null.
+     */
+    @Nullable
+    private File getLintWorkDir() {
+        // First check the Java properties (e.g. set using "java -jar ... -Dname=value")
+        String path = System.getProperty(PROP_WORK_DIR);
+        if (path == null || path.length() == 0) {
+            // If not found, check environment variables.
+            path = System.getenv(PROP_WORK_DIR);
+        }
+        if (path != null && path.length() > 0) {
+            return new File(path);
+        }
+        return null;
+    }
+
+    private void printHelpTopicSuppress() {
+        System.out.println(wrap(getSuppressHelp()));
+    }
+
+    static String getSuppressHelp() {
+        return
+            "Lint errors can be suppressed in a variety of ways:\n" +
+            "\n" +
+            "1. With a @SuppressLint annotation in the Java code\n" +
+            "2. With a tools:ignore attribute in the XML file\n" +
+            "3. With a lint.xml configuration file in the project\n" +
+            "4. With a lint.xml configuration file passed to lint " +
+                "via the " + ARG_CONFIG + " flag\n" +
+            "5. With the " + ARG_IGNORE + " flag passed to lint.\n" +
+            "\n" +
+            "To suppress a lint warning with an annotation, add " +
+            "a @SuppressLint(\"id\") annotation on the class, method " +
+            "or variable declaration closest to the warning instance " +
+            "you want to disable. The id can be one or more issue " +
+            "id's, such as \"UnusedResources\" or {\"UnusedResources\"," +
+            "\"UnusedIds\"}, or it can be \"all\" to suppress all lint " +
+            "warnings in the given scope.\n" +
+            "\n" +
+            "To suppress a lint warning in an XML file, add a " +
+            "tools:ignore=\"id\" attribute on the element containing " +
+            "the error, or one of its surrounding elements. You also " +
+            "need to define the namespace for the tools prefix on the " +
+            "root element in your document, next to the xmlns:android " +
+            "declaration:\n" +
+            "* xmlns:tools=\"http://schemas.android.com/tools\"\n" +
+            "\n" +
+            "To suppress lint warnings with a configuration XML file, " +
+            "create a file named lint.xml and place it at the root " +
+            "directory of the project in which it applies. (If you " +
+            "use the Eclipse plugin's Lint view, you can suppress " +
+            "errors there via the toolbar and Eclipse will create the " +
+            "lint.xml file for you.).\n" +
+            "\n" +
+            "The format of the lint.xml file is something like the " +
+            "following:\n" +
+            "\n" +
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+            "<lint>\n" +
+            "    <!-- Disable this given check in this project -->\n" +
+            "    <issue id=\"IconMissingDensityFolder\" severity=\"ignore\" />\n" +
+            "\n" +
+            "    <!-- Ignore the ObsoleteLayoutParam issue in the given files -->\n" +
+            "    <issue id=\"ObsoleteLayoutParam\">\n" +
+            "        <ignore path=\"res/layout/activation.xml\" />\n" +
+            "        <ignore path=\"res/layout-xlarge/activation.xml\" />\n" +
+            "    </issue>\n" +
+            "\n" +
+            "    <!-- Ignore the UselessLeaf issue in the given file -->\n" +
+            "    <issue id=\"UselessLeaf\">\n" +
+            "        <ignore path=\"res/layout/main.xml\" />\n" +
+            "    </issue>\n" +
+            "\n" +
+            "    <!-- Change the severity of hardcoded strings to \"error\" -->\n" +
+            "    <issue id=\"HardcodedText\" severity=\"error\" />\n" +
+            "</lint>\n" +
+            "\n" +
+            "To suppress lint checks from the command line, pass the " + ARG_IGNORE +  " " +
+            "flag with a comma separated list of ids to be suppressed, such as:\n" +
+            "\"lint --ignore UnusedResources,UselessLeaf /my/project/path\"\n";
+    }
+
+    @SuppressWarnings("resource") // Eclipse doesn't know about Closeables.closeQuietly
+    private void printVersion() {
+        File file = findResource("tools" + File.separator +     //$NON-NLS-1$
+                                 "source.properties");          //$NON-NLS-1$
+        if (file != null && file.exists()) {
+            FileInputStream input = null;
+            try {
+                input = new FileInputStream(file);
+                Properties properties = new Properties();
+                properties.load(input);
+
+                String revision = properties.getProperty("Pkg.Revision"); //$NON-NLS-1$
+                if (revision != null && revision.length() > 0) {
+                    System.out.println(String.format("lint: version %1$s", revision));
+                    return;
+                }
+            } catch (IOException e) {
+                // Couldn't find or read the version info: just print out unknown below
+            } finally {
+                Closeables.closeQuietly(input);
+            }
+        }
+
+        System.out.println("lint: unknown version");
     }
 
     private void displayValidIds(IssueRegistry registry, PrintStream out) {
@@ -460,6 +686,7 @@ public class Main extends LintClient {
         List<Issue> issues = registry.getIssues();
         List<Issue> sorted = new ArrayList<Issue>(issues);
         Collections.sort(sorted, new Comparator<Issue>() {
+            @Override
             public int compare(Issue issue1, Issue issue2) {
                 int d = issue1.getCategory().compareTo(issue2.getCategory());
                 if (d != 0) {
@@ -581,9 +808,13 @@ public class Main extends LintClient {
 
         printUsage(out, new String[] {
             ARG_HELP, "This message.",
+            ARG_HELP + " <topic>", "Help on the given topic, such as \"suppress\".",
             ARG_LISTIDS, "List the available issue id's and exit.",
+            ARG_VERSION, "Output version information and exit.",
+            ARG_EXITCODE, "Set the exit code to " + ERRNO_ERRORS + " if errors are found.",
             ARG_SHOW, "List available issues along with full explanations.",
             ARG_SHOW + " <ids>", "Show full explanations for the given list of issue id's.",
+
             "", "\nEnabled Checks:",
             ARG_DISABLE + " <list>", "Disable the list of categories or " +
                 "specific issue id's. The list should be a comma-separated list of issue " +
@@ -600,19 +831,33 @@ public class Main extends LintClient {
             ARG_CONFIG + " <filename>", "Use the given configuration file to " +
                     "determine whether issues are enabled or disabled. If a project contains " +
                     "a lint.xml file, then this config file will be used as a fallback.",
-                    "", "\nOutput Options:",
+
+
+            "", "\nOutput Options:",
             ARG_QUIET, "Don't show progress.",
             ARG_FULLPATH, "Use full paths in the error output.",
+            ARG_SHOWALL, "Do not truncate long messages, lists of alternate locations, etc.",
             ARG_NOLINES, "Do not include the source file lines with errors " +
                 "in the output. By default, the error output includes snippets of source code " +
                 "on the line containing the error, but this flag turns it off.",
-            ARG_HTML + " <filename>", "Create an HTML report instead.",
+            ARG_HTML + " <filename>", "Create an HTML report instead. If the filename is a " +
+                "directory (or a new filename without an extension), lint will create a " +
+                "separate report for each scanned project.",
             ARG_URL + " filepath=url", "Add links to HTML report, replacing local " +
                 "path prefixes with url prefix. The mapping can be a comma-separated list of " +
                 "path prefixes to corresponding URL prefixes, such as " +
-                "C:\\temp\\Proj1=http://buildserver/sources/temp/Proj1",
+                "C:\\temp\\Proj1=http://buildserver/sources/temp/Proj1.  To turn off linking " +
+                "to files, use " + ARG_URL + " " + VALUE_NONE,
             ARG_SIMPLEHTML + " <filename>", "Create a simple HTML report",
             ARG_XML + " <filename>", "Create an XML report instead.",
+
+            "", "\nExit Status:",
+            "0",                                 "Success.",
+            Integer.toString(ERRNO_ERRORS),      "Lint errors detected.",
+            Integer.toString(ERRNO_USAGE),       "Lint usage.",
+            Integer.toString(ERRNO_EXISTS),      "Cannot clobber existing file.",
+            Integer.toString(ERRNO_HELP),        "Lint help.",
+            Integer.toString(ERRNO_INVALIDARGS), "Invalid command-line argument.",
         });
     }
 
@@ -643,7 +888,11 @@ public class Main extends LintClient {
     }
 
     @Override
-    public void log(Throwable exception, String format, Object... args) {
+    public void log(
+            @NonNull Severity severity,
+            @Nullable Throwable exception,
+            @Nullable String format,
+            @Nullable Object... args) {
         System.out.flush();
         if (!mQuiet) {
             // Place the error message on a line of its own since we're printing '.' etc
@@ -660,25 +909,54 @@ public class Main extends LintClient {
 
     @Override
     public IDomParser getDomParser() {
-        return new PositionXmlParser();
+        return new LintCliXmlParser();
     }
 
     @Override
-    public Configuration getConfiguration(Project project) {
+    public Configuration getConfiguration(@NonNull Project project) {
         return new CliConfiguration(mDefaultConfiguration, project);
     }
 
+    /** File content cache */
+    private Map<File, String> mFileContents = new HashMap<File, String>(100);
+
+    /** Read the contents of the given file, possibly cached */
+    private String getContents(File file) {
+        String s = mFileContents.get(file);
+        if (s == null) {
+            s = readFile(file);
+            mFileContents.put(file, s);
+        }
+
+        return s;
+    }
+
     @Override
-    public void report(Context context, Issue issue, Location location, String message,
-            Object data) {
+    public IJavaParser getJavaParser() {
+        return new LombokParser();
+    }
+
+    @Override
+    public void report(
+            @NonNull Context context,
+            @NonNull Issue issue,
+            @NonNull Severity severity,
+            @Nullable Location location,
+            @NonNull String message,
+            @Nullable Object data) {
         assert context.isEnabled(issue);
 
-        Severity severity = context.getConfiguration().getSeverity(issue);
         if (severity == Severity.IGNORE) {
             return;
         }
-        if (severity == Severity.ERROR){
-            mFatal = true;
+
+        if (severity == Severity.FATAL) {
+            // From here on, treat the fatal error as an error such that we don't display
+            // both "Fatal:" and "Error:" etc in the error output.
+            severity = Severity.ERROR;
+        }
+        if (severity == Severity.ERROR) {
+            mHasErrors = true;
             mErrorCount++;
         } else {
             mWarningCount++;
@@ -705,7 +983,7 @@ public class Main extends LintClient {
                         warning.fileContents = context.getContents();
                     }
                     if (warning.fileContents == null) {
-                        warning.fileContents = readFile(location.getFile());
+                        warning.fileContents = getContents(location.getFile());
                     }
 
                     if (mShowLines) {
@@ -717,7 +995,7 @@ public class Main extends LintClient {
                             warning.errorLine = warning.errorLine.replace('\t', ' ');
                             int column = startPosition.getColumn();
                             if (column < 0) {
-                                column = 1;
+                                column = 0;
                                 for (int i = 0; i < warning.errorLine.length(); i++, column++) {
                                     if (!Character.isWhitespace(warning.errorLine.charAt(i))) {
                                         break;
@@ -727,7 +1005,7 @@ public class Main extends LintClient {
                             StringBuilder sb = new StringBuilder();
                             sb.append(warning.errorLine);
                             sb.append('\n');
-                            for (int i = 0; i < column - 1; i++) {
+                            for (int i = 0; i < column; i++) {
                                 sb.append(' ');
                             }
                             sb.append('^');
@@ -771,40 +1049,24 @@ public class Main extends LintClient {
     }
 
     @Override
-    public String readFile(File file) {
-        BufferedReader reader = null;
+    public @NonNull String readFile(@NonNull File file) {
         try {
-            reader = new BufferedReader(new FileReader(file));
-            StringBuilder sb = new StringBuilder((int) file.length());
-            while (true) {
-                int c = reader.read();
-                if (c == -1) {
-                    return sb.toString();
-                } else {
-                    sb.append((char)c);
-                }
-            }
+            return LintUtils.getEncodedString(file);
         } catch (IOException e) {
-            // pass -- ignore files we can't read
-        } finally {
-            try {
-                if (reader != null) {
-                    reader.close();
-                }
-            } catch (IOException e) {
-                log(e, null);
-            }
+            return ""; //$NON-NLS-1$
         }
+    }
 
-        return ""; //$NON-NLS-1$
+    boolean isCheckingSpecificIssues() {
+        return mCheck != null;
     }
 
     /**
      * Consult the lint.xml file, but override with the --enable and --disable
      * flags supplied on the command line
      */
-    private class CliConfiguration extends DefaultConfiguration {
-        CliConfiguration(Configuration parent, Project project) {
+    class CliConfiguration extends DefaultConfiguration {
+        CliConfiguration(@NonNull Configuration parent, @NonNull Project project) {
             super(Main.this, project, parent);
         }
 
@@ -813,7 +1075,7 @@ public class Main extends LintClient {
         }
 
         @Override
-        public Severity getSeverity(Issue issue) {
+        public @NonNull Severity getSeverity(@NonNull Issue issue) {
             Severity severity = computeSeverity(issue);
 
             if (mAllErrors && severity != Severity.IGNORE) {
@@ -828,7 +1090,7 @@ public class Main extends LintClient {
         }
 
         @Override
-        protected Severity getDefaultSeverity(Issue issue) {
+        protected @NonNull Severity getDefaultSeverity(@NonNull Issue issue) {
             if (mWarnAll) {
                 return issue.getDefaultSeverity();
             }
@@ -836,7 +1098,7 @@ public class Main extends LintClient {
             return super.getDefaultSeverity(issue);
         }
 
-        private Severity computeSeverity(Issue issue) {
+        private Severity computeSeverity(@NonNull Issue issue) {
             Severity severity = super.getSeverity(issue);
 
             String id = issue.getId();
@@ -850,13 +1112,16 @@ public class Main extends LintClient {
                 // but in case they do, force it up to warning here to ensure that
                 // it's run
                 if (severity == Severity.IGNORE) {
-                    return Severity.WARNING;
-                } else {
-                    return severity;
+                    severity = issue.getDefaultSeverity();
+                    if (severity == Severity.IGNORE) {
+                        severity = Severity.WARNING;
+                    }
                 }
+
+                return severity;
             }
 
-            if (mCheck != null) {
+            if (mCheck != null && issue != LINT_ERROR && issue != PARSER_ERROR) {
                 return Severity.IGNORE;
             }
 
@@ -865,15 +1130,38 @@ public class Main extends LintClient {
     }
 
     private class ProgressPrinter implements LintListener {
-        public void update(EventType type, Context context) {
+        @Override
+        public void update(
+                @NonNull LintDriver lint,
+                @NonNull EventType type,
+                @Nullable Context context) {
             switch (type) {
-                case SCANNING_PROJECT:
-                    System.out.print(String.format(
-                            "\nScanning %1$s: ",
-                            context.getProject().getDir().getName()));
+                case SCANNING_PROJECT: {
+                    String name = context != null ? context.getProject().getName() : "?";
+                    if (lint.getPhase() > 1) {
+                        System.out.print(String.format(
+                                "\nScanning %1$s (Phase %2$d): ",
+                                name,
+                                lint.getPhase()));
+                    } else {
+                        System.out.print(String.format(
+                                "\nScanning %1$s: ",
+                                name));
+                    }
                     break;
+                }
+                case SCANNING_LIBRARY_PROJECT: {
+                    String name = context != null ? context.getProject().getName() : "?";
+                    System.out.print(String.format(
+                            "\n         - %1$s: ",
+                            name));
+                    break;
+                }
                 case SCANNING_FILE:
                     System.out.print('.');
+                    break;
+                case NEW_PHASE:
+                    // Ignored for now: printing status as part of next project's status
                     break;
                 case CANCELED:
                 case COMPLETED:
@@ -891,8 +1179,36 @@ public class Main extends LintClient {
                 chop++;
             }
             path = path.substring(chop);
+            if (path.length() == 0) {
+                path = file.getName();
+            }
         }
 
         return path;
+    }
+
+    /** Returns whether all warnings are enabled, including those disabled by default */
+    boolean isAllEnabled() {
+        return mWarnAll;
+    }
+
+    /** Returns the issue registry used by this client */
+    IssueRegistry getRegistry() {
+        return mRegistry;
+    }
+
+    /** Returns the driver running the lint checks */
+    LintDriver getDriver() {
+        return mDriver;
+    }
+
+    /** Returns the configuration used by this client */
+    Configuration getConfiguration() {
+        return mDefaultConfiguration;
+    }
+
+    /** Returns true if the given issue has been explicitly disabled */
+    boolean isSuppressed(Issue issue) {
+        return mSuppress.contains(issue.getId());
     }
 }

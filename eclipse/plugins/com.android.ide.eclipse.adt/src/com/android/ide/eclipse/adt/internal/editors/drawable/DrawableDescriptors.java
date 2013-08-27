@@ -15,7 +15,8 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.drawable;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_NS_NAME;
+import static com.android.util.XmlUtils.ANDROID_NS_NAME;
+import static com.android.util.XmlUtils.ANDROID_URI;
 
 import com.android.ide.common.api.IAttributeInfo.Format;
 import com.android.ide.common.resources.platform.AttributeInfo;
@@ -47,6 +48,7 @@ public class DrawableDescriptors implements IDescriptorProvider {
     private Map<String, ElementDescriptor> nameToDescriptor;
 
     /** @return the root descriptor. */
+    @Override
     public ElementDescriptor getDescriptor() {
         if (mDescriptor == null) {
             mDescriptor = new ElementDescriptor("", getRootElementDescriptors()); //$NON-NLS-1$
@@ -55,6 +57,7 @@ public class DrawableDescriptors implements IDescriptorProvider {
         return mDescriptor;
     }
 
+    @Override
     public ElementDescriptor[] getRootElementDescriptors() {
         return mRootDescriptors;
     }
@@ -82,9 +85,7 @@ public class DrawableDescriptors implements IDescriptorProvider {
 
     public synchronized void updateDescriptors(Map<String, DeclareStyleableInfo> styleMap) {
         XmlnsAttributeDescriptor xmlns = new XmlnsAttributeDescriptor(ANDROID_NS_NAME,
-                SdkConstants.NS_RESOURCES);
-        Format[] referenceFormat = new Format[] { Format.REFERENCE };
-
+                ANDROID_URI);
         List<ElementDescriptor> descriptors = new ArrayList<ElementDescriptor>();
 
         AnimatorDescriptors.addElement(descriptors, styleMap,
@@ -94,12 +95,15 @@ public class DrawableDescriptors implements IDescriptorProvider {
             SDK_URL_BASE + "animation-resource.html#Frame",
             xmlns, null, true /*mandatory*/);
 
+        /* For some reason, android.graphics.drawable.AnimatedRotateDrawable is marked with @hide
+         * so we should not register it and its attributes here. See issue #19248 for details.
         AnimatorDescriptors.addElement(descriptors, styleMap,
             "animated-rotate", "Animated Rotate", "AnimatedRotateDrawable", null, //$NON-NLS-1$ //$NON-NLS-3$
             // Need docs
-            null /* tooltip */,
-            null /* sdk_url */,
-            xmlns, null, true /*mandatory*/);
+            null, // tooltip
+            null, // sdk_url
+            xmlns, null, true);
+        */
 
         AnimatorDescriptors.addElement(descriptors, styleMap,
             "bitmap", "BitMap", "BitmapDrawable", null, //$NON-NLS-1$ //$NON-NLS-3$
@@ -116,7 +120,6 @@ public class DrawableDescriptors implements IDescriptorProvider {
                 + "this Drawable's current level value.",
             SDK_URL_BASE + "drawable-resource.html#Clip", //$NON-NLS-1$
             xmlns, null, true /*mandatory*/);
-
 
         AnimatorDescriptors.addElement(descriptors, styleMap,
             "color", "Color", "ColorDrawable", null, //$NON-NLS-1$ //$NON-NLS-3$
@@ -209,10 +212,9 @@ public class DrawableDescriptors implements IDescriptorProvider {
                  + "its attributes. Must be a child of a <selector> element.",
             SDK_URL_BASE + "drawable-resource.html#StateList", //$NON-NLS-1$
             new ReferenceAttributeDescriptor(
-                    ResourceType.DRAWABLE, "drawable", "drawable", //$NON-NLS-1$ //$NON-NLS-2$
-                    SdkConstants.NS_RESOURCES,
-                    "Reference to a drawable resource.",
-                    new AttributeInfo("drawable", referenceFormat)),
+                    ResourceType.DRAWABLE, "drawable", SdkConstants.NS_RESOURCES, //$NON-NLS-1$
+                    new AttributeInfo("drawable", Format.REFERENCE_SET))
+                    .setTooltip("Reference to a drawable resource."),
             null, /* This is wrong -- we can now embed any above drawable
                         (but without xmlns as extra) */
             false /*mandatory*/);

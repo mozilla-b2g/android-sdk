@@ -43,6 +43,7 @@ import static com.android.tools.lint.detector.api.LintConstants.ATTR_LAYOUT_MARG
 import static com.android.tools.lint.detector.api.LintConstants.ATTR_LAYOUT_MARGIN_LEFT;
 import static com.android.tools.lint.detector.api.LintConstants.ATTR_LAYOUT_MARGIN_RIGHT;
 import static com.android.tools.lint.detector.api.LintConstants.ATTR_LAYOUT_MARGIN_TOP;
+import static com.android.tools.lint.detector.api.LintConstants.ATTR_LAYOUT_PREFIX;
 import static com.android.tools.lint.detector.api.LintConstants.ATTR_LAYOUT_ROW;
 import static com.android.tools.lint.detector.api.LintConstants.ATTR_LAYOUT_ROW_SPAN;
 import static com.android.tools.lint.detector.api.LintConstants.ATTR_LAYOUT_SPAN;
@@ -62,6 +63,7 @@ import static com.android.tools.lint.detector.api.LintConstants.RELATIVE_LAYOUT;
 import static com.android.tools.lint.detector.api.LintConstants.TABLE_ROW;
 import static com.android.tools.lint.detector.api.LintConstants.VIEW_TAG;
 
+import com.android.annotations.NonNull;
 import com.android.tools.lint.client.api.IDomParser;
 import com.android.tools.lint.client.api.SdkInfo;
 import com.android.tools.lint.detector.api.Category;
@@ -69,6 +71,7 @@ import com.android.tools.lint.detector.api.Context;
 import com.android.tools.lint.detector.api.Issue;
 import com.android.tools.lint.detector.api.LayoutDetector;
 import com.android.tools.lint.detector.api.Location;
+import com.android.tools.lint.detector.api.Location.Handle;
 import com.android.tools.lint.detector.api.Scope;
 import com.android.tools.lint.detector.api.Severity;
 import com.android.tools.lint.detector.api.Speed;
@@ -216,7 +219,7 @@ public class ObsoleteLayoutParamsDetector extends LayoutDetector {
     }
 
     @Override
-    public Speed getSpeed() {
+    public @NonNull Speed getSpeed() {
         return Speed.FAST;
     }
 
@@ -231,10 +234,10 @@ public class ObsoleteLayoutParamsDetector extends LayoutDetector {
     }
 
     @Override
-    public void visitAttribute(XmlContext context, Attr attribute) {
+    public void visitAttribute(@NonNull XmlContext context, @NonNull Attr attribute) {
         String name = attribute.getLocalName();
-        if (name != null && name.startsWith("layout_") &&                //$NON-NLS-1$
-                ANDROID_URI.equals(attribute.getNamespaceURI())) {
+        if (name != null && name.startsWith(ATTR_LAYOUT_PREFIX)
+                && ANDROID_URI.equals(attribute.getNamespaceURI())) {
             if (VALID.contains(name)) {
                 return;
             }
@@ -252,6 +255,7 @@ public class ObsoleteLayoutParamsDetector extends LayoutDetector {
                     if (context.getScope().contains(Scope.ALL_RESOURCE_FILES)) {
                         IDomParser parser = context.parser;
                         Location.Handle handle = parser.createLocationHandle(context, attribute);
+                        handle.setClientData(attribute);
                         mPending.add(Pair.of(name, handle));
                     }
 
@@ -266,6 +270,7 @@ public class ObsoleteLayoutParamsDetector extends LayoutDetector {
                     if (context.getScope().contains(Scope.ALL_RESOURCE_FILES)) {
                         IDomParser parser = context.parser;
                         Location.Handle handle = parser.createLocationHandle(context, attribute);
+                        handle.setClientData(attribute);
                         mPending.add(Pair.of(name, handle));
                     }
 
@@ -277,7 +282,7 @@ public class ObsoleteLayoutParamsDetector extends LayoutDetector {
                             && isValidParamForParent(context, name, TABLE_ROW, parentTag)) {
                         return;
                     }
-                    context.report(ISSUE, context.getLocation(attribute),
+                    context.report(ISSUE, attribute, context.getLocation(attribute),
                             String.format("Invalid layout param in a %1$s: %2$s", parentTag, name),
                             null);
                 }
@@ -292,7 +297,7 @@ public class ObsoleteLayoutParamsDetector extends LayoutDetector {
     }
 
     @Override
-    public void visitElement(XmlContext context, Element element) {
+    public void visitElement(@NonNull XmlContext context, @NonNull Element element) {
         String layout = element.getAttribute(ATTR_LAYOUT);
         if (layout.startsWith(LAYOUT_RESOURCE_PREFIX)) { // Ignore @android:layout/ layouts
             layout = layout.substring(LAYOUT_RESOURCE_PREFIX.length());
@@ -316,13 +321,14 @@ public class ObsoleteLayoutParamsDetector extends LayoutDetector {
     }
 
     @Override
-    public void afterCheckProject(Context context) {
+    public void afterCheckProject(@NonNull Context context) {
         if (mIncludes == null) {
             return;
         }
 
         for (Pair<String, Location.Handle> pending : mPending) {
-            Location location = pending.getSecond().resolve();
+            Handle handle = pending.getSecond();
+            Location location = handle.resolve();
             File file = location.getFile();
             String layout = file.getName();
             if (layout.endsWith(DOT_XML)) {
@@ -355,6 +361,13 @@ public class ObsoleteLayoutParamsDetector extends LayoutDetector {
             }
 
             if (!isValid) {
+                Object clientData = handle.getClientData();
+                if (clientData instanceof Node) {
+                    if (context.getDriver().isSuppressed(ISSUE, (Node) clientData)) {
+                        return;
+                    }
+                }
+
                 StringBuilder sb = new StringBuilder();
                 for (Pair<File, String> include : includes) {
                     if (sb.length() > 0) {
@@ -368,6 +381,7 @@ public class ObsoleteLayoutParamsDetector extends LayoutDetector {
                 }
                 String message = String.format("Invalid layout param '%1$s' (%2$s)",
                             name, sb.toString());
+                // TODO: Compute applicable scope node
                 context.report(ISSUE, location, message, null);
             }
         }

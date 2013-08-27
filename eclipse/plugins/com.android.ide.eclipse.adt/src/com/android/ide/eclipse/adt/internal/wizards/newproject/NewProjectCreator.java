@@ -16,6 +16,10 @@
 
 package com.android.ide.eclipse.adt.internal.wizards.newproject;
 
+import static com.android.sdklib.SdkConstants.FN_PROJECT_PROPERTIES;
+import static com.android.sdklib.internal.project.ProjectProperties.PROPERTY_LIBRARY;
+import static org.eclipse.core.resources.IResource.DEPTH_ZERO;
+
 import com.android.AndroidConstants;
 import com.android.ide.common.layout.LayoutConstants;
 import com.android.ide.eclipse.adt.AdtConstants;
@@ -28,14 +32,18 @@ import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
 import com.android.ide.eclipse.adt.internal.project.AndroidNature;
 import com.android.ide.eclipse.adt.internal.project.ProjectHelper;
 import com.android.ide.eclipse.adt.internal.refactorings.extractstring.ExtractStringRefactoring;
+import com.android.ide.eclipse.adt.internal.sdk.ProjectState;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.ide.eclipse.adt.internal.wizards.newproject.NewProjectWizardState.Mode;
 import com.android.io.StreamException;
 import com.android.resources.Density;
 import com.android.sdklib.IAndroidTarget;
 import com.android.sdklib.SdkConstants;
+import com.android.sdklib.internal.project.ProjectPropertiesWorkingCopy;
+import com.android.sdklib.xml.ManifestData;
 
 import org.eclipse.core.filesystem.EFS;
+import org.eclipse.core.filesystem.IFileInfo;
 import org.eclipse.core.filesystem.IFileStore;
 import org.eclipse.core.filesystem.IFileSystem;
 import org.eclipse.core.resources.IContainer;
@@ -46,14 +54,17 @@ import org.eclipse.core.resources.IProjectDescription;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.IResourceStatus;
 import org.eclipse.core.resources.IWorkspace;
+import org.eclipse.core.resources.IWorkspaceRunnable;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
+import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
 import org.eclipse.core.runtime.Path;
 import org.eclipse.core.runtime.Platform;
+import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.SubProgressMonitor;
 import org.eclipse.jdt.core.IAccessRule;
 import org.eclipse.jdt.core.IClasspathAttribute;
@@ -77,7 +88,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.net.MalformedURLException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
@@ -101,8 +114,10 @@ public class NewProjectCreator  {
     private static final String PARAM_STRING_CONTENT = "STRING_CONTENT";            //$NON-NLS-1$
     private static final String PARAM_IS_NEW_PROJECT = "IS_NEW_PROJECT";            //$NON-NLS-1$
     private static final String PARAM_SAMPLE_LOCATION = "SAMPLE_LOCATION";          //$NON-NLS-1$
+    private static final String PARAM_SOURCE = "SOURCE";                            //$NON-NLS-1$
     private static final String PARAM_SRC_FOLDER = "SRC_FOLDER";                    //$NON-NLS-1$
     private static final String PARAM_SDK_TARGET = "SDK_TARGET";                    //$NON-NLS-1$
+    private static final String PARAM_IS_LIBRARY = "IS_LIBRARY";                    //$NON-NLS-1$
     private static final String PARAM_MIN_SDK_VERSION = "MIN_SDK_VERSION";          //$NON-NLS-1$
     // Warning: The expanded string PARAM_TEST_TARGET_PACKAGE must not contain the
     // string "PACKAGE" since it collides with the replacement of PARAM_PACKAGE.
@@ -130,14 +145,17 @@ public class NewProjectCreator  {
         SdkConstants.FD_ASSETS + AdtConstants.WS_SEP;
     private static final String DRAWABLE_DIRECTORY =
         AndroidConstants.FD_RES_DRAWABLE + AdtConstants.WS_SEP;
+    private static final String DRAWABLE_XHDPI_DIRECTORY =
+            AndroidConstants.FD_RES_DRAWABLE + '-' + Density.XHIGH.getResourceValue() +
+            AdtConstants.WS_SEP;
     private static final String DRAWABLE_HDPI_DIRECTORY =
-        AndroidConstants.FD_RES_DRAWABLE + "-" + Density.HIGH.getResourceValue() +   //$NON-NLS-1$
-        AdtConstants.WS_SEP;
+            AndroidConstants.FD_RES_DRAWABLE + '-' + Density.HIGH.getResourceValue() +
+            AdtConstants.WS_SEP;
     private static final String DRAWABLE_MDPI_DIRECTORY =
-        AndroidConstants.FD_RES_DRAWABLE + "-" + Density.MEDIUM.getResourceValue() + //$NON-NLS-1$
+        AndroidConstants.FD_RES_DRAWABLE + '-' + Density.MEDIUM.getResourceValue() +
         AdtConstants.WS_SEP;
     private static final String DRAWABLE_LDPI_DIRECTORY =
-        AndroidConstants.FD_RES_DRAWABLE + "-" + Density.LOW.getResourceValue() +    //$NON-NLS-1$
+        AndroidConstants.FD_RES_DRAWABLE + '-' + Density.LOW.getResourceValue() +
         AdtConstants.WS_SEP;
     private static final String LAYOUT_DIRECTORY =
         AndroidConstants.FD_RES_LAYOUT + AdtConstants.WS_SEP;
@@ -167,6 +185,7 @@ public class NewProjectCreator  {
     private static final String TEMPLATE_STRING = TEMPLATES_DIRECTORY
             + "string.template"; //$NON-NLS-1$
     private static final String PROJECT_ICON = "ic_launcher.png"; //$NON-NLS-1$
+    private static final String ICON_XHDPI = "ic_launcher_xhdpi.png"; //$NON-NLS-1$
     private static final String ICON_HDPI = "ic_launcher_hdpi.png"; //$NON-NLS-1$
     private static final String ICON_MDPI = "ic_launcher_mdpi.png"; //$NON-NLS-1$
     private static final String ICON_LDPI = "ic_launcher_ldpi.png"; //$NON-NLS-1$
@@ -182,6 +201,7 @@ public class NewProjectCreator  {
     private static final String[] RES_DIRECTORIES = new String[] {
             DRAWABLE_DIRECTORY, LAYOUT_DIRECTORY, VALUES_DIRECTORY };
     private static final String[] RES_DENSITY_ENABLED_DIRECTORIES = new String[] {
+            DRAWABLE_XHDPI_DIRECTORY,
             DRAWABLE_HDPI_DIRECTORY, DRAWABLE_MDPI_DIRECTORY, DRAWABLE_LDPI_DIRECTORY,
             LAYOUT_DIRECTORY, VALUES_DIRECTORY };
 
@@ -191,7 +211,6 @@ public class NewProjectCreator  {
 
     private final NewProjectWizardState mValues;
     private final IRunnableContext mRunnableContext;
-    private Object mPackageName;
 
     public NewProjectCreator(NewProjectWizardState values, IRunnableContext runnableContext) {
         mValues = values;
@@ -262,6 +281,10 @@ public class NewProjectCreator  {
      * @return True if the project could be created.
      */
     public boolean createAndroidProjects() {
+        if (mValues.importProjects != null && !mValues.importProjects.isEmpty()) {
+            return importProjects();
+        }
+
         final ProjectInfo mainData = collectMainPageInfo();
         final ProjectInfo testData = collectTestPageInfo();
 
@@ -269,7 +292,77 @@ public class NewProjectCreator  {
         WorkspaceModifyOperation op = new WorkspaceModifyOperation() {
             @Override
             protected void execute(IProgressMonitor monitor) throws InvocationTargetException {
-                createProjectAsync(monitor, mainData, testData);
+                createProjectAsync(monitor, mainData, testData, null);
+            }
+        };
+
+        // Run the operation in a different thread
+        runAsyncOperation(op);
+        return true;
+    }
+
+    /**
+     * Imports a list of projects
+     */
+    private boolean importProjects() {
+        assert mValues.importProjects != null && !mValues.importProjects.isEmpty();
+        IWorkspace workspace = ResourcesPlugin.getWorkspace();
+
+        final List<ProjectInfo> projectData = new ArrayList<ProjectInfo>();
+        for (ImportedProject p : mValues.importProjects) {
+
+            // Compute the project name and the package name from the manifest
+            ManifestData manifest = p.getManifest();
+            if (manifest == null) {
+                continue;
+            }
+            String packageName = manifest.getPackage();
+            String projectName = p.getProjectName();
+            String minSdk = manifest.getMinSdkVersionString();
+
+            final IProject project = workspace.getRoot().getProject(projectName);
+            final IProjectDescription description =
+                    workspace.newProjectDescription(project.getName());
+
+            final Map<String, Object> parameters = new HashMap<String, Object>();
+            parameters.put(PARAM_PROJECT, projectName);
+            parameters.put(PARAM_PACKAGE, packageName);
+            parameters.put(PARAM_SDK_TOOLS_DIR, AdtPlugin.getOsSdkToolsFolder());
+            parameters.put(PARAM_IS_NEW_PROJECT, Boolean.FALSE);
+            parameters.put(PARAM_SRC_FOLDER, SdkConstants.FD_SOURCES);
+
+            parameters.put(PARAM_SDK_TARGET, p.getTarget());
+
+            // TODO: Find out if these end up getting used in the import-path through the code!
+            parameters.put(PARAM_MIN_SDK_VERSION, minSdk);
+            parameters.put(PARAM_APPLICATION, STRING_RSRC_PREFIX + STRING_APP_NAME);
+            final HashMap<String, String> dictionary = new HashMap<String, String>();
+            dictionary.put(STRING_APP_NAME, mValues.applicationName);
+
+            if (mValues.copyIntoWorkspace) {
+                parameters.put(PARAM_SOURCE, p.getLocation());
+
+                // TODO: Make sure it isn't *already* in the workspace!
+                //IPath defaultLocation = Platform.getLocation();
+                //if ((!mValues.useDefaultLocation || mValues.useExisting)
+                //        && !defaultLocation.isPrefixOf(path)) {
+                //IPath workspaceLocation = Platform.getLocation().append(projectName);
+                //description.setLocation(workspaceLocation);
+                // DON'T SET THE LOCATION: It's IMPLIED and in fact it will generate
+                // an error if you set it!
+            } else {
+                // Create in place
+                description.setLocation(new Path(p.getLocation().getPath()));
+            }
+
+            projectData.add(new ProjectInfo(project, description, parameters, dictionary));
+        }
+
+        // Create a monitored operation to create the actual project
+        WorkspaceModifyOperation op = new WorkspaceModifyOperation() {
+            @Override
+            protected void execute(IProgressMonitor monitor) throws InvocationTargetException {
+                createProjectAsync(monitor, null, null, projectData);
             }
         };
 
@@ -293,12 +386,9 @@ public class NewProjectCreator  {
         final IProject project = workspace.getRoot().getProject(mValues.projectName);
         final IProjectDescription description = workspace.newProjectDescription(project.getName());
 
-        // keep some variables to make them available once the wizard closes
-        mPackageName = mValues.packageName;
-
         final Map<String, Object> parameters = new HashMap<String, Object>();
         parameters.put(PARAM_PROJECT, mValues.projectName);
-        parameters.put(PARAM_PACKAGE, mPackageName);
+        parameters.put(PARAM_PACKAGE, mValues.packageName);
         parameters.put(PARAM_APPLICATION, STRING_RSRC_PREFIX + STRING_APP_NAME);
         parameters.put(PARAM_SDK_TOOLS_DIR, AdtPlugin.getOsSdkToolsFolder());
         parameters.put(PARAM_IS_NEW_PROJECT, mValues.mode == Mode.ANY && !mValues.useExisting);
@@ -354,11 +444,10 @@ public class NewProjectCreator  {
         String pkg =
                 mValues.mode == Mode.TEST ? mValues.packageName : mValues.testPackageName;
 
-        parameters.put(PARAM_PROJECT, projectName);
         parameters.put(PARAM_PACKAGE, pkg);
         parameters.put(PARAM_APPLICATION, STRING_RSRC_PREFIX + STRING_APP_NAME);
         parameters.put(PARAM_SDK_TOOLS_DIR, AdtPlugin.getOsSdkToolsFolder());
-        parameters.put(PARAM_IS_NEW_PROJECT, true);
+        parameters.put(PARAM_IS_NEW_PROJECT, !mValues.useExisting);
         parameters.put(PARAM_SRC_FOLDER, mValues.sourceFolder);
         parameters.put(PARAM_SDK_TARGET, mValues.target);
         parameters.put(PARAM_MIN_SDK_VERSION, mValues.minSdk);
@@ -389,14 +478,18 @@ public class NewProjectCreator  {
         final HashMap<String, String> dictionary = new HashMap<String, String>();
         dictionary.put(STRING_APP_NAME, mValues.testApplicationName);
 
+        // Use the same logic to determine test project location as in
+        // ApplicationInfoPage#validateTestProjectLocation
         IPath path = new Path(mValues.projectLocation.getPath());
+        path = path.removeLastSegments(1).append(mValues.testProjectName);
         IPath defaultLocation = Platform.getLocation();
         if ((!mValues.useDefaultLocation || mValues.useExisting)
                 && !path.equals(defaultLocation)) {
             description.setLocation(path);
         }
 
-        if (!mValues.useDefaultLocation && !validateNewProjectLocationIsEmpty(path)) {
+        if (!mValues.useExisting && !mValues.useDefaultLocation &&
+                !validateNewProjectLocationIsEmpty(path)) {
             return null;
         }
 
@@ -459,7 +552,8 @@ public class NewProjectCreator  {
      */
     private void createProjectAsync(IProgressMonitor monitor,
             ProjectInfo mainData,
-            ProjectInfo testData)
+            ProjectInfo testData,
+            List<ProjectInfo> importData)
                 throws InvocationTargetException {
         monitor.beginTask("Create Android Project", 100);
         try {
@@ -471,26 +565,17 @@ public class NewProjectCreator  {
                         mainData.getProject(),
                         mainData.getDescription(),
                         mainData.getParameters(),
-                        mainData.getDictionary());
+                        mainData.getDictionary(),
+                        null);
 
                 if (mainProject != null) {
                     final IJavaProject javaProject = JavaCore.create(mainProject);
-                    Display.getDefault().syncExec(new Runnable() {
-
-                        public void run() {
-                            IWorkingSet[] workingSets = mValues.workingSets;
-                            if (workingSets.length > 0 && javaProject != null
-                                    && javaProject.exists()) {
-                                PlatformUI.getWorkbench().getWorkingSetManager()
-                                        .addToWorkingSets(javaProject, workingSets);
-                            }
-                        }
-                    });
+                    Display.getDefault().syncExec(new WorksetAdder(javaProject,
+                            mValues.workingSets));
                 }
             }
 
             if (testData != null) {
-
                 Map<String, Object> parameters = testData.getParameters();
                 if (parameters.containsKey(PARAM_TARGET_MAIN) && mainProject != null) {
                     parameters.put(PARAM_REFERENCE_PROJECT, mainProject);
@@ -501,20 +586,49 @@ public class NewProjectCreator  {
                         testData.getProject(),
                         testData.getDescription(),
                         parameters,
-                        testData.getDictionary());
+                        testData.getDictionary(),
+                        null);
                 if (testProject != null) {
                     final IJavaProject javaProject = JavaCore.create(testProject);
-                    Display.getDefault().syncExec(new Runnable() {
+                    Display.getDefault().syncExec(new WorksetAdder(javaProject,
+                            mValues.workingSets));
+                }
+            }
 
-                        public void run() {
-                            IWorkingSet[] workingSets = mValues.workingSets;
-                            if (workingSets.length > 0 && javaProject != null
-                                    && javaProject.exists()) {
-                                PlatformUI.getWorkbench().getWorkingSetManager()
-                                        .addToWorkingSets(javaProject, workingSets);
+            if (importData != null) {
+                for (final ProjectInfo data : importData) {
+                    ProjectPopulator projectPopulator = null;
+                    if (mValues.copyIntoWorkspace) {
+                        projectPopulator = new ProjectPopulator() {
+                            @Override
+                            public void populate(IProject project) {
+                                // Copy
+                                IFileSystem fileSystem = EFS.getLocalFileSystem();
+                                File source = (File) data.getParameters().get(PARAM_SOURCE);
+                                IFileStore sourceDir = new ReadWriteFileStore(
+                                        fileSystem.getStore(source.toURI()));
+                                IFileStore destDir = new ReadWriteFileStore(
+                                        fileSystem.getStore(AdtUtils.getAbsolutePath(project)));
+                                try {
+                                    sourceDir.copy(destDir, EFS.OVERWRITE, null);
+                                } catch (CoreException e) {
+                                    AdtPlugin.log(e, null);
+                                }
                             }
-                        }
-                    });
+                        };
+                    }
+                    IProject project = createEclipseProject(
+                            new SubProgressMonitor(monitor, 50),
+                            data.getProject(),
+                            data.getDescription(),
+                            data.getParameters(),
+                            data.getDictionary(),
+                            projectPopulator);
+                    if (project != null) {
+                        final IJavaProject javaProject = JavaCore.create(project);
+                        Display.getDefault().syncExec(new WorksetAdder(javaProject,
+                                mValues.workingSets));
+                    }
                 }
             }
         } catch (CoreException e) {
@@ -526,6 +640,10 @@ public class NewProjectCreator  {
         } finally {
             monitor.done();
         }
+    }
+
+    public interface ProjectPopulator {
+        public void populate(IProject project) throws InvocationTargetException;
     }
 
     /**
@@ -544,7 +662,8 @@ public class NewProjectCreator  {
             IProject project,
             IProjectDescription description,
             Map<String, Object> parameters,
-            Map<String, String> dictionary)
+            Map<String, String> dictionary,
+            ProjectPopulator projectPopulator)
                 throws CoreException, IOException, StreamException {
 
         // get the project target
@@ -575,6 +694,14 @@ public class NewProjectCreator  {
             addDefaultDirectories(project, RES_DIRECTORY, RES_DENSITY_ENABLED_DIRECTORIES, monitor);
         }
 
+        if (projectPopulator != null) {
+            try {
+                projectPopulator.populate(project);
+            } catch (InvocationTargetException ite) {
+                AdtPlugin.log(ite, null);
+            }
+        }
+
         // Setup class path: mark folders as source folders
         IJavaProject javaProject = JavaCore.create(project);
         setupSourceFolders(javaProject, sourceFolders, monitor);
@@ -598,7 +725,10 @@ public class NewProjectCreator  {
             File libFolder = new File((String) parameters.get(PARAM_SDK_TOOLS_DIR),
                     SdkConstants.FD_LIB);
             addLocalFile(project,
-                    new File(libFolder, SdkConstants.FN_PROGUARD_CFG),
+                    new File(libFolder, SdkConstants.FN_PROJECT_PROGUARD_FILE),
+                    // Write ProGuard config files with the extension .pro which
+                    // is what is used in the ProGuard documentation and samples
+                    SdkConstants.FN_PROJECT_PROGUARD_FILE,
                     monitor);
 
             // Set output location
@@ -644,7 +774,81 @@ public class NewProjectCreator  {
         // Necessary for existing projects and good for new ones to.
         ProjectHelper.fixProject(project);
 
+        Boolean isLibraryProject = (Boolean) parameters.get(PARAM_IS_LIBRARY);
+        if (isLibraryProject != null && isLibraryProject.booleanValue()
+                && Sdk.getCurrent() != null && project.isOpen()) {
+            ProjectState state = Sdk.getProjectState(project);
+            if (state != null) {
+                // make a working copy of the properties
+                ProjectPropertiesWorkingCopy properties =
+                        state.getProperties().makeWorkingCopy();
+
+                properties.setProperty(PROPERTY_LIBRARY, Boolean.TRUE.toString());
+                try {
+                    properties.save();
+                    IResource projectProp = project.findMember(FN_PROJECT_PROPERTIES);
+                    if (projectProp != null) {
+                        projectProp.refreshLocal(DEPTH_ZERO, new NullProgressMonitor());
+                    }
+                } catch (Exception e) {
+                    String msg = String.format(
+                            "Failed to save %1$s for project %2$s",
+                            SdkConstants.FN_PROJECT_PROPERTIES, project.getName());
+                    AdtPlugin.log(e, msg);
+                }
+            }
+        }
+
         return project;
+    }
+
+    public static void create(
+            IProgressMonitor monitor,
+            final IProject project,
+            IAndroidTarget target,
+            final ProjectPopulator projectPopulator,
+            boolean isLibrary,
+            String projectLocation)
+                throws CoreException {
+        final NewProjectCreator creator = new NewProjectCreator(null, null);
+
+        final Map<String, String> dictionary = null;
+        final Map<String, Object> parameters = new HashMap<String, Object>();
+        parameters.put(PARAM_SDK_TARGET, target);
+        parameters.put(PARAM_SRC_FOLDER, SdkConstants.FD_SOURCES);
+        parameters.put(PARAM_IS_NEW_PROJECT, false);
+        parameters.put(PARAM_SAMPLE_LOCATION, null);
+        parameters.put(PARAM_IS_LIBRARY, isLibrary);
+
+        IWorkspace workspace = ResourcesPlugin.getWorkspace();
+        final IProjectDescription description = workspace.newProjectDescription(project.getName());
+
+        if (projectLocation != null) {
+            IPath path = new Path(projectLocation);
+            IPath parent = new Path(path.toFile().getParent());
+            IPath workspaceLocation = Platform.getLocation();
+            if (!workspaceLocation.equals(parent)) {
+                description.setLocation(path);
+            }
+        }
+
+        IWorkspaceRunnable workspaceRunnable = new IWorkspaceRunnable() {
+            @Override
+            public void run(IProgressMonitor submonitor) throws CoreException {
+                try {
+                    creator.createEclipseProject(submonitor, project, description, parameters,
+                            dictionary, projectPopulator);
+                } catch (IOException e) {
+                    throw new CoreException(new Status(IStatus.ERROR, AdtPlugin.PLUGIN_ID,
+                            "Unexpected error while creating project", e));
+                } catch (StreamException e) {
+                    throw new CoreException(new Status(IStatus.ERROR, AdtPlugin.PLUGIN_ID,
+                            "Unexpected error while creating project", e));
+                }
+            }
+        };
+
+        ResourcesPlugin.getWorkspace().run(workspaceRunnable, monitor);
     }
 
     /**
@@ -875,8 +1079,15 @@ public class NewProjectCreator  {
                 addFile(file, AdtPlugin.readEmbeddedFile(TEMPLATES_DIRECTORY + ICON_MDPI), monitor);
             }
         } else {
-            // do all 3 icons.
+            // do all 4 icons.
             IFile file;
+
+            // extra high density
+            file = project.getFile(RES_DIRECTORY + AdtConstants.WS_SEP
+                    + DRAWABLE_XHDPI_DIRECTORY + AdtConstants.WS_SEP + PROJECT_ICON);
+            if (!file.exists()) {
+                addFile(file, AdtPlugin.readEmbeddedFile(TEMPLATES_DIRECTORY + ICON_XHDPI), monitor);
+            }
 
             // high density
             file = project.getFile(RES_DIRECTORY + AdtConstants.WS_SEP
@@ -992,18 +1203,14 @@ public class NewProjectCreator  {
             if (!file.exists()) {
                 copyFile(JAVA_ACTIVITY_TEMPLATE, file, java_activity_parameters, monitor, false);
             }
-        }
 
-        // create the layout file
-        IFolder layoutfolder = project.getFolder(RES_DIRECTORY).getFolder(LAYOUT_DIRECTORY);
-        IFile file = layoutfolder.getFile(MAIN_LAYOUT_XML);
-        if (!file.exists()) {
-            copyFile(LAYOUT_TEMPLATE, file, parameters, monitor, true);
-            if (activityName != null) {
+            // create the layout file (if we're creating an
+            IFolder layoutfolder = project.getFolder(RES_DIRECTORY).getFolder(LAYOUT_DIRECTORY);
+            file = layoutfolder.getFile(MAIN_LAYOUT_XML);
+            if (!file.exists()) {
+                copyFile(LAYOUT_TEMPLATE, file, parameters, monitor, true);
                 dictionary.put(STRING_HELLO_WORLD, String.format("Hello World, %1$s!",
                         activityName));
-            } else {
-                dictionary.put(STRING_HELLO_WORLD, "Hello World!");
             }
         }
     }
@@ -1013,21 +1220,66 @@ public class NewProjectCreator  {
             IProgressMonitor monitor) throws CoreException {
         // Copy the sampleDir into the project directory recursively
         IFileSystem fileSystem = EFS.getLocalFileSystem();
-        IFileStore sourceDir = fileSystem.getStore(sampleDir.toURI());
-        IFileStore destDir = fileSystem.getStore(AdtUtils.getAbsolutePath(project));
+        IFileStore sourceDir = new ReadWriteFileStore(
+                                        fileSystem.getStore(sampleDir.toURI()));
+        IFileStore destDir   = new ReadWriteFileStore(
+                                        fileSystem.getStore(AdtUtils.getAbsolutePath(project)));
         sourceDir.copy(destDir, EFS.OVERWRITE, null);
+    }
+
+    /**
+     * In a sample we never duplicate source files as read-only.
+     * This creates a store that read files attributes and doesn't set the r-o flag.
+     */
+    private static class ReadWriteFileStore extends FileStoreAdapter {
+
+        public ReadWriteFileStore(IFileStore store) {
+            super(store);
+        }
+
+        // Override when reading attributes
+        @Override
+        public IFileInfo fetchInfo(int options, IProgressMonitor monitor) throws CoreException {
+            IFileInfo info = super.fetchInfo(options, monitor);
+            info.setAttribute(EFS.ATTRIBUTE_READ_ONLY, false);
+            return info;
+        }
+
+        // Override when writing attributes
+        @Override
+        public void putInfo(IFileInfo info, int options, IProgressMonitor storeMonitor)
+                throws CoreException {
+            info.setAttribute(EFS.ATTRIBUTE_READ_ONLY, false);
+            super.putInfo(info, options, storeMonitor);
+        }
+
+        @Deprecated
+        @Override
+        public IFileStore getChild(IPath path) {
+            IFileStore child = super.getChild(path);
+            if (!(child instanceof ReadWriteFileStore)) {
+                child = new ReadWriteFileStore(child);
+            }
+            return child;
+        }
+
+        @Override
+        public IFileStore getChild(String name) {
+            return new ReadWriteFileStore(super.getChild(name));
+        }
     }
 
     /**
      * Adds a file to the root of the project
      * @param project the project to add the file to.
+     * @param destName the name to write the file as
      * @param source the file to add. It'll keep the same filename once copied into the project.
      * @throws FileNotFoundException
      * @throws CoreException
      */
-    private void addLocalFile(IProject project, File source, IProgressMonitor monitor)
-            throws FileNotFoundException, CoreException {
-        IFile dest = project.getFile(source.getName());
+    public static void addLocalFile(IProject project, File source, String destName,
+            IProgressMonitor monitor) throws FileNotFoundException, CoreException {
+        IFile dest = project.getFile(destName);
         if (dest.exists() == false) {
             FileInputStream stream = new FileInputStream(source);
             dest.create(stream, false /* force */, new SubProgressMonitor(monitor, 10));
@@ -1161,5 +1413,24 @@ public class NewProjectCreator  {
         }
 
         return str;
+    }
+
+    private static class WorksetAdder implements Runnable {
+        private final IJavaProject mProject;
+        private final IWorkingSet[] mWorkingSets;
+
+        private WorksetAdder(IJavaProject project, IWorkingSet[] workingSets) {
+            mProject = project;
+            mWorkingSets = workingSets;
+        }
+
+        @Override
+        public void run() {
+            if (mWorkingSets.length > 0 && mProject != null
+                    && mProject.exists()) {
+                PlatformUI.getWorkbench().getWorkingSetManager()
+                        .addToWorkingSets(mProject, mWorkingSets);
+            }
+        }
     }
 }

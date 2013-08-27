@@ -303,19 +303,23 @@ public final class SectionHelper {
         ic.setVisible(false); // initially hidden
 
         control.addMouseTrackListener(new MouseTrackListener() {
+            @Override
             public void mouseEnter(MouseEvent e) {
             }
 
+            @Override
             public void mouseExit(MouseEvent e) {
                 ic.setVisible(false);
             }
 
+            @Override
             public void mouseHover(MouseEvent e) {
                 ic.setLocation(control.toDisplay(10, 25));  // same offset as in PDETextHover
                 ic.setVisible(true);
             }
         });
         control.addDisposeListener(new DisposeListener() {
+            @Override
             public void widgetDisposed(DisposeEvent e) {
                 ic.dispose();
             }
@@ -350,7 +354,8 @@ public final class SectionHelper {
         }
         text.setWhitespaceNormalized(true);
         if (isHtml && !label.startsWith("<form>")) {          //$NON-NLS-1$
-            assert label.startsWith("<form>") : "HTML for FormText must be wrapped in <form>...</form>"; //$NON-NLS-1$
+            // This assertion is violated, for example by the Class attribute for an activity
+            //assert label.startsWith("<form>") : "HTML for FormText must be wrapped in <form>...</form>"; //$NON-NLS-1$
             label = "<form>" + label + "</form>";   //$NON-NLS-1$ //$NON-NLS-2$
         }
         text.setText(label, isHtml /* parseTags */, isHtml /* expandURLs */);

@@ -19,16 +19,17 @@ package com.android.sdkuilib.internal.repository;
 import com.android.sdklib.ISdkLog;
 import com.android.sdklib.SdkManager;
 import com.android.sdklib.internal.avd.AvdManager;
-import com.android.sdklib.internal.repository.Archive;
 import com.android.sdklib.internal.repository.ITaskFactory;
-import com.android.sdklib.internal.repository.MockAddonPackage;
-import com.android.sdklib.internal.repository.MockBrokenPackage;
-import com.android.sdklib.internal.repository.MockPlatformPackage;
-import com.android.sdklib.internal.repository.MockPlatformToolPackage;
-import com.android.sdklib.internal.repository.MockToolPackage;
-import com.android.sdklib.internal.repository.Package;
-import com.android.sdklib.internal.repository.SdkSource;
-import com.android.sdklib.internal.repository.SdkSources;
+import com.android.sdklib.internal.repository.DownloadCache;
+import com.android.sdklib.internal.repository.archives.Archive;
+import com.android.sdklib.internal.repository.packages.MockAddonPackage;
+import com.android.sdklib.internal.repository.packages.MockBrokenPackage;
+import com.android.sdklib.internal.repository.packages.MockPlatformPackage;
+import com.android.sdklib.internal.repository.packages.MockPlatformToolPackage;
+import com.android.sdklib.internal.repository.packages.MockToolPackage;
+import com.android.sdklib.internal.repository.packages.Package;
+import com.android.sdklib.internal.repository.sources.SdkSource;
+import com.android.sdklib.internal.repository.sources.SdkSources;
 import com.android.sdkuilib.internal.repository.icons.ImageFactory;
 
 import org.eclipse.swt.widgets.Shell;
@@ -44,30 +45,42 @@ public class UpdaterLogicTest extends TestCase {
 
     private static class NullUpdaterData implements IUpdaterData {
 
+        @Override
         public AvdManager getAvdManager() {
             return null;
         }
 
+        @Override
         public ImageFactory getImageFactory() {
             return null;
         }
 
+        @Override
         public ISdkLog getSdkLog() {
             return null;
         }
 
+        @Override
+        public DownloadCache getDownloadCache() {
+            return null;
+        }
+
+        @Override
         public SdkManager getSdkManager() {
             return null;
         }
 
+        @Override
         public SettingsController getSettingsController() {
             return null;
         }
 
+        @Override
         public ITaskFactory getTaskFactory() {
             return null;
         }
 
+        @Override
         public Shell getWindowShell() {
             return null;
         }

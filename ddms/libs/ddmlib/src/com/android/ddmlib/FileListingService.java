@@ -54,14 +54,6 @@ public final class FileListingService {
     /** Application folder. */
     public final static String DIRECTORY_APP = "app"; //$NON-NLS-1$
 
-    private final static String[] sRootLevelApprovedItems = {
-        DIRECTORY_DATA,
-        DIRECTORY_SDCARD,
-        DIRECTORY_SYSTEM,
-        DIRECTORY_TEMP,
-        DIRECTORY_MNT,
-    };
-
     public static final long REFRESH_RATE = 5000L;
     /**
      * Refresh test has to be slightly lower for precision issue.
@@ -116,10 +108,11 @@ public final class FileListingService {
          * Comparator object for FileEntry
          */
         private static Comparator<FileEntry> sEntryComparator = new Comparator<FileEntry>() {
+            @Override
             public int compare(FileEntry o1, FileEntry o2) {
                 if (o1 instanceof FileEntry && o2 instanceof FileEntry) {
-                    FileEntry fe1 = (FileEntry)o1;
-                    FileEntry fe2 = (FileEntry)o2;
+                    FileEntry fe1 = o1;
+                    FileEntry fe2 = o2;
                     return fe1.name.compareTo(fe2.name);
                 }
                 return 0;
@@ -437,22 +430,6 @@ public final class FileListingService {
                 // get the name
                 String name = m.group(7);
 
-                // if the parent is root, we only accept selected items
-                if (mParentEntry.isRoot()) {
-                    boolean found = false;
-                    for (String approved : sRootLevelApprovedItems) {
-                        if (approved.equals(name)) {
-                            found = true;
-                            break;
-                        }
-                    }
-
-                    // if it's not in the approved list we skip this entry.
-                    if (found == false) {
-                        continue;
-                    }
-                }
-
                 // get the rest of the groups
                 String permissions = m.group(1);
                 String owner = m.group(2);
@@ -569,6 +546,7 @@ public final class FileListingService {
             return null;
         }
 
+        @Override
         public boolean isCancelled() {
             return false;
         }
@@ -696,6 +674,7 @@ public final class FileListingService {
                                     }
                                 }
                             }
+                            @Override
                             public boolean isCancelled() {
                                 return false;
                             }

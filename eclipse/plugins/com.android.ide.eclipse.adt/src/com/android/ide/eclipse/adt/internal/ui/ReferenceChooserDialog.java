@@ -135,7 +135,9 @@ public class ReferenceChooserDialog extends SelectionStatusDialog {
         createFilteredTree(top);
 
         // setup the initial selection
-        setupInitialSelection();
+        if (mCurrentResource != null) {
+            setupInitialSelection();
+        }
 
         // create the "New Resource" button
         createNewResButtons(top);
@@ -171,10 +173,12 @@ public class ReferenceChooserDialog extends SelectionStatusDialog {
         Tree tree = mTreeViewer.getTree();
 
         tree.addSelectionListener(new SelectionListener() {
+            @Override
             public void widgetDefaultSelected(SelectionEvent e) {
                 handleDoubleClick();
             }
 
+            @Override
             public void widgetSelected(SelectionEvent e) {
                 handleSelection();
             }

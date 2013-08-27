@@ -18,16 +18,15 @@ package com.android.ide.common.resources;
 
 import static com.android.AndroidConstants.FD_RES_VALUES;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.log.ILogger;
 import com.android.io.IAbstractFile;
 import com.android.io.IAbstractFolder;
 import com.android.resources.ResourceType;
 
-import org.w3c.dom.Document;
-import org.w3c.dom.Element;
-import org.w3c.dom.Node;
-import org.w3c.dom.NodeList;
-import org.xml.sax.InputSource;
+import org.kxml2.io.KXmlParser;
+import org.xmlpull.v1.XmlPullParser;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -37,11 +36,10 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
+import java.util.Map.Entry;
 
 /**
  * Framework resources repository.
@@ -101,9 +99,10 @@ public class FrameworkResources extends ResourceRepository {
      * This map is a subset of the full resource map that only contains framework resources
      * that are public.
      *
-     * @param osFrameworkResourcePath The root folder of the resources
+     * @param resFolder The root folder of the resources
+     * @param logger a logger to report issues to
      */
-    public void loadPublicResources(IAbstractFolder resFolder, ILogger logger) {
+    public void loadPublicResources(@NonNull IAbstractFolder resFolder, @Nullable ILogger logger) {
         IAbstractFolder valueFolder = resFolder.getFolder(FD_RES_VALUES);
         if (valueFolder.exists() == false) {
             return;
@@ -111,28 +110,41 @@ public class FrameworkResources extends ResourceRepository {
 
         IAbstractFile publicXmlFile = valueFolder.getFile("public.xml"); //$NON-NLS-1$
         if (publicXmlFile.exists()) {
-            Document document = null;
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             Reader reader = null;
             try {
-                reader = new BufferedReader(new InputStreamReader(publicXmlFile.getContents()));
-                InputSource is = new InputSource(reader);
-                factory.setNamespaceAware(true);
-                factory.setValidating(false);
-                DocumentBuilder builder = factory.newDocumentBuilder();
-                document = builder.parse(is);
+                reader = new BufferedReader(new InputStreamReader(publicXmlFile.getContents(),
+                        "UTF-8")); //$NON-NLS-1$
+                KXmlParser parser = new KXmlParser();
+                parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false);
+                parser.setInput(reader);
 
                 ResourceType lastType = null;
                 String lastTypeName = "";
+                while (true) {
+                    int event = parser.next();
+                    if (event == XmlPullParser.START_TAG) {
+                        // As of API 15 there are a number of "java-symbol" entries here
+                        if (!parser.getName().equals("public")) { //$NON-NLS-1$
+                            continue;
+                        }
 
-                NodeList children = document.getDocumentElement().getChildNodes();
-                for (int i = 0, n = children.getLength(); i < n; i++) {
-                    Node node = children.item(i);
-                    if (node.getNodeType() == Node.ELEMENT_NODE) {
-                        Element element = (Element) node;
-                        String name = element.getAttribute("name"); //$NON-NLS-1$
-                        if (name.length() > 0) {
-                            String typeName = element.getAttribute("type"); //$NON-NLS-1$
+                        String name = null;
+                        String typeName = null;
+                        for (int i = 0, n = parser.getAttributeCount(); i < n; i++) {
+                            String attribute = parser.getAttributeName(i);
+
+                            if (attribute.equals("name")) { //$NON-NLS-1$
+                                name = parser.getAttributeValue(i);
+                                if (typeName != null) {
+                                    // Skip id attribute processing
+                                    break;
+                                }
+                            } else if (attribute.equals("type")) { //$NON-NLS-1$
+                                typeName = parser.getAttributeValue(i);
+                            }
+                        }
+
+                        if (name != null && typeName != null) {
                             ResourceType type = null;
                             if (typeName.equals(lastTypeName)) {
                                 type = lastType;
@@ -142,22 +154,39 @@ public class FrameworkResources extends ResourceRepository {
                                 lastTypeName = typeName;
                             }
                             if (type != null) {
-                                List<ResourceItem> typeList = mResourceMap.get(type);
-
                                 ResourceItem match = null;
-                                if (typeList != null) {
-                                    for (ResourceItem item : typeList) {
-                                        if (name.equals(item.getName())) {
-                                            match = item;
-                                            break;
-                                        }
-                                    }
+                                Map<String, ResourceItem> map = mResourceMap.get(type);
+                                if (map != null) {
+                                    match = map.get(name);
                                 }
 
                                 if (match != null) {
                                     List<ResourceItem> publicList = mPublicResourceMap.get(type);
                                     if (publicList == null) {
-                                        publicList = new ArrayList<ResourceItem>();
+                                        // Pick initial size for the list to hold the public
+                                        // resources. We could just use map.size() here,
+                                        // but they're usually much bigger; for example,
+                                        // in one platform version, there are 1500 drawables
+                                        // and 1200 strings but only 175 and 25 public ones
+                                        // respectively.
+                                        int size;
+                                        switch (type) {
+                                            case STYLE: size = 500; break;
+                                            case ATTR: size = 1000; break;
+                                            case DRAWABLE: size = 200; break;
+                                            case ID: size = 50; break;
+                                            case LAYOUT:
+                                            case COLOR:
+                                            case STRING:
+                                            case ANIM:
+                                            case INTERPOLATOR:
+                                                size = 30;
+                                                break;
+                                            default:
+                                                size = 10;
+                                                break;
+                                        }
+                                        publicList = new ArrayList<ResourceItem>(size);
                                         mPublicResourceMap.put(type, publicList);
                                     }
 
@@ -166,8 +195,13 @@ public class FrameworkResources extends ResourceRepository {
                                     // log that there's a public resource that doesn't actually
                                     // exist?
                                 }
+                            } else {
+                                // log that there was a reference to a typo that doesn't actually
+                                // exist?
                             }
                         }
+                    } else if (event == XmlPullParser.END_DOCUMENT) {
+                        break;
                     }
                 }
             } catch (Exception e) {
@@ -200,3 +234,4 @@ public class FrameworkResources extends ResourceRepository {
         }
     }
 }
+

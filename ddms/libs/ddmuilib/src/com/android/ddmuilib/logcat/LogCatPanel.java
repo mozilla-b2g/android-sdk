@@ -20,22 +20,21 @@ import com.android.ddmlib.DdmConstants;
 import com.android.ddmlib.IDevice;
 import com.android.ddmlib.Log.LogLevel;
 import com.android.ddmuilib.ITableFocusListener;
+import com.android.ddmuilib.ITableFocusListener.IFocusedTableActivator;
+import com.android.ddmuilib.FindDialog;
 import com.android.ddmuilib.ImageLoader;
 import com.android.ddmuilib.SelectionDependentPanel;
 import com.android.ddmuilib.TableHelper;
-import com.android.ddmuilib.ITableFocusListener.IFocusedTableActivator;
+import com.android.ddmuilib.AbstractBufferFindTarget;
 
+import org.eclipse.jface.action.Action;
+import org.eclipse.jface.action.MenuManager;
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.preference.IPreferenceStore;
 import org.eclipse.jface.preference.PreferenceConverter;
 import org.eclipse.jface.util.IPropertyChangeListener;
 import org.eclipse.jface.util.PropertyChangeEvent;
-import org.eclipse.jface.viewers.ColumnViewer;
-import org.eclipse.jface.viewers.ColumnViewerToolTipSupport;
 import org.eclipse.jface.viewers.TableViewer;
-import org.eclipse.jface.viewers.TableViewerColumn;
-import org.eclipse.jface.viewers.ViewerCell;
-import org.eclipse.jface.window.ToolTip;
 import org.eclipse.jface.window.Window;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.custom.SashForm;
@@ -44,15 +43,21 @@ import org.eclipse.swt.dnd.TextTransfer;
 import org.eclipse.swt.dnd.Transfer;
 import org.eclipse.swt.events.ControlAdapter;
 import org.eclipse.swt.events.ControlEvent;
+import org.eclipse.swt.events.DisposeEvent;
+import org.eclipse.swt.events.DisposeListener;
 import org.eclipse.swt.events.FocusEvent;
 import org.eclipse.swt.events.FocusListener;
 import org.eclipse.swt.events.ModifyEvent;
 import org.eclipse.swt.events.ModifyListener;
 import org.eclipse.swt.events.SelectionAdapter;
 import org.eclipse.swt.events.SelectionEvent;
+import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.Font;
 import org.eclipse.swt.graphics.FontData;
 import org.eclipse.swt.graphics.GC;
+import org.eclipse.swt.graphics.Point;
+import org.eclipse.swt.graphics.RGB;
+import org.eclipse.swt.graphics.Rectangle;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Combo;
@@ -63,9 +68,10 @@ import org.eclipse.swt.widgets.Event;
 import org.eclipse.swt.widgets.FileDialog;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Listener;
-import org.eclipse.swt.widgets.ScrollBar;
+import org.eclipse.swt.widgets.Menu;
 import org.eclipse.swt.widgets.Table;
 import org.eclipse.swt.widgets.TableColumn;
+import org.eclipse.swt.widgets.TableItem;
 import org.eclipse.swt.widgets.Text;
 import org.eclipse.swt.widgets.ToolBar;
 import org.eclipse.swt.widgets.ToolItem;
@@ -75,18 +81,30 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * LogCatPanel displays a table listing the logcat messages.
  */
 public final class LogCatPanel extends SelectionDependentPanel
-                        implements ILogCatMessageEventListener {
+                        implements ILogCatBufferChangeListener {
     /** Preference key to use for storing list of logcat filters. */
     public static final String LOGCAT_FILTERS_LIST = "logcat.view.filters.list";
 
     /** Preference key to use for storing font settings. */
     public static final String LOGCAT_VIEW_FONT_PREFKEY = "logcat.view.font";
+
+    // Preference keys for message colors based on severity level
+    private static final String MSG_COLOR_PREFKEY_PREFIX = "logcat.msg.color.";
+    public static final String VERBOSE_COLOR_PREFKEY = MSG_COLOR_PREFKEY_PREFIX + "verbose"; //$NON-NLS-1$
+    public static final String DEBUG_COLOR_PREFKEY = MSG_COLOR_PREFKEY_PREFIX + "debug"; //$NON-NLS-1$
+    public static final String INFO_COLOR_PREFKEY = MSG_COLOR_PREFKEY_PREFIX + "info"; //$NON-NLS-1$
+    public static final String WARN_COLOR_PREFKEY = MSG_COLOR_PREFKEY_PREFIX + "warn"; //$NON-NLS-1$
+    public static final String ERROR_COLOR_PREFKEY = MSG_COLOR_PREFKEY_PREFIX + "error"; //$NON-NLS-1$
+    public static final String ASSERT_COLOR_PREFKEY = MSG_COLOR_PREFKEY_PREFIX + "assert"; //$NON-NLS-1$
 
     // Use a monospace font family
     private static final String FONT_FAMILY =
@@ -119,10 +137,19 @@ public final class LogCatPanel extends SelectionDependentPanel
     private static final String IMAGE_SAVE_LOG_TO_FILE = "save.png"; //$NON-NLS-1$
     private static final String IMAGE_CLEAR_LOG = "clear.png"; //$NON-NLS-1$
     private static final String IMAGE_DISPLAY_FILTERS = "displayfilters.png"; //$NON-NLS-1$
-    private static final String IMAGE_SCROLL_TO_LATEST = "scroll_latest.png"; //$NON-NLS-1$
+    private static final String IMAGE_SCROLL_LOCK = "scroll_lock.png"; //$NON-NLS-1$
 
     private static final int[] WEIGHTS_SHOW_FILTERS = new int[] {15, 85};
     private static final int[] WEIGHTS_LOGCAT_ONLY = new int[] {0, 100};
+
+    /** Index of the default filter in the saved filters column. */
+    private static final int DEFAULT_FILTER_INDEX = 0;
+
+    /* Text colors for the filter box */
+    private static final Color VALID_FILTER_REGEX_COLOR =
+            Display.getDefault().getSystemColor(SWT.COLOR_BLACK);
+    private static final Color INVALID_FILTER_REGEX_COLOR =
+            Display.getDefault().getSystemColor(SWT.COLOR_RED);
 
     private LogCatReceiver mReceiver;
     private IPreferenceStore mPrefStore;
@@ -138,15 +165,32 @@ public final class LogCatPanel extends SelectionDependentPanel
     private Combo mLiveFilterLevelCombo;
     private Text mLiveFilterText;
 
-    private TableViewer mViewer;
+    private List<LogCatFilter> mCurrentFilters = Collections.emptyList();
+
+    private Table mTable;
 
     private boolean mShouldScrollToLatestLog = true;
-    private ToolItem mScrollToLastCheckBox;
+    private ToolItem mScrollLockCheckBox;
 
     private String mLogFileExportFolder;
-    private LogCatMessageLabelProvider mLogCatMessageLabelProvider;
+
+    private Font mFont;
+    private int mWrapWidthInChars;
+
+    private Color mVerboseColor;
+    private Color mDebugColor;
+    private Color mInfoColor;
+    private Color mWarnColor;
+    private Color mErrorColor;
+    private Color mAssertColor;
 
     private SashForm mSash;
+
+    // messages added since last refresh, synchronized on mLogBuffer
+    private List<LogCatMessage> mLogBuffer;
+
+    // # of messages deleted since last refresh, synchronized on mLogBuffer
+    private int mDeletedLogCount;
 
     /**
      * Construct a logcat panel.
@@ -154,11 +198,28 @@ public final class LogCatPanel extends SelectionDependentPanel
      */
     public LogCatPanel(IPreferenceStore prefStore) {
         mPrefStore = prefStore;
+        mLogBuffer = new ArrayList<LogCatMessage>(LogCatMessageList.MAX_MESSAGES_DEFAULT);
 
         initializeFilters();
 
         setupDefaultPreferences();
         initializePreferenceUpdateListeners();
+
+        mFont = getFontFromPrefStore();
+        loadMessageColorPreferences();
+    }
+
+    private void loadMessageColorPreferences() {
+        if (mVerboseColor != null) {
+            disposeMessageColors();
+        }
+
+        mVerboseColor = getColorFromPrefStore(VERBOSE_COLOR_PREFKEY);
+        mDebugColor = getColorFromPrefStore(DEBUG_COLOR_PREFKEY);
+        mInfoColor = getColorFromPrefStore(INFO_COLOR_PREFKEY);
+        mWarnColor = getColorFromPrefStore(WARN_COLOR_PREFKEY);
+        mErrorColor = getColorFromPrefStore(ERROR_COLOR_PREFKEY);
+        mAssertColor = getColorFromPrefStore(ASSERT_COLOR_PREFKEY);
     }
 
     private void initializeFilters() {
@@ -183,21 +244,60 @@ public final class LogCatPanel extends SelectionDependentPanel
         mPrefStore.setDefault(LogCatMessageList.MAX_MESSAGES_PREFKEY,
                 LogCatMessageList.MAX_MESSAGES_DEFAULT);
         mPrefStore.setDefault(DISPLAY_FILTERS_COLUMN_PREFKEY, true);
+
+        /* Default Colors for different log levels. */
+        PreferenceConverter.setDefault(mPrefStore, LogCatPanel.VERBOSE_COLOR_PREFKEY,
+                new RGB(0, 0, 0));
+        PreferenceConverter.setDefault(mPrefStore, LogCatPanel.DEBUG_COLOR_PREFKEY,
+                new RGB(0, 0, 127));
+        PreferenceConverter.setDefault(mPrefStore, LogCatPanel.INFO_COLOR_PREFKEY,
+                new RGB(0, 127, 0));
+        PreferenceConverter.setDefault(mPrefStore, LogCatPanel.WARN_COLOR_PREFKEY,
+                new RGB(255, 127, 0));
+        PreferenceConverter.setDefault(mPrefStore, LogCatPanel.ERROR_COLOR_PREFKEY,
+                new RGB(255, 0, 0));
+        PreferenceConverter.setDefault(mPrefStore, LogCatPanel.ASSERT_COLOR_PREFKEY,
+                new RGB(255, 0, 0));
     }
 
     private void initializePreferenceUpdateListeners() {
         mPrefStore.addPropertyChangeListener(new IPropertyChangeListener() {
+            @Override
             public void propertyChange(PropertyChangeEvent event) {
                 String changedProperty = event.getProperty();
-
                 if (changedProperty.equals(LogCatPanel.LOGCAT_VIEW_FONT_PREFKEY)) {
-                    mLogCatMessageLabelProvider.setFont(getFontFromPrefStore());
-                    refreshLogCatTable();
-                } else if (changedProperty.equals(
-                        LogCatMessageList.MAX_MESSAGES_PREFKEY)) {
+                    if (mFont != null) {
+                        mFont.dispose();
+                    }
+                    mFont = getFontFromPrefStore();
+                    recomputeWrapWidth();
+                    Display.getDefault().syncExec(new Runnable() {
+                        @Override
+                        public void run() {
+                            for (TableItem it: mTable.getItems()) {
+                                it.setFont(mFont);
+                            }
+                        }
+                    });
+                } else if (changedProperty.startsWith(MSG_COLOR_PREFKEY_PREFIX)) {
+                    loadMessageColorPreferences();
+                    Display.getDefault().syncExec(new Runnable() {
+                       @Override
+                       public void run() {
+                           Color c = mVerboseColor;
+                           for (TableItem it: mTable.getItems()) {
+                               Object data = it.getData();
+                               if (data instanceof LogCatMessage) {
+                                   c = getForegroundColor((LogCatMessage) data);
+                               }
+                               it.setForeground(c);
+                           }
+                       }
+                    });
+                } else if (changedProperty.equals(LogCatMessageList.MAX_MESSAGES_PREFKEY)) {
                     mReceiver.resizeFifo(mPrefStore.getInt(
                             LogCatMessageList.MAX_MESSAGES_PREFKEY));
-                    refreshLogCatTable();
+                    reloadLogBuffer();
                 }
             }
         });
@@ -239,12 +339,13 @@ public final class LogCatPanel extends SelectionDependentPanel
 
         mReceiver = LogCatReceiverFactory.INSTANCE.newReceiver(device, mPrefStore);
         mReceiver.addMessageReceivedEventListener(this);
-        mViewer.setInput(mReceiver.getMessages());
+        reloadLogBuffer();
 
         // Always scroll to last line whenever the selected device changes.
         // Run this in a separate async thread to give the table some time to update after the
         // setInput above.
         Display.getDefault().asyncExec(new Runnable() {
+            @Override
             public void run() {
                 scrollToLatestLog();
             }
@@ -345,9 +446,11 @@ public final class LogCatPanel extends SelectionDependentPanel
         });
     }
 
-    private void addNewFilter() {
+    private void addNewFilter(String defaultTag, String defaultText, String defaultPid,
+            String defaultAppName, LogLevel defaultLevel) {
         LogCatFilterSettingsDialog d = new LogCatFilterSettingsDialog(
                 Display.getCurrent().getActiveShell());
+        d.setDefaults("", defaultTag, defaultText, defaultPid, defaultAppName, defaultLevel);
         if (d.open() != Window.OK) {
             return;
         }
@@ -368,6 +471,11 @@ public final class LogCatPanel extends SelectionDependentPanel
 
         filterSelectionChanged();
         saveFilterPreferences();
+    }
+
+    private void addNewFilter() {
+        addNewFilter("", "", "",
+                "", LogLevel.VERBOSE);
     }
 
     private void deleteSelectedFilter() {
@@ -422,7 +530,7 @@ public final class LogCatPanel extends SelectionDependentPanel
      * @param appName application name to filter by
      */
     public void selectTransientAppFilter(String appName) {
-        assert mViewer.getTable().getDisplay().getThread() == Thread.currentThread();
+        assert mTable.getDisplay().getThread() == Thread.currentThread();
 
         LogCatFilter f = findTransientAppFilter(appName);
         if (f == null) {
@@ -455,8 +563,11 @@ public final class LogCatPanel extends SelectionDependentPanel
 
     private void selectFilterAt(final int index) {
         mFiltersTableViewer.refresh();
-        mFiltersTableViewer.getTable().setSelection(index);
-        filterSelectionChanged();
+
+        if (index != mFiltersTableViewer.getTable().getSelectionIndex()) {
+            mFiltersTableViewer.getTable().setSelection(index);
+            filterSelectionChanged();
+        }
     }
 
     private void createFiltersTable(Composite parent) {
@@ -493,11 +604,7 @@ public final class LogCatPanel extends SelectionDependentPanel
         createLogcatViewTable(c);
     }
 
-    /**
-     * Create the search bar at the top of the logcat messages table.
-     * FIXME: Currently, this feature is incomplete: The UI elements are created, but they
-     * are all set to disabled state.
-     */
+    /** Create the search bar at the top of the logcat messages table. */
     private void createLiveFilters(Composite parent) {
         Composite c = new Composite(parent, SWT.NONE);
         c.setLayout(new GridLayout(3, false));
@@ -508,7 +615,9 @@ public final class LogCatPanel extends SelectionDependentPanel
         mLiveFilterText.setMessage(DEFAULT_SEARCH_MESSAGE);
         mLiveFilterText.setToolTipText(DEFAULT_SEARCH_TOOLTIP);
         mLiveFilterText.addModifyListener(new ModifyListener() {
+            @Override
             public void modifyText(ModifyEvent arg0) {
+                updateFilterTextColor();
                 updateAppliedFilters();
             }
         });
@@ -547,6 +656,9 @@ public final class LogCatPanel extends SelectionDependentPanel
                 if (mReceiver != null) {
                     mReceiver.clearMessages();
                     refreshLogCatTable();
+
+                    // the filters view is not cleared unless the filters are re-applied.
+                    updateAppliedFilters();
                 }
             }
         });
@@ -566,19 +678,32 @@ public final class LogCatPanel extends SelectionDependentPanel
             }
         });
 
-        mScrollToLastCheckBox = new ToolItem(toolBar, SWT.CHECK);
-        mScrollToLastCheckBox.setImage(
-                ImageLoader.getDdmUiLibLoader().loadImage(IMAGE_SCROLL_TO_LATEST,
+        mScrollLockCheckBox = new ToolItem(toolBar, SWT.CHECK);
+        mScrollLockCheckBox.setImage(
+                ImageLoader.getDdmUiLibLoader().loadImage(IMAGE_SCROLL_LOCK,
                         toolBar.getDisplay()));
-        mScrollToLastCheckBox.setSelection(true);
-        mScrollToLastCheckBox.setToolTipText("Scroll to display the latest logcat message.");
-        mScrollToLastCheckBox.addSelectionListener(new SelectionAdapter() {
+        mScrollLockCheckBox.setSelection(false);
+        mScrollLockCheckBox.setToolTipText("Scroll Lock");
+        mScrollLockCheckBox.addSelectionListener(new SelectionAdapter() {
             @Override
             public void widgetSelected(SelectionEvent event) {
-                boolean shouldScroll = mScrollToLastCheckBox.getSelection();
-                setScrollToLatestLog(shouldScroll, false);
+                boolean scrollLock = mScrollLockCheckBox.getSelection();
+                setScrollToLatestLog(!scrollLock);
             }
         });
+    }
+
+    /** Sets the foreground color of filter text based on whether the regex is valid. */
+    private void updateFilterTextColor() {
+        String text = mLiveFilterText.getText();
+        Color c;
+        try {
+            Pattern.compile(text.trim());
+            c = VALID_FILTER_REGEX_COLOR;
+        } catch (PatternSyntaxException e) {
+            c = INVALID_FILTER_REGEX_COLOR;
+        }
+        mLiveFilterText.setForeground(c);
     }
 
     private void updateFiltersColumn(boolean showFilters) {
@@ -604,16 +729,18 @@ public final class LogCatPanel extends SelectionDependentPanel
 
         /* save messages to file in a different (non UI) thread */
         Thread t = new Thread(new Runnable() {
+            @Override
             public void run() {
+                BufferedWriter w = null;
                 try {
-                    BufferedWriter w = new BufferedWriter(new FileWriter(fName));
+                    w = new BufferedWriter(new FileWriter(fName));
                     for (LogCatMessage m : selectedMessages) {
                         w.append(m.toString());
                         w.newLine();
                     }
-                    w.close();
                 } catch (final IOException e) {
                     Display.getDefault().asyncExec(new Runnable() {
+                        @Override
                         public void run() {
                             MessageDialog.openError(Display.getCurrent().getActiveShell(),
                                     "Unable to export selection to file.",
@@ -621,6 +748,14 @@ public final class LogCatPanel extends SelectionDependentPanel
                                             + e.getMessage());
                         }
                     });
+                } finally {
+                    if (w != null) {
+                        try {
+                            w.close();
+                        } catch (IOException e) {
+                            // ignore
+                        }
+                    }
                 }
             }
         });
@@ -659,35 +794,56 @@ public final class LogCatPanel extends SelectionDependentPanel
     }
 
     private List<LogCatMessage> getSelectedLogCatMessages() {
-        Table table = mViewer.getTable();
-        int[] indices = table.getSelectionIndices();
+        int[] indices = mTable.getSelectionIndices();
         Arrays.sort(indices); /* Table.getSelectionIndices() does not specify an order */
 
         List<LogCatMessage> selectedMessages = new ArrayList<LogCatMessage>(indices.length);
         for (int i : indices) {
-            LogCatMessage m = (LogCatMessage) table.getItem(i).getData();
-            selectedMessages.add(m);
+            Object data = mTable.getItem(i).getData();
+            if (data instanceof LogCatMessage) {
+                selectedMessages.add((LogCatMessage) data);
+            }
         }
 
         return selectedMessages;
     }
 
-    private void createLogcatViewTable(Composite parent) {
-        // The SWT.VIRTUAL bit causes the table to be rendered faster. However it makes all rows
-        // to be of the same height, thereby clipping any rows with multiple lines of text.
-        // In such a case, users can view the full text by hovering over the item and looking at
-        // the tooltip.
-        final Table table = new Table(parent, SWT.FULL_SELECTION | SWT.MULTI | SWT.VIRTUAL);
-        mViewer = new TableViewer(table);
+    private List<LogCatMessage> applyCurrentFilters(List<LogCatMessage> msgList) {
+        List<LogCatMessage> filteredItems = new ArrayList<LogCatMessage>(msgList.size());
 
-        table.setLayoutData(new GridData(GridData.FILL_BOTH));
-        table.getHorizontalBar().setVisible(true);
+        for (LogCatMessage msg: msgList) {
+            if (isMessageAccepted(msg, mCurrentFilters)) {
+                filteredItems.add(msg);
+            }
+        }
+
+        return filteredItems;
+    }
+
+    private boolean isMessageAccepted(LogCatMessage msg, List<LogCatFilter> filters) {
+        for (LogCatFilter f : filters) {
+            if (!f.matches(msg)) {
+                // not accepted by this filter
+                return false;
+            }
+        }
+
+        // accepted by all filters
+        return true;
+    }
+
+    private void createLogcatViewTable(Composite parent) {
+        mTable = new Table(parent, SWT.FULL_SELECTION | SWT.MULTI);
+
+        mTable.setLayoutData(new GridData(GridData.FILL_BOTH));
+        mTable.getHorizontalBar().setVisible(true);
 
         /** Columns to show in the table. */
         String[] properties = {
                 "Level",
                 "Time",
                 "PID",
+                "TID",
                 "Application",
                 "Tag",
                 "Text",
@@ -699,143 +855,131 @@ public final class LogCatPanel extends SelectionDependentPanel
                 "    ",
                 "    00-00 00:00:00.0000 ",
                 "    0000",
+                "    0000",
                 "    com.android.launcher",
                 "    SampleTagText",
                 "    Log Message field should be pretty long by default. As long as possible for correct display on Mac.",
         };
 
-        mLogCatMessageLabelProvider = new LogCatMessageLabelProvider(getFontFromPrefStore());
         for (int i = 0; i < properties.length; i++) {
-            TableColumn tc = TableHelper.createTableColumn(mViewer.getTable(),
+            TableHelper.createTableColumn(mTable,
                     properties[i],                      /* Column title */
                     SWT.LEFT,                           /* Column Style */
                     sampleText[i],                      /* String to compute default col width */
                     getColPreferenceKey(properties[i]), /* Preference Store key for this column */
                     mPrefStore);
-            TableViewerColumn tvc = new TableViewerColumn(mViewer, tc);
-            tvc.setLabelProvider(mLogCatMessageLabelProvider);
         }
 
-        mViewer.getTable().setLinesVisible(true); /* zebra stripe the table */
-        mViewer.getTable().setHeaderVisible(true);
-        mViewer.setContentProvider(new LogCatMessageContentProvider());
-        WrappingToolTipSupport.enableFor(mViewer, ToolTip.NO_RECREATE);
+        // don't zebra stripe the table: When the buffer is full, and scroll lock is on, having
+        // zebra striping means that the background could keep changing depending on the number
+        // of new messages added to the bottom of the log.
+        mTable.setLinesVisible(false);
+        mTable.setHeaderVisible(true);
 
         // Set the row height to be sufficient enough to display the current font.
         // This is not strictly necessary, except that on WinXP, the rows showed up clipped. So
         // we explicitly set it to be sure.
-        mViewer.getTable().addListener(SWT.MeasureItem, new Listener() {
+        mTable.addListener(SWT.MeasureItem, new Listener() {
+            @Override
             public void handleEvent(Event event) {
                 event.height = event.gc.getFontMetrics().getHeight();
             }
         });
 
         // Update the label provider whenever the text column's width changes
-        TableColumn textColumn = mViewer.getTable().getColumn(properties.length - 1);
+        TableColumn textColumn = mTable.getColumn(properties.length - 1);
         textColumn.addControlListener(new ControlAdapter() {
             @Override
             public void controlResized(ControlEvent event) {
-                TableColumn tc = (TableColumn) event.getSource();
-                int width = tc.getWidth();
-                GC gc = new GC(tc.getParent());
-                int avgCharWidth = gc.getFontMetrics().getAverageCharWidth();
-                gc.dispose();
+                recomputeWrapWidth();
+            }
+        });
 
-                if (mLogCatMessageLabelProvider != null) {
-                    mLogCatMessageLabelProvider.setMinimumLengthForToolTips(width/avgCharWidth);
+        addRightClickMenu(mTable);
+        initDoubleClickListener();
+        recomputeWrapWidth();
+
+        mTable.addDisposeListener(new DisposeListener() {
+            @Override
+            public void widgetDisposed(DisposeEvent arg0) {
+                dispose();
+            }
+        });
+    }
+
+    /** Setup menu to be displayed when right clicking a log message. */
+    private void addRightClickMenu(final Table table) {
+        // This action will pop up a create filter dialog pre-populated with current selection
+        final Action filterAction = new Action("Filter similar messages...") {
+            @Override
+            public void run() {
+                List<LogCatMessage> selectedMessages = getSelectedLogCatMessages();
+                if (selectedMessages.size() == 0) {
+                    addNewFilter();
+                } else {
+                    LogCatMessage m = selectedMessages.get(0);
+                    addNewFilter(m.getTag(), m.getMessage(), m.getPid(), m.getAppName(),
+                            m.getLogLevel());
                 }
             }
-        });
+        };
 
-        setupScrollBehavior();
-        initDoubleClickListener();
-    }
-
-    /**
-     * Update setting that controls if the table should scroll to reveal the latest logcat entry.
-     * Users can impact the scrolling behavior in two ways:
-     * <ul>
-     *   <li> Using the scrollbar: If the scrollbar is moved to the bottom, then auto scroll.</li>
-     *   <li> Selecting an entry in the table: If the selected entry is not currently the last
-     *        entry in the table, then do not scroll, otherwise auto scroll.
-     * </ul>
-     */
-    private void setupScrollBehavior() {
-        mViewer.getTable().getVerticalBar().addSelectionListener(new SelectionAdapter() {
+        final Action findAction = new Action("Find...") {
             @Override
-            public void widgetSelected(SelectionEvent event) {
-                ScrollBar sb = (ScrollBar) event.getSource();
+            public void run() {
+                showFindDialog();
+            };
+        };
 
-                // On Mac & Linux, when the scroll bar is at the bottom,
-                //        sb.getSelection + sb.getThumb = sb.getMaximum
-                // But on Windows 7, the scrollbar never touches the bottom, and as a result
-                //        sb.getSelection + sb.getThumb is slightly less than sb.getMaximum.
-                // So we assume that as long as the thumb is close to the bottom, we want to scroll.
-                boolean shouldScroll =
-                        Math.abs(sb.getSelection() + sb.getThumb() - sb.getMaximum()) < 10;
-                setScrollToLatestLog(shouldScroll, true);
-            }
-        });
+        final MenuManager mgr = new MenuManager();
+        mgr.add(filterAction);
+        mgr.add(findAction);
+        final Menu menu = mgr.createContextMenu(table);
 
-        mViewer.getTable().addSelectionListener(new SelectionAdapter() {
+        table.addListener(SWT.MenuDetect, new Listener() {
             @Override
-            public void widgetSelected(SelectionEvent event) {
-                Table table = (Table) event.getSource();
-                int[] indices = table.getSelectionIndices();
+            public void handleEvent(Event event) {
+                Point pt = table.getDisplay().map(null, table, new Point(event.x, event.y));
+                Rectangle clientArea = table.getClientArea();
 
-                boolean shouldScroll =
-                        indices.length == 1 // only 1 item selected
-                        && indices[0] == table.getItemCount() - 1; // and it is the last entry
-                setScrollToLatestLog(shouldScroll, true);
+                // The click location is in the header if it is between
+                // clientArea.y and clientArea.y + header height
+                boolean header = pt.y > clientArea.y
+                                    && pt.y < (clientArea.y + table.getHeaderHeight());
+
+                // Show the menu only if it is not inside the header
+                table.setMenu(header ? null : menu);
             }
         });
     }
 
-    private void setScrollToLatestLog(boolean scroll, boolean updateCheckbox) {
+    public void recomputeWrapWidth() {
+        if (mTable == null || mTable.isDisposed()) {
+            return;
+        }
+
+        // get width of the last column (log message)
+        TableColumn tc = mTable.getColumn(mTable.getColumnCount() - 1);
+        int colWidth = tc.getWidth();
+
+        // get font width
+        GC gc = new GC(tc.getParent());
+        gc.setFont(mFont);
+        int avgCharWidth = gc.getFontMetrics().getAverageCharWidth();
+        gc.dispose();
+
+        int MIN_CHARS_PER_LINE = 50;    // show atleast these many chars per line
+        mWrapWidthInChars = Math.max(colWidth/avgCharWidth, MIN_CHARS_PER_LINE);
+
+        int OFFSET_AT_END_OF_LINE = 10; // leave some space at the end of the line
+        mWrapWidthInChars -= OFFSET_AT_END_OF_LINE;
+    }
+
+    private void setScrollToLatestLog(boolean scroll) {
         mShouldScrollToLatestLog = scroll;
 
-        if (updateCheckbox) {
-            mScrollToLastCheckBox.setSelection(scroll);
-        }
-
         if (scroll) {
-            mViewer.refresh();
             scrollToLatestLog();
-        }
-    }
-
-    private static class WrappingToolTipSupport extends ColumnViewerToolTipSupport {
-        protected WrappingToolTipSupport(ColumnViewer viewer, int style,
-                boolean manualActivation) {
-            super(viewer, style, manualActivation);
-        }
-
-        @Override
-        protected Composite createViewerToolTipContentArea(Event event, ViewerCell cell,
-                Composite parent) {
-            Composite comp = new Composite(parent, SWT.NONE);
-            GridLayout l = new GridLayout(1, false);
-            l.horizontalSpacing = 0;
-            l.marginWidth = 0;
-            l.marginHeight = 0;
-            l.verticalSpacing = 0;
-            comp.setLayout(l);
-
-            Text text = new Text(comp, SWT.BORDER | SWT.V_SCROLL | SWT.WRAP);
-            text.setEditable(false);
-            text.setText(cell.getElement().toString());
-            text.setLayoutData(new GridData(500, 150));
-
-            return comp;
-        }
-
-        @Override
-        public boolean isHideOnMouseDown() {
-            return false;
-        }
-
-        public static final void enableFor(ColumnViewer viewer, int style) {
-            new WrappingToolTipSupport(viewer, style, false);
         }
     }
 
@@ -849,6 +993,11 @@ public final class LogCatPanel extends SelectionDependentPanel
         return new Font(Display.getDefault(), fd);
     }
 
+    private Color getColorFromPrefStore(String key) {
+        RGB rgb = PreferenceConverter.getColor(mPrefStore, key);
+        return new Color(Display.getDefault(), rgb);
+    }
+
     private void setupDefaults() {
         int defaultFilterIndex = 0;
         mFiltersTableViewer.getTable().setSelection(defaultFilterIndex);
@@ -860,7 +1009,7 @@ public final class LogCatPanel extends SelectionDependentPanel
      * Perform all necessary updates whenever a filter is selected (by user or programmatically).
      */
     private void filterSelectionChanged() {
-        int idx = getSelectedSavedFilterIndex();
+        int idx = mFiltersTableViewer.getTable().getSelectionIndex();
         if (idx == -1) {
             /* One of the filters should always be selected.
              * On Linux, there is no way to deselect an item.
@@ -879,68 +1028,80 @@ public final class LogCatPanel extends SelectionDependentPanel
     }
 
     private void resetUnreadCountForSelectedFilter() {
-        int index = getSelectedSavedFilterIndex();
-        mLogCatFilters.get(index).resetUnreadCount();
-
+        mLogCatFilters.get(mCurrentSelectedFilterIndex).resetUnreadCount();
         refreshFiltersTable();
-    }
-
-    private int getSelectedSavedFilterIndex() {
-        return mFiltersTableViewer.getTable().getSelectionIndex();
     }
 
     private void updateFiltersToolBar() {
         /* The default filter at index 0 can neither be edited, nor removed. */
-        boolean en = getSelectedSavedFilterIndex() != 0;
+        boolean en = mCurrentSelectedFilterIndex != DEFAULT_FILTER_INDEX;
         mEditFilterToolItem.setEnabled(en);
         mDeleteFilterToolItem.setEnabled(en);
     }
 
     private void updateAppliedFilters() {
-        /* list of filters to apply = saved filter + live filters */
-        List<LogCatViewerFilter> filters = new ArrayList<LogCatViewerFilter>();
-        filters.add(getSelectedSavedFilter());
-        filters.addAll(getCurrentLiveFilters());
-        mViewer.setFilters(filters.toArray(new LogCatViewerFilter[filters.size()]));
-
-        /* whenever filters are changed, the number of displayed logs changes
-         * drastically. Display the latest log in such a situation. */
-        scrollToLatestLog();
+        mCurrentFilters = getFiltersToApply();
+        reloadLogBuffer();
     }
 
-    private List<LogCatViewerFilter> getCurrentLiveFilters() {
-        List<LogCatViewerFilter> liveFilters = new ArrayList<LogCatViewerFilter>();
+    private List<LogCatFilter> getFiltersToApply() {
+        /* list of filters to apply = saved filter + live filters */
+        List<LogCatFilter> filters = new ArrayList<LogCatFilter>();
 
-        List<LogCatFilter> liveFilterSettings = LogCatFilter.fromString(
-                mLiveFilterText.getText(),                                  /* current query */
-                LogLevel.getByString(mLiveFilterLevelCombo.getText()));     /* current log level */
-        for (LogCatFilter s : liveFilterSettings) {
-            liveFilters.add(new LogCatViewerFilter(s));
+        if (mCurrentSelectedFilterIndex != DEFAULT_FILTER_INDEX) {
+            filters.add(getSelectedSavedFilter());
         }
 
-        return liveFilters;
+        filters.addAll(getCurrentLiveFilters());
+        return filters;
     }
 
-    private LogCatViewerFilter getSelectedSavedFilter() {
-        int index = getSelectedSavedFilterIndex();
-        return new LogCatViewerFilter(mLogCatFilters.get(index));
+    private List<LogCatFilter> getCurrentLiveFilters() {
+        return LogCatFilter.fromString(
+                mLiveFilterText.getText(),                                  /* current query */
+                LogLevel.getByString(mLiveFilterLevelCombo.getText()));     /* current log level */
     }
 
+    private LogCatFilter getSelectedSavedFilter() {
+        return mLogCatFilters.get(mCurrentSelectedFilterIndex);
+    }
 
     @Override
     public void setFocus() {
     }
 
-    /**
-     * Update view whenever a message is received.
-     * @param receivedMessages list of messages from logcat
-     * Implements {@link ILogCatMessageEventListener#messageReceived()}.
-     */
-    public void messageReceived(List<LogCatMessage> receivedMessages) {
-        refreshLogCatTable();
+    @Override
+    public void bufferChanged(List<LogCatMessage> addedMessages,
+            List<LogCatMessage> deletedMessages) {
 
-        updateUnreadCount(receivedMessages);
+        synchronized (mLogBuffer) {
+            addedMessages = applyCurrentFilters(addedMessages);
+            deletedMessages = applyCurrentFilters(deletedMessages);
+
+            mLogBuffer.addAll(addedMessages);
+            mDeletedLogCount += deletedMessages.size();
+        }
+
+        refreshLogCatTable();
+        updateUnreadCount(addedMessages);
         refreshFiltersTable();
+    }
+
+    private void reloadLogBuffer() {
+        mTable.removeAll();
+
+        synchronized (mLogBuffer) {
+            mLogBuffer.clear();
+            mDeletedLogCount = 0;
+        }
+
+        if (mReceiver == null || mReceiver.getMessages() == null) {
+            return;
+        }
+
+        List<LogCatMessage> addedMessages = mReceiver.getMessages().getAllMessages();
+        List<LogCatMessage> deletedMessages = Collections.emptyList();
+        bufferChanged(addedMessages, deletedMessages);
     }
 
     /**
@@ -960,6 +1121,7 @@ public final class LogCatPanel extends SelectionDependentPanel
 
     private void refreshFiltersTable() {
         Display.getDefault().asyncExec(new Runnable() {
+            @Override
             public void run() {
                 if (mFiltersTableViewer.getTable().isDisposed()) {
                     return;
@@ -980,32 +1142,207 @@ public final class LogCatPanel extends SelectionDependentPanel
      */
     private void refreshLogCatTable() {
         synchronized (this) {
-            if (mCurrentRefresher == null && mShouldScrollToLatestLog) {
+            if (mCurrentRefresher == null) {
                 mCurrentRefresher = new LogCatTableRefresherTask();
                 Display.getDefault().asyncExec(mCurrentRefresher);
             }
         }
     }
 
+    /**
+     * The {@link LogCatTableRefresherTask} takes care of refreshing the table with the
+     * new log messages that have been received. Since the log behaves like a circular buffer,
+     * the first step is to remove items from the top of the table (if necessary). This step
+     * is complicated by the fact that a single log message may span multiple rows if the message
+     * was wrapped. Once the deleted items are removed, the new messages are added to the bottom
+     * of the table. If scroll lock is enabled, the item that was original visible is made visible
+     * again, if not, the last item is made visible.
+     */
     private class LogCatTableRefresherTask implements Runnable {
+        @Override
         public void run() {
-            if (mViewer.getTable().isDisposed()) {
+            if (mTable.isDisposed()) {
                 return;
             }
             synchronized (LogCatPanel.this) {
                 mCurrentRefresher = null;
             }
 
-            if (mShouldScrollToLatestLog) {
-                mViewer.refresh();
-                scrollToLatestLog();
+            // Current topIndex so that it can be restored if scroll locked.
+            int topIndex = mTable.getTopIndex();
+
+            mTable.setRedraw(false);
+
+            // Obtain the list of new messages, and the number of deleted messages.
+            List<LogCatMessage> newMessages;
+            int deletedMessageCount;
+            synchronized (mLogBuffer) {
+                newMessages = new ArrayList<LogCatMessage>(mLogBuffer);
+                mLogBuffer.clear();
+
+                deletedMessageCount = mDeletedLogCount;
+                mDeletedLogCount = 0;
+
+                mFindTarget.scrollBy(deletedMessageCount);
             }
+
+            int originalItemCount = mTable.getItemCount();
+
+            // Remove entries from the start of the table if they were removed in the log buffer
+            // This is complicated by the fact that a single message may span multiple TableItems
+            // if it was word-wrapped.
+            deletedMessageCount -= removeFromTable(mTable, deletedMessageCount);
+
+            // Compute number of table items that were deleted from the table.
+            int deletedItemCount = originalItemCount - mTable.getItemCount();
+
+            // If there are more messages to delete (after deleting messages from the table),
+            // then delete them from the start of the newly added messages list
+            if (deletedMessageCount > 0) {
+                assert deletedMessageCount < newMessages.size();
+                for (int i = 0; i < deletedMessageCount; i++) {
+                    newMessages.remove(0);
+                }
+            }
+
+            // Add the remaining messages to the table.
+            for (LogCatMessage m: newMessages) {
+                List<String> wrappedMessageList = wrapMessage(m.getMessage(), mWrapWidthInChars);
+                Color c = getForegroundColor(m);
+                for (int i = 0; i < wrappedMessageList.size(); i++) {
+                    TableItem item = new TableItem(mTable, SWT.NONE);
+
+                    if (i == 0) {
+                        // Only set the message data in the first item. This allows code that
+                        // examines the table item data (such as copy selection) to distinguish
+                        // between real messages versus lines that are really just wrapped
+                        // content from the previous message.
+                        item.setData(m);
+
+                        item.setText(new String[] {
+                                Character.toString(m.getLogLevel().getPriorityLetter()),
+                                m.getTime(),
+                                m.getPid(),
+                                m.getTid(),
+                                m.getAppName(),
+                                m.getTag(),
+                                wrappedMessageList.get(i)
+                        });
+                    } else {
+                        item.setText(new String[] {
+                                "", "", "", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                                "", "", "", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                                wrappedMessageList.get(i)
+                        });
+                    }
+                    item.setForeground(c);
+                    item.setFont(mFont);
+                }
+            }
+
+            if (mShouldScrollToLatestLog) {
+                scrollToLatestLog();
+            } else {
+                // If scroll locked, show the same item that was original visible in the table.
+                int index = Math.max(topIndex - deletedItemCount, 0);
+                mTable.setTopIndex(index);
+            }
+
+            mTable.setRedraw(true);
+        }
+
+        /**
+         * Removes given number of messages from the table, starting at the top of the table.
+         * Note that the number of messages deleted is not equal to the number of rows
+         * deleted since a single message could span multiple rows. This method first calculates
+         * the number of rows that correspond to the number of messages to delete, and then
+         * removes all those rows.
+         * @param table table from which messages should be removed
+         * @param msgCount number of messages to be removed
+         * @return number of messages that were actually removed
+         */
+        private int removeFromTable(Table table, int msgCount) {
+            int deletedMessageCount = 0; // # of messages that have been deleted
+            int lastItemToDelete = 0;    // index of the last item that should be deleted
+
+            while (deletedMessageCount < msgCount && lastItemToDelete < table.getItemCount()) {
+                // only rows that begin a message have their item data set
+                TableItem item = table.getItem(lastItemToDelete);
+                if (item.getData() != null) {
+                    deletedMessageCount++;
+                }
+
+                lastItemToDelete++;
+            }
+
+            // If there are any table items left over at the end that are wrapped over from the
+            // previous message, mark them for deletion as well.
+            if (lastItemToDelete < table.getItemCount()
+                    && table.getItem(lastItemToDelete).getData() == null) {
+                lastItemToDelete++;
+            }
+
+            table.remove(0, lastItemToDelete - 1);
+
+            return deletedMessageCount;
         }
     }
 
     /** Scroll to the last line. */
     private void scrollToLatestLog() {
-        mViewer.getTable().setTopIndex(mViewer.getTable().getItemCount() - 1);
+        mTable.setTopIndex(mTable.getItemCount() - 1);
+    }
+
+    /**
+     * Splits the message into multiple lines if the message length exceeds given width.
+     * If the message was split, then a wrap character \u23ce is appended to the end of all
+     * lines but the last one.
+     */
+    private List<String> wrapMessage(String msg, int wrapWidth) {
+        if (msg.length() < wrapWidth) {
+            return Collections.singletonList(msg);
+        }
+
+        List<String> wrappedMessages = new ArrayList<String>();
+
+        int offset = 0;
+        int len = msg.length();
+
+        while (len > 0) {
+            int copylen = Math.min(wrapWidth, len);
+            String s = msg.substring(offset, offset + copylen);
+
+            offset += copylen;
+            len -= copylen;
+
+            if (len > 0) { // if there are more lines following, then append a wrap marker
+                s += " \u23ce"; //$NON-NLS-1$
+            }
+
+            wrappedMessages.add(s);
+        }
+
+        return wrappedMessages;
+    }
+
+    private Color getForegroundColor(LogCatMessage m) {
+        LogLevel l = m.getLogLevel();
+
+        if (l.equals(LogLevel.VERBOSE)) {
+            return mVerboseColor;
+        } else if (l.equals(LogLevel.INFO)) {
+            return mInfoColor;
+        } else if (l.equals(LogLevel.DEBUG)) {
+            return mDebugColor;
+        } else if (l.equals(LogLevel.ERROR)) {
+            return mErrorColor;
+        } else if (l.equals(LogLevel.WARN)) {
+            return mWarnColor;
+        } else if (l.equals(LogLevel.ASSERT)) {
+            return mAssertColor;
+        }
+
+        return mVerboseColor;
     }
 
     private List<ILogCatMessageSelectionListener> mMessageSelectionListeners;
@@ -1013,7 +1350,7 @@ public final class LogCatPanel extends SelectionDependentPanel
     private void initDoubleClickListener() {
         mMessageSelectionListeners = new ArrayList<ILogCatMessageSelectionListener>(1);
 
-        mViewer.getTable().addSelectionListener(new SelectionAdapter() {
+        mTable.addSelectionListener(new SelectionAdapter() {
             @Override
             public void widgetDefaultSelected(SelectionEvent arg0) {
                 List<LogCatMessage> selectedMessages = getSelectedLogCatMessages();
@@ -1042,22 +1379,25 @@ public final class LogCatPanel extends SelectionDependentPanel
     public void setTableFocusListener(ITableFocusListener listener) {
         mTableFocusListener = listener;
 
-        final Table table = mViewer.getTable();
         final IFocusedTableActivator activator = new IFocusedTableActivator() {
+            @Override
             public void copy(Clipboard clipboard) {
                 copySelectionToClipboard(clipboard);
             }
 
+            @Override
             public void selectAll() {
-                table.selectAll();
+                mTable.selectAll();
             }
         };
 
-        table.addFocusListener(new FocusListener() {
+        mTable.addFocusListener(new FocusListener() {
+            @Override
             public void focusGained(FocusEvent e) {
                 mTableFocusListener.focusGained(activator);
             }
 
+            @Override
             public void focusLost(FocusEvent e) {
                 mTableFocusListener.focusLost(activator);
             }
@@ -1073,14 +1413,84 @@ public final class LogCatPanel extends SelectionDependentPanel
             sb.append('\n');
         }
 
-        clipboard.setContents(
-                new Object[] {sb.toString()},
-                new Transfer[] {TextTransfer.getInstance()}
-                );
+        if (sb.length() > 0) {
+            clipboard.setContents(
+                    new Object[] {sb.toString()},
+                    new Transfer[] {TextTransfer.getInstance()}
+                    );
+        }
     }
 
     /** Select all items in the logcat table. */
     public void selectAll() {
-        mViewer.getTable().selectAll();
+        mTable.selectAll();
+    }
+
+    private void dispose() {
+        if (mFont != null && !mFont.isDisposed()) {
+            mFont.dispose();
+        }
+
+        if (mVerboseColor != null && !mVerboseColor.isDisposed()) {
+            disposeMessageColors();
+        }
+    }
+
+    private void disposeMessageColors() {
+        mVerboseColor.dispose();
+        mDebugColor.dispose();
+        mInfoColor.dispose();
+        mWarnColor.dispose();
+        mErrorColor.dispose();
+        mAssertColor.dispose();
+    }
+
+    private class LogcatFindTarget extends AbstractBufferFindTarget {
+        @Override
+        public void selectAndReveal(int index) {
+            mTable.deselectAll();
+            mTable.select(index);
+            mTable.showSelection();
+        }
+
+        @Override
+        public int getItemCount() {
+            return mTable.getItemCount();
+        }
+
+        @Override
+        public String getItem(int index) {
+            Object data = mTable.getItem(index).getData();
+            if (data != null) {
+                return data.toString();
+            }
+
+            return null;
+        }
+
+        @Override
+        public int getStartingIndex() {
+            // start searches from current selection if present, otherwise from the tail end
+            // of the buffer
+            int s = mTable.getSelectionIndex();
+            if (s != -1) {
+                return s;
+            } else {
+                return getItemCount() - 1;
+            }
+        };
+    };
+
+    private FindDialog mFindDialog;
+    private LogcatFindTarget mFindTarget = new LogcatFindTarget();
+    public void showFindDialog() {
+        if (mFindDialog != null) {
+            // if the dialog is already displayed
+            return;
+        }
+
+        mFindDialog = new FindDialog(Display.getDefault().getActiveShell(), mFindTarget);
+        mFindDialog.open(); // blocks until find dialog is closed
+        mFindDialog = null;
     }
 }

@@ -16,13 +16,14 @@
 
 package com.android.ide.eclipse.adt.internal.editors.animator;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_NS_NAME_PREFIX;
 import static com.android.ide.eclipse.adt.AdtConstants.ANDROID_PKG;
+import static com.android.util.XmlUtils.ANDROID_NS_NAME_PREFIX;
 
 import com.android.annotations.VisibleForTesting;
 import com.android.ide.common.api.IAttributeInfo.Format;
 import com.android.ide.common.resources.ResourceItem;
 import com.android.ide.common.resources.ResourceRepository;
+import com.android.ide.eclipse.adt.AdtUtils;
 import com.android.ide.eclipse.adt.internal.editors.AndroidContentAssist;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.AttributeDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
@@ -38,6 +39,7 @@ import org.w3c.dom.Node;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -58,7 +60,7 @@ public final class AnimationContentAssist extends AndroidContentAssist {
 
     @Override
     protected int getRootDescriptorId() {
-        String folderName = mEditor.getInputFile().getParent().getName();
+        String folderName = AdtUtils.getParentFolderName(mEditor.getEditorInput());
         ResourceFolderType folderType = ResourceFolderType.getFolderType(folderName);
         if (folderType == ResourceFolderType.ANIM) {
             return AndroidTargetData.DESCRIPTOR_ANIM;
@@ -124,17 +126,15 @@ public final class AnimationContentAssist extends AndroidContentAssist {
                             }
                             String name = desc.getXmlLocalName();
                             if (startsWith(name, attributePrefix)) {
-                                for (Format f : desc.getAttributeInfo().getFormats()) {
-                                    if (f == Format.INTEGER || f == Format.FLOAT) {
-                                        // TODO: Filter out some common properties
-                                        // that the user probably isn't trying to
-                                        // animate:
-                                        // num*, min*, max*, *Index, *Threshold,
-                                        // *Duration, *Id, *Limit
-
-                                        matches.put(name, desc);
-                                        break;
-                                    }
+                                EnumSet<Format> formats = desc.getAttributeInfo().getFormats();
+                                if (formats.contains(Format.INTEGER)
+                                        || formats.contains(Format.FLOAT)) {
+                                    // TODO: Filter out some common properties
+                                    // that the user probably isn't trying to
+                                    // animate:
+                                    // num*, min*, max*, *Index, *Threshold,
+                                    // *Duration, *Id, *Limit
+                                    matches.put(name, desc);
                                 }
                             }
                         }

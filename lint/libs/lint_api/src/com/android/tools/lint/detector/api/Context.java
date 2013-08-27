@@ -16,9 +16,13 @@
 
 package com.android.tools.lint.detector.api;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.tools.lint.client.api.Configuration;
 import com.android.tools.lint.client.api.LintClient;
+import com.android.tools.lint.client.api.LintDriver;
 import com.android.tools.lint.client.api.SdkInfo;
+import com.google.common.annotations.Beta;
 
 import java.io.File;
 import java.util.EnumSet;
@@ -34,6 +38,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <b>NOTE: This is not a public or final API; if you rely on this be prepared
  * to adjust your code for the next tools release.</b>
  */
+@Beta
 public class Context {
     /**
      * The file being checked. Note that this may not always be to a concrete
@@ -42,11 +47,24 @@ public class Context {
      */
     public final File file;
 
-    /** The client requesting a lint check */
-    private final LintClient mClient;
+    /** The driver running through the checks */
+    protected final LintDriver mDriver;
 
     /** The project containing the file being checked */
+    @NonNull
     private final Project mProject;
+
+    /**
+     * The "main" project. For normal projects, this is the same as {@link #mProject},
+     * but for library projects, it's the root project that includes (possibly indirectly)
+     * the various library projects and their library projects.
+     * <p>
+     * Note that this is a property on the {@link Context}, not the
+     * {@link Project}, since a library project can be included from multiple
+     * different top level projects, so there isn't <b>one</b> main project,
+     * just one per main project being analyzed with its library projects.
+     */
+    private final Project mMainProject;
 
     /** The current configuration controlling which checks are enabled etc */
     private final Configuration mConfiguration;
@@ -54,18 +72,13 @@ public class Context {
     /** The contents of the file */
     private String mContents;
 
-    /** The scope of the current lint check */
-    private final EnumSet<Scope> mScope;
-
-    /** The SDK info, if any */
-    private SdkInfo mSdkInfo;
-
     /**
      * Whether the lint job has been canceled.
      * <p>
      * Slow-running detectors should check this flag via
      * {@link AtomicBoolean#get()} and abort if canceled
      */
+    @NonNull
     public final AtomicBoolean canceled = new AtomicBoolean();
 
     /** Map of properties to share results between detectors */
@@ -74,18 +87,24 @@ public class Context {
     /**
      * Construct a new {@link Context}
      *
-     * @param client the client requesting a lint check
+     * @param driver the driver running through the checks
      * @param project the project containing the file being checked
+     * @param main the main project if this project is a library project, or
+     *            null if this is not a library project. The main project is
+     *            the root project of all library projects, not necessarily the
+     *            directly including project.
      * @param file the file being checked
-     * @param scope the scope for the lint job
      */
-    public Context(LintClient client, Project project, File file,
-            EnumSet<Scope> scope) {
+    public Context(
+            @NonNull LintDriver driver,
+            @NonNull Project project,
+            @Nullable Project main,
+            @NonNull File file) {
         this.file = file;
 
-        mClient = client;
+        mDriver = driver;
         mProject = project;
-        mScope = scope;
+        mMainProject = main;
         mConfiguration = project.getConfiguration();
     }
 
@@ -94,8 +113,9 @@ public class Context {
      *
      * @return the scope, never null
      */
+    @NonNull
     public EnumSet<Scope> getScope() {
-        return mScope;
+        return mDriver.getScope();
     }
 
     /**
@@ -103,6 +123,7 @@ public class Context {
      *
      * @return the configuration, never null
      */
+    @NonNull
     public Configuration getConfiguration() {
         return mConfiguration;
     }
@@ -112,8 +133,21 @@ public class Context {
      *
      * @return the project, never null
      */
+    @NonNull
     public Project getProject() {
         return mProject;
+    }
+
+    /**
+     * Returns the main project if this project is a library project, or self
+     * if this is not a library project. The main project is the root project
+     * of all library projects, not necessarily the directly including project.
+     *
+     * @return the main project, never null
+     */
+    @NonNull
+    public Project getMainProject() {
+        return mMainProject != null ? mMainProject : mProject;
     }
 
     /**
@@ -121,8 +155,19 @@ public class Context {
      *
      * @return the client, never null
      */
+    @NonNull
     public LintClient getClient() {
-        return mClient;
+        return mDriver.getClient();
+    }
+
+    /**
+     * Returns the driver running through the lint checks
+     *
+     * @return the driver
+     */
+    @NonNull
+    public LintDriver getDriver() {
+        return mDriver;
     }
 
     /**
@@ -133,9 +178,10 @@ public class Context {
      *
      * @return the contents of the given file, or null if an error occurs.
      */
+    @Nullable
     public String getContents() {
         if (mContents == null) {
-            mContents = mClient.readFile(file);
+            mContents = mDriver.getClient().readFile(file);
         }
 
         return mContents;
@@ -147,6 +193,7 @@ public class Context {
      * @param name the name of the property
      * @return the corresponding value, or null
      */
+    @Nullable
     public Object getProperty(String name) {
         if (mProperties == null) {
             return null;
@@ -161,12 +208,17 @@ public class Context {
      * @param name the name of the property
      * @param value the corresponding value
      */
-    public void setProperty(String name, Object value) {
-        if (mProperties == null) {
-            mProperties = new HashMap<String, Object>();
+    public void setProperty(@NonNull String name, @Nullable Object value) {
+        if (value == null) {
+            if (mProperties != null) {
+                mProperties.remove(name);
+            }
+        } else {
+            if (mProperties == null) {
+                mProperties = new HashMap<String, Object>();
+            }
+            mProperties.put(name, value);
         }
-
-        mProperties.put(name, value);
     }
 
     /**
@@ -174,12 +226,9 @@ public class Context {
      *
      * @return the SDK info for the current project, never null
      */
+    @NonNull
     public SdkInfo getSdkInfo() {
-        if (mSdkInfo == null) {
-            mSdkInfo = mClient.getSdkInfo(mProject);
-        }
-
-        return mSdkInfo;
+        return mProject.getSdkInfo();
     }
 
     // ---- Convenience wrappers  ---- (makes the detector code a bit leaner)
@@ -191,7 +240,7 @@ public class Context {
      * @param issue the issue to check
      * @return false if the issue has been disabled
      */
-    public boolean isEnabled(Issue issue) {
+    public boolean isEnabled(@NonNull Issue issue) {
         return mConfiguration.isEnabled(issue);
     }
 
@@ -203,19 +252,80 @@ public class Context {
      * @param message the message for this warning
      * @param data any associated data, or null
      */
-    public void report(Issue issue, Location location, String message, Object data) {
-        mClient.report(this, issue, location, message, data);
+    public void report(
+            @NonNull Issue issue,
+            @Nullable Location location,
+            @NonNull String message,
+            @Nullable Object data) {
+        Configuration configuration = mConfiguration;
+
+        // If this error was computed for a context where the context corresponds to
+        // a project instead of a file, the actual error may be in a different project (e.g.
+        // a library project), so adjust the configuration as necessary.
+        if (location != null && location.getFile() != null) {
+            Project project = mDriver.findProjectFor(location.getFile());
+            if (project != null) {
+                configuration = project.getConfiguration();
+            }
+        }
+
+        // If an error occurs in a library project, but you've disabled that check in the
+        // main project, disable it in the library project too. (In some cases you don't
+        // control the lint.xml of a library project, and besides, if you're not interested in
+        // a check for your main project you probably don't care about it in the library either.)
+        if (configuration != mConfiguration
+                && mConfiguration.getSeverity(issue) == Severity.IGNORE) {
+            return;
+        }
+
+        Severity severity = configuration.getSeverity(issue);
+        if (severity == Severity.IGNORE) {
+            return;
+        }
+
+        mDriver.getClient().report(this, issue, severity, location, message, data);
     }
 
     /**
      * Send an exception to the log. Convenience wrapper around {@link LintClient#log}.
      *
      * @param exception the exception, possibly null
-     * @param format the error message using {@link String#format} syntax
+     * @param format the error message using {@link String#format} syntax, possibly null
      * @param args any arguments for the format string
      */
-    public void log(Throwable exception, String format, Object... args) {
-        mClient.log(exception, format, args);
+    public void log(
+            @Nullable Throwable exception,
+            @Nullable String format,
+            @Nullable Object... args) {
+        mDriver.getClient().log(exception, format, args);
     }
 
+    /**
+     * Returns the current phase number. The first pass is numbered 1. Only one pass
+     * will be performed, unless a {@link Detector} calls {@link #requestRepeat}.
+     *
+     * @return the current phase, usually 1
+     */
+    public int getPhase() {
+        return mDriver.getPhase();
+    }
+
+    /**
+     * Requests another pass through the data for the given detector. This is
+     * typically done when a detector needs to do more expensive computation,
+     * but it only wants to do this once it <b>knows</b> that an error is
+     * present, or once it knows more specifically what to check for.
+     *
+     * @param detector the detector that should be included in the next pass.
+     *            Note that the lint runner may refuse to run more than a couple
+     *            of runs.
+     * @param scope the scope to be revisited. This must be a subset of the
+     *       current scope ({@link #getScope()}, and it is just a performance hint;
+     *       in particular, the detector should be prepared to be called on other
+     *       scopes as well (since they may have been requested by other detectors).
+     *       You can pall null to indicate "all".
+     */
+    public void requestRepeat(@NonNull Detector detector, @Nullable EnumSet<Scope> scope) {
+        mDriver.requestRepeat(detector, scope);
+    }
 }

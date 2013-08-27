@@ -16,9 +16,12 @@
 
 package com.android.tools.lint.client.api;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.tools.lint.detector.api.Context;
 import com.android.tools.lint.detector.api.Location;
 import com.android.tools.lint.detector.api.XmlContext;
+import com.google.common.annotations.Beta;
 
 import org.w3c.dom.Document;
 import org.w3c.dom.Node;
@@ -30,6 +33,7 @@ import org.w3c.dom.Node;
  * <b>NOTE: This is not a public or final API; if you rely on this be prepared
  * to adjust your code for the next tools release.</b>
  */
+@Beta
 public interface IDomParser {
     /**
      * Parse the file pointed to by the given context and return as a Document
@@ -40,7 +44,8 @@ public interface IDomParser {
      *            editor buffer in the surrounding tool, etc)
      * @return the parsed DOM document, or null if parsing fails
      */
-    Document parseXml(XmlContext context);
+    @Nullable
+    Document parseXml(@NonNull XmlContext context);
 
     /**
      * Returns a {@link Location} for the given DOM node
@@ -49,7 +54,22 @@ public interface IDomParser {
      * @param node the node to create a location for
      * @return a location for the given node
      */
-    Location getLocation(XmlContext context, Node node);
+    @NonNull
+    Location getLocation(@NonNull XmlContext context, @NonNull Node node);
+
+    /**
+     * Returns a {@link Location} for the given DOM node. Like
+     * {@link #getLocation(XmlContext, Node)}, but allows a position range that
+     * is a subset of the node range.
+     *
+     * @param context information about the file being parsed
+     * @param node the node to create a location for
+     * @param start the starting position within the node, inclusive
+     * @param end the ending position within the node, exclusive
+     * @return a location for the given node
+     */
+    @NonNull
+    Location getLocation(@NonNull XmlContext context, @NonNull Node node, int start, int end);
 
     /**
      * Creates a light-weight handle to a location for the given node. It can be
@@ -61,12 +81,13 @@ public interface IDomParser {
      *            for
      * @return a location handle
      */
-    Location.Handle createLocationHandle(XmlContext context, Node node);
+    @NonNull
+    Location.Handle createLocationHandle(@NonNull XmlContext context, @NonNull Node node);
 
     /**
      * Dispose any data structures held for the given context.
      * @param context information about the file previously parsed
      * @param document the document that was parsed and is now being disposed
      */
-    void dispose(XmlContext context, Document document);
+    void dispose(@NonNull XmlContext context, @NonNull Document document);
 }

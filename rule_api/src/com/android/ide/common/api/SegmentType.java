@@ -16,9 +16,33 @@
 
 package com.android.ide.common.api;
 
-/** A segment type describes the different roles or positions a segment can have in a node */
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
+import com.google.common.annotations.Beta;
+
+/** A segment type describes the different roles or positions a segment can have in a node
+ * <p>
+ * <b>NOTE: This is not a public or final API; if you rely on this be prepared
+ * to adjust your code for the next tools release.</b>
+ */
+@Beta
 public enum SegmentType {
-    LEFT, TOP, RIGHT, BOTTOM, BASELINE, CENTER_VERTICAL, CENTER_HORIZONTAL, UNKNOWN;
+    /** Segment is on the left edge */
+    @NonNull LEFT,
+    /** Segment is on the top edge */
+    @NonNull TOP,
+    /** Segment is on the right edge */
+    @NonNull RIGHT,
+    /** Segment is on the bottom edge */
+    @NonNull BOTTOM,
+    /** Segment is along the baseline */
+    @NonNull BASELINE,
+    /** Segment is along the center vertically */
+    @NonNull CENTER_VERTICAL,
+    /** Segment is along the center horizontally */
+    @NonNull CENTER_HORIZONTAL,
+    /** Segment is on an unknown edge */
+    @NonNull UNKNOWN;
 
     public boolean isHorizontal() {
         return this == TOP || this == BOTTOM || this == BASELINE || this == CENTER_HORIZONTAL;
@@ -31,7 +55,7 @@ public enum SegmentType {
      * @param bounds the bounds of the node
      * @return the X coordinate for an edge of this type given its bounds
      */
-    public int getX(INode node, Rect bounds) {
+    public int getX(@Nullable INode node, @NonNull Rect bounds) {
         // We pass in the bounds rather than look it up via node.getBounds() because
         // during a resize or move operation, we call this method to look up proposed
         // bounds rather than actual bounds
@@ -59,7 +83,7 @@ public enum SegmentType {
      * @param bounds the bounds of the node
      * @return the Y coordinate for an edge of this type given its bounds
      */
-    public int getY(INode node, Rect bounds) {
+    public int getY(@Nullable INode node, @NonNull Rect bounds) {
         switch (this) {
             case TOP:
                 return bounds.y;

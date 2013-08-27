@@ -16,7 +16,8 @@
 
 package com.android.ide.eclipse.adt.internal.editors.menu.descriptors;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_NS_NAME;
+import static com.android.util.XmlUtils.ANDROID_NS_NAME;
+import static com.android.util.XmlUtils.ANDROID_URI;
 
 import com.android.ide.common.resources.platform.DeclareStyleableInfo;
 import com.android.ide.eclipse.adt.AdtUtils;
@@ -42,10 +43,12 @@ public final class MenuDescriptors implements IDescriptorProvider {
     private ElementDescriptor mDescriptor = null;
 
     /** @return the root descriptor. */
+    @Override
     public ElementDescriptor getDescriptor() {
         return mDescriptor;
     }
 
+    @Override
     public ElementDescriptor[] getRootElementDescriptors() {
         return mDescriptor.getChildren();
     }
@@ -98,7 +101,7 @@ public final class MenuDescriptors implements IDescriptorProvider {
                 false /* mandatory */);
 
         ElementDescriptor sub_menu = createElement(styleMap,
-                MENU_ROOT_ELEMENT, // xmlName //$NON-NLS-1$
+                MENU_ROOT_ELEMENT, // xmlName
                 "Sub-Menu", // uiName,
                 null, // TODO SDK URL
                 null, // extraAttribute
@@ -124,7 +127,7 @@ public final class MenuDescriptors implements IDescriptorProvider {
                 false /* mandatory */);
 
         XmlnsAttributeDescriptor xmlns = new XmlnsAttributeDescriptor(ANDROID_NS_NAME,
-                SdkConstants.NS_RESOURCES);
+                ANDROID_URI);
 
         updateElement(mDescriptor, styleMap, "Menu", xmlns); //$NON-NLS-1$
         mDescriptor.setChildren(new ElementDescriptor[] { top_item, top_group });

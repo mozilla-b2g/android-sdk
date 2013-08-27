@@ -16,11 +16,19 @@
 
 package com.android.ide.common.api;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
+import com.google.common.annotations.Beta;
+
 /**
  * A segment is a straight horizontal or vertical line between two points, typically an
  * edge of a node but also possibly some internal segment like a baseline or a center
  * line, and it can be offset by a margin from the node's visible bounds.
+ * <p>
+ * <b>NOTE: This is not a public or final API; if you rely on this be prepared
+ * to adjust your code for the next tools release.</b>
  */
+@Beta
 public class Segment {
     /** For horizontal lines, the y coordinate; for vertical lines the x */
     public final int at;
@@ -32,25 +40,29 @@ public class Segment {
     public final int to;
 
     /** Whether the edge is a top edge, a baseline edge, a left edge, etc */
+    @NonNull
     public final SegmentType edgeType;
 
     /**
      * Whether the edge is offset from the node by a margin or not, or whether it has no
      * margin
      */
+    @NonNull
     public final MarginType marginType;
 
     /** The node that contains this edge */
+    @Nullable
     public final INode node;
 
     /**
      * The id of the node. May be null (in which case id should be generated when
      * move/resize is completed
      */
+    @Nullable
     public final String id;
 
-    public Segment(int at, int from, int to, INode node, String id, SegmentType edgeType,
-            MarginType marginType) {
+    public Segment(int at, int from, int to, @Nullable INode node, @Nullable String id,
+            @NonNull SegmentType edgeType, @NonNull MarginType marginType) {
         this.at = at;
         this.from = from;
         this.to = to;
@@ -60,6 +72,7 @@ public class Segment {
         this.marginType = marginType;
     }
 
+    @NonNull
     @Override
     public String toString() {
         String nodeStr = node == null ? "null" : node.getFqcn().substring(

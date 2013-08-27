@@ -19,6 +19,7 @@ package com.android.ide.common.rendering.api;
 import com.android.layoutlib.api.IResourceValue;
 import com.android.layoutlib.api.IStyleResourceValue;
 import com.android.resources.ResourceType;
+import com.android.util.Pair;
 
 import java.util.HashMap;
 
@@ -29,7 +30,7 @@ import java.util.HashMap;
 public final class StyleResourceValue extends ResourceValue implements IStyleResourceValue {
 
     private String mParentStyle = null;
-    private HashMap<String, ResourceValue> mItems = new HashMap<String, ResourceValue>();
+    private HashMap<Pair<String, Boolean>, ResourceValue> mItems = new HashMap<Pair<String, Boolean>, ResourceValue>();
 
     public StyleResourceValue(ResourceType type, String name, boolean isFramework) {
         super(type, name, isFramework);
@@ -44,6 +45,7 @@ public final class StyleResourceValue extends ResourceValue implements IStyleRes
     /**
      * Returns the parent style name or <code>null</code> if unknown.
      */
+    @Override
     public String getParentStyle() {
         return mParentStyle;
     }
@@ -51,13 +53,24 @@ public final class StyleResourceValue extends ResourceValue implements IStyleRes
     /**
      * Finds a value in the list by name
      * @param name the name of the resource
+     *
+     * @deprecated use {@link #findValue(String, boolean)}
      */
+    @Deprecated
     public ResourceValue findValue(String name) {
-        return mItems.get(name);
+        return mItems.get(Pair.of(name, isFramework()));
     }
 
-    public void addValue(ResourceValue value) {
-        mItems.put(value.getName(), value);
+    /**
+     * Finds a value in the list by name
+     * @param name the name of the resource
+     */
+    public ResourceValue findValue(String name, boolean isFrameworkAttr) {
+        return mItems.get(Pair.of(name, isFrameworkAttr));
+    }
+
+    public void addValue(ResourceValue value, boolean isFrameworkAttr) {
+        mItems.put(Pair.of(value.getName(), isFrameworkAttr), value);
     }
 
     @Override
@@ -75,6 +88,7 @@ public final class StyleResourceValue extends ResourceValue implements IStyleRes
      * Legacy method.
      * @deprecated use {@link #getValue()}
      */
+    @Override
     @Deprecated
     public IResourceValue findItem(String name) {
         return mItems.get(name);

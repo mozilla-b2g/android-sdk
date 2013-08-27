@@ -16,15 +16,17 @@
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
 import static com.android.ide.common.layout.LayoutConstants.ANDROID_LAYOUT_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_CLASS;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_NAME;
 import static com.android.ide.common.layout.LayoutConstants.LAYOUT_PREFIX;
 import static com.android.ide.eclipse.adt.internal.editors.layout.gle2.LayoutMetadata.KEY_FRAGMENT_LAYOUT;
+import static com.android.util.XmlUtils.ANDROID_URI;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.resources.ResourceRepository;
 import com.android.ide.eclipse.adt.AdtPlugin;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.uimodel.UiViewElementNode;
 import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper;
 import com.android.ide.eclipse.adt.internal.resources.CyclicDependencyValidator;
@@ -43,7 +45,6 @@ import org.eclipse.jface.action.ActionContributionItem;
 import org.eclipse.jface.action.IAction;
 import org.eclipse.jface.action.Separator;
 import org.eclipse.jface.dialogs.IInputValidator;
-import org.eclipse.jface.text.IDocument;
 import org.eclipse.jface.window.Window;
 import org.eclipse.swt.widgets.Menu;
 import org.eclipse.swt.widgets.Shell;
@@ -86,6 +87,9 @@ public class FragmentMenu extends SubmenuAction {
 
         SelectionItem first = selections.get(0);
         UiViewElementNode node = first.getViewInfo().getUiViewNode();
+        if (node == null) {
+            return;
+        }
         Element element = (Element) node.getXmlNode();
 
         String selected = getSelectedLayout();
@@ -100,7 +104,7 @@ public class FragmentMenu extends SubmenuAction {
             // Look up the corresponding activity class and try to figure out
             // which layouts it is referring to and list these here as reasonable
             // guesses
-            IProject project = mCanvas.getLayoutEditor().getProject();
+            IProject project = mCanvas.getEditorDelegate().getEditor().getProject();
             String source = null;
             try {
                 IJavaProject javaProject = BaseProjectHelper.getJavaProject(project);
@@ -176,7 +180,8 @@ public class FragmentMenu extends SubmenuAction {
      * @param element the element for the fragment tag
      * @return the fully qualified fragment class name, or null
      */
-    public static String getFragmentClass(Element element) {
+    @Nullable
+    public static String getFragmentClass(@NonNull Element element) {
         String fqcn = element.getAttribute(ATTR_CLASS);
         if (fqcn == null || fqcn.length() == 0) {
             fqcn = element.getAttributeNS(ANDROID_URI, ATTR_NAME);
@@ -194,10 +199,10 @@ public class FragmentMenu extends SubmenuAction {
      * @param node the node corresponding to the {@code <fragment>} element
      * @return the resource path to a layout to render for this fragment, or null
      */
-    public static String getFragmentLayout(Node node) {
-        LayoutMetadata metadata = LayoutMetadata.get();
-        String layout = metadata.getProperty((IDocument) null, node,
-                LayoutMetadata.KEY_FRAGMENT_LAYOUT);
+    @Nullable
+    public static String getFragmentLayout(@NonNull Node node) {
+        String layout = LayoutMetadata.getProperty(
+                node, LayoutMetadata.KEY_FRAGMENT_LAYOUT);
         if (layout != null) {
             return layout;
         }
@@ -206,13 +211,16 @@ public class FragmentMenu extends SubmenuAction {
     }
 
     /** Returns the name of the currently displayed layout in the fragment, or null */
+    @Nullable
     private String getSelectedLayout() {
         SelectionManager selectionManager = mCanvas.getSelectionManager();
         for (SelectionItem item : selectionManager.getSelections()) {
             UiViewElementNode node = item.getViewInfo().getUiViewNode();
-            String layout = getFragmentLayout(node.getXmlNode());
-            if (layout != null) {
-                return layout;
+            if (node != null) {
+                String layout = getFragmentLayout(node.getXmlNode());
+                if (layout != null) {
+                    return layout;
+                }
             }
         }
         return null;
@@ -223,16 +231,18 @@ public class FragmentMenu extends SubmenuAction {
      *
      * @param layout the layout resource name to show in this fragment
      */
-    public void setNewLayout(String layout) {
-        LayoutEditor editor = mCanvas.getLayoutEditor();
-        GraphicalEditorPart graphicalEditor = editor.getGraphicalEditor();
-        LayoutMetadata metadata = LayoutMetadata.get();
+    public void setNewLayout(@Nullable String layout) {
+        LayoutEditorDelegate delegate = mCanvas.getEditorDelegate();
+        GraphicalEditorPart graphicalEditor = delegate.getGraphicalEditor();
         SelectionManager selectionManager = mCanvas.getSelectionManager();
 
-        for (SelectionItem item : selectionManager.getSelections()) {
+        for (SelectionItem item : selectionManager.getSnapshot()) {
             UiViewElementNode node = item.getViewInfo().getUiViewNode();
-            Node xmlNode = node.getXmlNode();
-            metadata.setProperty(editor, xmlNode, KEY_FRAGMENT_LAYOUT, layout);
+            if (node != null) {
+                Node xmlNode = node.getXmlNode();
+                LayoutMetadata.setProperty(delegate.getEditor(), xmlNode, KEY_FRAGMENT_LAYOUT,
+                        layout);
+            }
         }
 
         // Refresh
@@ -255,7 +265,9 @@ public class FragmentMenu extends SubmenuAction {
 
         @Override
         public void run() {
-            setNewLayout(mLayout);
+            if (isChecked()) {
+                setNewLayout(mLayout);
+            }
         }
     }
 
@@ -271,21 +283,22 @@ public class FragmentMenu extends SubmenuAction {
 
         @Override
         public void run() {
-            LayoutEditor editor = mCanvas.getLayoutEditor();
-            IProject project = editor.getProject();
+            LayoutEditorDelegate delegate = mCanvas.getEditorDelegate();
+            IProject project = delegate.getEditor().getProject();
             // get the resource repository for this project and the system resources.
             ResourceRepository projectRepository = ResourceManager.getInstance()
                     .getProjectResources(project);
             Shell shell = mCanvas.getShell();
 
-            AndroidTargetData data = editor.getTargetData();
+            AndroidTargetData data = delegate.getEditor().getTargetData();
             ResourceRepository systemRepository = data.getFrameworkResources();
 
             ResourceChooser dlg = new ResourceChooser(project,
                     ResourceType.LAYOUT, projectRepository,
                     systemRepository, shell);
 
-            IInputValidator validator = CyclicDependencyValidator.create(editor.getInputFile());
+            IInputValidator validator =
+                CyclicDependencyValidator.create(delegate.getEditor().getInputFile());
 
             if (validator != null) {
                 // Ensure wide enough to accommodate validator error message

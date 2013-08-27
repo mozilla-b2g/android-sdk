@@ -18,9 +18,9 @@ package com.android.sdklib.build;
 
 import com.android.sdklib.SdkConstants;
 import com.android.sdklib.internal.build.DebugKeyProvider;
-import com.android.sdklib.internal.build.SignedJarBuilder;
 import com.android.sdklib.internal.build.DebugKeyProvider.IKeyGenOutput;
 import com.android.sdklib.internal.build.DebugKeyProvider.KeytoolException;
+import com.android.sdklib.internal.build.SignedJarBuilder;
 import com.android.sdklib.internal.build.SignedJarBuilder.IZipEntryFilter;
 
 import java.io.File;
@@ -63,6 +63,7 @@ public final class ApkBuilder implements IArchiveBuilder {
             mInputFile = inputFile;
         }
 
+        @Override
         public boolean checkEntry(String archivePath) throws ZipAbortException {
             verbosePrintln("=> %s", archivePath);
 
@@ -88,6 +89,7 @@ public final class ApkBuilder implements IArchiveBuilder {
         private boolean mNativeLibsConflict = false;
         private File mInputFile;
 
+        @Override
         public boolean checkEntry(String archivePath) throws ZipAbortException {
             // split the path into segments.
             String[] segments = archivePath.split("/");
@@ -193,10 +195,12 @@ public final class ApkBuilder implements IArchiveBuilder {
             mNativeLibsConflict = nativeLibsConflict;
         }
 
+        @Override
         public List<String> getNativeLibs() {
             return mLibs;
         }
 
+        @Override
         public boolean hasNativeLibsConflicts() {
             return mNativeLibsConflict;
         }
@@ -251,10 +255,12 @@ public final class ApkBuilder implements IArchiveBuilder {
                 IKeyGenOutput keygenOutput = null;
                 if (verboseStream != null) {
                     keygenOutput = new IKeyGenOutput() {
+                        @Override
                         public void out(String message) {
                             verboseStream.println(message);
                         }
 
+                        @Override
                         public void err(String message) {
                             verboseStream.println(message);
                         }
@@ -450,8 +456,14 @@ public final class ApkBuilder implements IArchiveBuilder {
             }
 
         } catch (ApkCreationException e) {
+            if (mBuilder != null) {
+                mBuilder.cleanUp();
+            }
             throw e;
         } catch (Exception e) {
+            if (mBuilder != null) {
+                mBuilder.cleanUp();
+            }
             throw new ApkCreationException(e);
         }
     }
@@ -482,6 +494,7 @@ public final class ApkBuilder implements IArchiveBuilder {
      * @throws DuplicateFileException if a file conflicts with another already added to the APK
      *                                   at the same location inside the APK archive.
      */
+    @Override
     public void addFile(File file, String archivePath) throws ApkCreationException,
             SealedApkException, DuplicateFileException {
         if (mIsSealed) {
@@ -491,8 +504,10 @@ public final class ApkBuilder implements IArchiveBuilder {
         try {
             doAddFile(file, archivePath);
         } catch (DuplicateFileException e) {
+            mBuilder.cleanUp();
             throw e;
         } catch (Exception e) {
+            mBuilder.cleanUp();
             throw new ApkCreationException(e, "Failed to add %s", file);
         }
     }
@@ -522,8 +537,10 @@ public final class ApkBuilder implements IArchiveBuilder {
             FileInputStream fis = new FileInputStream(zipFile);
             mBuilder.writeZip(fis, mNullFilter);
         } catch (DuplicateFileException e) {
+            mBuilder.cleanUp();
             throw e;
         } catch (Exception e) {
+            mBuilder.cleanUp();
             throw new ApkCreationException(e, "Failed to add %s", zipFile);
         }
     }
@@ -559,8 +576,10 @@ public final class ApkBuilder implements IArchiveBuilder {
             // constitutes an error or warning depending on if they are in lib/
             return new JarStatusImpl(mFilter.getNativeLibs(), mFilter.getNativeLibsConflict());
         } catch (DuplicateFileException e) {
+            mBuilder.cleanUp();
             throw e;
         } catch (Exception e) {
+            mBuilder.cleanUp();
             throw new ApkCreationException(e, "Failed to add %s", jarFile);
         }
     }
@@ -579,12 +598,25 @@ public final class ApkBuilder implements IArchiveBuilder {
             throw new SealedApkException("APK is already sealed");
         }
 
+        addSourceFolder(this, sourceFolder);
+    }
+
+    /**
+     * Adds the resources from a source folder to a given {@link IArchiveBuilder}
+     * @param sourceFolder the source folder.
+     * @throws ApkCreationException if an error occurred
+     * @throws SealedApkException if the APK is already sealed.
+     * @throws DuplicateFileException if a file conflicts with another already added to the APK
+     *                                   at the same location inside the APK archive.
+     */
+    public static void addSourceFolder(IArchiveBuilder builder, File sourceFolder)
+            throws ApkCreationException, DuplicateFileException {
         if (sourceFolder.isDirectory()) {
             try {
                 // file is a directory, process its content.
                 File[] files = sourceFolder.listFiles();
                 for (File file : files) {
-                    processFileForResource(file, null);
+                    processFileForResource(builder, file, null);
                 }
             } catch (DuplicateFileException e) {
                 throw e;
@@ -656,6 +688,7 @@ public final class ApkBuilder implements IArchiveBuilder {
                                 try {
                                     doAddFile(lib, path);
                                 } catch (IOException e) {
+                                    mBuilder.cleanUp();
                                     throw new ApkCreationException(e, "Failed to add %s", lib);
                                 }
                             }
@@ -676,6 +709,7 @@ public final class ApkBuilder implements IArchiveBuilder {
             try {
                 doAddFile(entry.mFile, entry.mPath);
             } catch (IOException e) {
+                mBuilder.cleanUp();
                 throw new ApkCreationException(e, "Failed to add %s", entry.mFile);
             }
         }
@@ -755,6 +789,8 @@ public final class ApkBuilder implements IArchiveBuilder {
             mIsSealed = true;
         } catch (Exception e) {
             throw new ApkCreationException(e, "Failed to seal APK");
+        } finally {
+            mBuilder.cleanUp();
         }
     }
 
@@ -792,9 +828,11 @@ public final class ApkBuilder implements IArchiveBuilder {
      * @throws IOException
      * @throws DuplicateFileException if a file conflicts with another already added
      *          to the APK at the same location inside the APK archive.
+     * @throws SealedApkException if the APK is already sealed.
+     * @throws ApkCreationException if an error occurred
      */
-    private void processFileForResource(File file, String path)
-            throws IOException, DuplicateFileException {
+    private static void processFileForResource(IArchiveBuilder builder, File file, String path)
+            throws IOException, DuplicateFileException, ApkCreationException, SealedApkException {
         if (file.isDirectory()) {
             // a directory? we check it
             if (checkFolderForPackaging(file.getName())) {
@@ -808,7 +846,7 @@ public final class ApkBuilder implements IArchiveBuilder {
                 // and process its content.
                 File[] files = file.listFiles();
                 for (File contentFile : files) {
-                    processFileForResource(contentFile, path);
+                    processFileForResource(builder, contentFile, path);
                 }
             }
         } else {
@@ -822,7 +860,7 @@ public final class ApkBuilder implements IArchiveBuilder {
                 }
 
                 // and add it to the apk
-                doAddFile(file, path);
+                builder.addFile(file, path);
             }
         }
     }

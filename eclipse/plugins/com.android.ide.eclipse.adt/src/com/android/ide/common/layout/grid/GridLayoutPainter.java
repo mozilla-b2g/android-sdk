@@ -19,6 +19,7 @@ import static com.android.ide.common.layout.GridLayoutRule.GRID_SIZE;
 import static com.android.ide.common.layout.GridLayoutRule.MARGIN_SIZE;
 import static com.android.ide.common.layout.grid.GridModel.UNDEFINED;
 
+import com.android.annotations.NonNull;
 import com.android.ide.common.api.DrawingStyle;
 import com.android.ide.common.api.DropFeedback;
 import com.android.ide.common.api.IDragElement;
@@ -126,7 +127,9 @@ public class GridLayoutPainter {
         }
 
         // Implements IFeedbackPainter
-        public void paint(IGraphics gc, INode node, DropFeedback feedback) {
+        @Override
+        public void paint(@NonNull IGraphics gc, @NonNull INode node,
+                @NonNull DropFeedback feedback) {
             Rect b = node.getBounds();
             if (!b.isValid()) {
                 return;
@@ -231,15 +234,27 @@ public class GridLayoutPainter {
                 gc.drawLine(x, b.y, x, b.y2());
             }
 
-            // Draw preview rectangle of the first dragged element
+            // Draw preview rectangles for all the dragged elements
             gc.useStyle(DrawingStyle.DROP_PREVIEW);
-            mRule.drawElement(gc, first, x + offsetX - bounds.x, y + offsetY - bounds.y);
+            offsetX += x - bounds.x;
+            offsetY += y - bounds.y;
 
-            // Preview baseline as well
-            if (feedback.dragBaseline != -1) {
-                int x1 = dragBounds.x + x + offsetX - bounds.x;
-                int y1 = dragBounds.y + y + offsetY - bounds.y + feedback.dragBaseline;
-                gc.drawLine(x1, y1, x1 + dragBounds.w, y1);
+            for (IDragElement element : mElements) {
+                if (element == first) {
+                    mRule.drawElement(gc, first, offsetX, offsetY);
+                    // Preview baseline as well
+                    if (feedback.dragBaseline != -1) {
+                        int x1 = dragBounds.x + offsetX;
+                        int y1 = dragBounds.y + offsetY + feedback.dragBaseline;
+                        gc.drawLine(x1, y1, x1 + dragBounds.w, y1);
+                    }
+                } else {
+                    b = element.getBounds();
+                    if (b.isValid()) {
+                        gc.drawRect(b.x + offsetX, b.y + offsetY,
+                                b.x + offsetX + b.w, b.y + offsetY + b.h);
+                    }
+                }
             }
         }
 

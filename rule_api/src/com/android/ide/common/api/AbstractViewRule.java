@@ -15,21 +15,33 @@
  */
 package com.android.ide.common.api;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
+import com.google.common.annotations.Beta;
+
 import java.util.List;
 
 /**
  * Default implementation of an {@link IViewRule}. This is a convenience
  * implementation which makes it easier to supply designtime behavior for a
  * custom view and just override the methods you are interested in.
+ * <p>
+ * <b>NOTE: This is not a public or final API; if you rely on this be prepared
+ * to adjust your code for the next tools release.</b>
  */
+@Beta
 public class AbstractViewRule implements IViewRule {
-    public boolean onInitialize(String fqcn, IClientRulesEngine engine) {
+    @Override
+    public boolean onInitialize(@NonNull String fqcn, @NonNull IClientRulesEngine engine) {
         return true;
     }
 
+    @Override
     public void onDispose() {
     }
 
+    @Override
+    @Nullable
     public String getDisplayName() {
         // Default is to not override the selection display name.
         return null;
@@ -37,72 +49,91 @@ public class AbstractViewRule implements IViewRule {
 
     // ==== Selection ====
 
-    public List<String> getSelectionHint(INode parentNode, INode childNode) {
+    @Override
+    @Nullable
+    public List<String> getSelectionHint(@NonNull INode parentNode, @NonNull INode childNode) {
         return null;
     }
 
-    public void addLayoutActions(List<RuleAction> actions, INode parentNode,
-            List<? extends INode> children) {
+    @Override
+    public void addLayoutActions(@NonNull List<RuleAction> actions, @NonNull INode parentNode,
+            @NonNull List<? extends INode> children) {
     }
 
-    public void addContextMenuActions(List<RuleAction> actions, INode node) {
+    @Override
+    public void addContextMenuActions(@NonNull List<RuleAction> actions, @NonNull INode node) {
     }
 
-    public void paintSelectionFeedback(IGraphics graphics, INode parentNode,
-            List<? extends INode> childNodes, Object view) {
+    @Override
+    public void paintSelectionFeedback(@NonNull IGraphics graphics, @NonNull INode parentNode,
+            @NonNull List<? extends INode> childNodes, @Nullable Object view) {
     }
 
     // ==== Drag & drop support ====
 
     // By default Views do not accept drag'n'drop.
-    public DropFeedback onDropEnter(INode targetNode, Object targetView, IDragElement[] elements) {
+    @Override
+    @Nullable
+    public DropFeedback onDropEnter(@NonNull INode targetNode, @Nullable Object targetView, @Nullable IDragElement[] elements) {
         return null;
     }
 
-    public DropFeedback onDropMove(INode targetNode, IDragElement[] elements,
-            DropFeedback feedback, Point p) {
+    @Override
+    @Nullable
+    public DropFeedback onDropMove(@NonNull INode targetNode, @NonNull IDragElement[] elements,
+            @Nullable DropFeedback feedback, @NonNull Point p) {
         return null;
     }
 
-    public void onDropLeave(INode targetNode, IDragElement[] elements, DropFeedback feedback) {
+    @Override
+    public void onDropLeave(@NonNull INode targetNode, @NonNull IDragElement[] elements, @Nullable DropFeedback feedback) {
         // ignore
     }
 
+    @Override
     public void onDropped(
-            INode targetNode,
-            IDragElement[] elements,
-            DropFeedback feedback,
-            Point p) {
+            @NonNull INode targetNode,
+            @NonNull IDragElement[] elements,
+            @Nullable DropFeedback feedback,
+            @NonNull Point p) {
         // ignore
     }
 
 
-    public void onPaste(INode targetNode, Object targetView, IDragElement[] pastedElements) {
+    @Override
+    public void onPaste(@NonNull INode targetNode, @Nullable Object targetView, @NonNull IDragElement[] pastedElements) {
     }
 
     // ==== Create/Remove hooks ====
 
-    public void onCreate(INode node, INode parent, InsertType insertType) {
+    @Override
+    public void onCreate(@NonNull INode node, @NonNull INode parent, @NonNull InsertType insertType) {
     }
 
-    public void onChildInserted(INode child, INode parent, InsertType insertType) {
+    @Override
+    public void onChildInserted(@NonNull INode child, @NonNull INode parent, @NonNull InsertType insertType) {
     }
 
-    public void onRemovingChildren(List<INode> deleted, INode parent) {
+    @Override
+    public void onRemovingChildren(@NonNull List<INode> deleted, @NonNull INode parent) {
     }
 
     // ==== Resizing ====
 
-    public DropFeedback onResizeBegin(INode child, INode parent, SegmentType horizontalEdge,
-            SegmentType verticalEdge, Object childView, Object parentView) {
+    @Override
+    @Nullable
+    public DropFeedback onResizeBegin(@NonNull INode child, @NonNull INode parent, @Nullable SegmentType horizontalEdge,
+            @Nullable SegmentType verticalEdge, @Nullable Object childView, @Nullable Object parentView) {
         return null;
     }
 
-    public void onResizeUpdate(DropFeedback feedback, INode child, INode parent, Rect newBounds,
+    @Override
+    public void onResizeUpdate(@Nullable DropFeedback feedback, @NonNull INode child, @NonNull INode parent, @NonNull Rect newBounds,
             int modifierMask) {
     }
 
-    public void onResizeEnd(DropFeedback feedback, INode child, final INode parent,
-            final Rect newBounds) {
+    @Override
+    public void onResizeEnd(@Nullable DropFeedback feedback, @NonNull INode child, final @NonNull INode parent,
+            final @NonNull Rect newBounds) {
     }
 }

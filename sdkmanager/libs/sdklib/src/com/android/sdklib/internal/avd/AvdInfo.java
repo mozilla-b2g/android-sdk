@@ -140,6 +140,24 @@ public final class AvdInfo implements Comparable<AvdInfo> {
         return SdkConstants.CPU_ARCH_ARM;
     }
 
+    public String getDeviceManufacturer() {
+        String deviceManufacturer = mProperties.get(AvdManager.AVD_INI_DEVICE_MANUFACTURER);
+        if (deviceManufacturer != null && !deviceManufacturer.isEmpty()) {
+            return deviceManufacturer;
+        }
+
+        return "";
+    }
+
+    public String getDeviceName() {
+        String deviceName = mProperties.get(AvdManager.AVD_INI_DEVICE_NAME);
+        if (deviceName != null && !deviceName.isEmpty()) {
+            return deviceName;
+        }
+
+        return "";
+    }
+
     /** Convenience function to return a more user friendly name of the abi type. */
     public static String getPrettyAbiType(String raw) {
         String s = null;
@@ -151,6 +169,9 @@ public final class AvdInfo implements Comparable<AvdInfo> {
 
         } else if (raw.equalsIgnoreCase(SdkConstants.ABI_INTEL_ATOM)) {
             s = "Intel Atom (" + SdkConstants.ABI_INTEL_ATOM + ")";
+
+        } else if (raw.equalsIgnoreCase(SdkConstants.ABI_MIPS)) {
+            s = "Mips (" + SdkConstants.ABI_MIPS + ")";
 
         } else {
             s = raw + " (" + raw + ")";
@@ -288,6 +309,7 @@ public final class AvdInfo implements Comparable<AvdInfo> {
      * @return a negative integer, zero, or a positive integer as this object is
      *         less than, equal to, or greater than the specified object.
      */
+    @Override
     public int compareTo(AvdInfo o) {
         // first handle possible missing targets (if the AVD failed to load for unresolved targets)
         if (mTarget == null && o != null && o.mTarget == null) {

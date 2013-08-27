@@ -20,8 +20,7 @@ import com.android.ide.common.api.IDragElement.IDragAttribute;
 import com.android.ide.common.api.INode;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.DescriptorsUtils;
-import com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.ViewElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.NodeProxy;
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.RulesEngine;
@@ -29,6 +28,7 @@ import com.android.ide.eclipse.adt.internal.editors.layout.uimodel.UiViewElement
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiDocumentNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
 import com.android.sdklib.SdkConstants;
+import com.android.util.XmlUtils;
 
 import org.eclipse.jface.action.Action;
 import org.eclipse.swt.custom.StyledText;
@@ -98,7 +98,7 @@ public class ClipboardSupport {
         // copy action when there are errors visible *AND* the user has selected text there,
         // should include the error message as the text transferable.
         String message = null;
-        GraphicalEditorPart graphicalEditor = mCanvas.getLayoutEditor().getGraphicalEditor();
+        GraphicalEditorPart graphicalEditor = mCanvas.getEditorDelegate().getGraphicalEditor();
         StyledText errorLabel = graphicalEditor.getErrorLabel();
         if (errorLabel.getSelectionCount() > 0) {
             message = errorLabel.getSelectionText();
@@ -202,7 +202,8 @@ public class ClipboardSupport {
         // the elements. An update XML model event should happen when the model gets released
         // which will trigger a recompute of the layout, thus reloading the model thus
         // resetting the selection.
-        mCanvas.getLayoutEditor().wrapUndoEditXmlModel(title, new Runnable() {
+        mCanvas.getEditorDelegate().getEditor().wrapUndoEditXmlModel(title, new Runnable() {
+            @Override
             public void run() {
                 // Segment the deleted nodes into clusters of siblings
                 Map<NodeProxy, List<INode>> clusters =
@@ -222,12 +223,11 @@ public class ClipboardSupport {
 
                 // Notify parent views about children getting deleted
                 RulesEngine rulesEngine = mCanvas.getRulesEngine();
-                LayoutEditor editor = mCanvas.getLayoutEditor();
                 for (Map.Entry<NodeProxy, List<INode>> entry : clusters.entrySet()) {
                     NodeProxy parent = entry.getKey();
                     List<INode> children = entry.getValue();
                     assert children != null && children.size() > 0;
-                    rulesEngine.callOnRemovingChildren(editor, parent, children);
+                    rulesEngine.callOnRemovingChildren(parent, children);
                     parent.applyPendingChanges();
                 }
 
@@ -282,10 +282,12 @@ public class ClipboardSupport {
         }
 
         final NodeProxy targetNode = mCanvas.getNodeFactory().create(target);
-        mCanvas.getLayoutEditor().wrapUndoEditXmlModel("Paste", new Runnable() {
+        mCanvas.getEditorDelegate().getEditor().wrapUndoEditXmlModel("Paste", new Runnable() {
+            @Override
             public void run() {
-                mCanvas.getRulesEngine().callOnPaste(targetNode, target.getViewObject(), pasted);
-                targetNode.applyPendingChanges();
+                RulesEngine engine = mCanvas.getRulesEngine();
+                NodeProxy node = engine.callOnPaste(targetNode, target.getViewObject(), pasted);
+                node.applyPendingChanges();
             }
         });
     }
@@ -304,15 +306,15 @@ public class ClipboardSupport {
         String rootFqcn = pastedElement.getFqcn();
 
         // Need a valid empty document to create the new root
-        final LayoutEditor layoutEditor = mCanvas.getLayoutEditor();
-        final UiDocumentNode uiDoc = layoutEditor.getUiRootNode();
+        final LayoutEditorDelegate delegate = mCanvas.getEditorDelegate();
+        final UiDocumentNode uiDoc = delegate.getUiRootNode();
         if (uiDoc == null || uiDoc.getUiChildren().size() > 0) {
             debugPrintf("Failed to paste document root for %1$s: document is not empty", rootFqcn);
             return;
         }
 
         // Find the view descriptor matching our FQCN
-        final ViewElementDescriptor viewDesc = layoutEditor.getFqcnViewDescriptor(rootFqcn);
+        final ViewElementDescriptor viewDesc = delegate.getFqcnViewDescriptor(rootFqcn);
         if (viewDesc == null) {
             // TODO this could happen if pasting a custom view not known in this project
             debugPrintf("Failed to paste document root, unknown FQCN %1$s", rootFqcn);
@@ -327,14 +329,15 @@ public class ClipboardSupport {
         }
         title = String.format("Paste root %1$s in document", title);
 
-        layoutEditor.wrapUndoEditXmlModel(title, new Runnable() {
+        delegate.getEditor().wrapUndoEditXmlModel(title, new Runnable() {
+            @Override
             public void run() {
                 UiElementNode uiNew = uiDoc.appendNewUiChild(viewDesc);
 
                 // A root node requires the Android XMLNS
                 uiNew.setAttributeValue(
-                        "android", //$NON-NLS-1$
-                        XmlnsAttributeDescriptor.XMLNS_URI,
+                        XmlUtils.ANDROID_NS_NAME,
+                        XmlUtils.XMLNS_URI,
                         SdkConstants.NS_RESOURCES,
                         true /*override*/);
 
@@ -363,7 +366,7 @@ public class ClipboardSupport {
             private void addChild(UiElementNode uiParent, IDragElement childElement) {
                 String childFqcn = childElement.getFqcn();
                 final ViewElementDescriptor childDesc =
-                    layoutEditor.getFqcnViewDescriptor(childFqcn);
+                    delegate.getFqcnViewDescriptor(childFqcn);
                 if (childDesc == null) {
                     // TODO this could happen if pasting a custom view
                     debugPrintf("Failed to paste element, unknown FQCN %1$s", childFqcn);

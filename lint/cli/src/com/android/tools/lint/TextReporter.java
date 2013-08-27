@@ -18,25 +18,43 @@ package com.android.tools.lint;
 
 import com.android.tools.lint.detector.api.Location;
 import com.android.tools.lint.detector.api.Position;
+import com.google.common.annotations.Beta;
 
 import java.io.IOException;
 import java.io.Writer;
 import java.util.List;
 
-/** A reporter which emits lint warnings as plain text strings */
-class TextReporter extends Reporter {
-    private Main mClient;
+/**
+ * A reporter which emits lint warnings as plain text strings
+ * <p>
+ * <b>NOTE: This is not a public or final API; if you rely on this be prepared
+ * to adjust your code for the next tools release.</b>
+ */
+@Beta
+public class TextReporter extends Reporter {
+    private final Writer mWriter;
 
-    TextReporter(Main client, Writer writer) {
-        super(writer);
-        mClient = client;
+    /**
+     * Constructs a new {@link TextReporter}
+     *
+     * @param client the client
+     * @param writer the writer to write into
+     */
+    public TextReporter(Main client, Writer writer) {
+        super(client, null);
+        mWriter = writer;
     }
 
     @Override
-    void write(int errorCount, int warningCount, List<Warning> issues) throws IOException {
+    public void write(int errorCount, int warningCount, List<Warning> issues) throws IOException {
+        boolean abbreviate = mClient.getDriver().isAbbreviating();
+
         StringBuilder output = new StringBuilder(issues.size() * 200);
         if (issues.size() == 0) {
-            System.out.println("No issues found.");
+            mWriter.write('\n');
+            mWriter.write("No issues found.");
+            mWriter.write('\n');
+            mWriter.flush();
         } else {
             for (Warning warning : issues) {
                 int startLength = output.length();
@@ -67,48 +85,82 @@ class TextReporter extends Reporter {
 
                 output.append('\n');
 
-                if (warning.errorLine != null) {
+                if (warning.errorLine != null && warning.errorLine.length() > 0) {
                     output.append(warning.errorLine);
                 }
 
                 if (warning.location != null && warning.location.getSecondary() != null) {
                     Location location = warning.location.getSecondary();
-                    int count = 0;
                     while (location != null) {
-                        if (location.getMessage() != null && location.getMessage().length() > 0) {
+                        if (location.getMessage() != null
+                                && location.getMessage().length() > 0) {
+                            output.append("    "); //$NON-NLS-1$
                             String path = mClient.getDisplayPath(warning.project,
                                     location.getFile());
                             output.append(path);
-                            output.append(':');
 
                             Position start = location.getStart();
                             if (start != null) {
                                 int line = start.getLine();
                                 if (line >= 0) {
-                                    output.append(Integer.toString(line + 1));
                                     output.append(':');
+                                    output.append(Integer.toString(line + 1));
                                 }
                             }
 
-                            output.append(' ');
-                            output.append(location.getMessage());
-                            output.append('\n');
-                            count++;
-                            if (count == 5) {
-                                output.append("...");
-                                output.append('\n');
+                            if (location.getMessage() != null
+                                    && location.getMessage().length() > 0) {
+                                output.append(':');
+                                output.append(' ');
+                                output.append(location.getMessage());
                             }
+
+                            output.append('\n');
                         }
 
                         location = location.getSecondary();
                     }
+
+                    if (!abbreviate) {
+                        location = warning.location.getSecondary();
+                        StringBuilder sb = new StringBuilder();
+                        sb.append("Also affects: ");
+                        int begin = sb.length();
+                        while (location != null) {
+                            if (location.getMessage() == null
+                                    || location.getMessage().length() > 0) {
+                                if (sb.length() > begin) {
+                                    sb.append(", ");
+                                }
+
+                                String path = mClient.getDisplayPath(warning.project,
+                                        location.getFile());
+                                sb.append(path);
+
+                                Position start = location.getStart();
+                                if (start != null) {
+                                    int line = start.getLine();
+                                    if (line >= 0) {
+                                        sb.append(':');
+                                        sb.append(Integer.toString(line + 1));
+                                    }
+                                }
+                            }
+
+                            location = location.getSecondary();
+                        }
+                        String wrapped = Main.wrap(sb.toString(), Main.MAX_LINE_WIDTH, "     "); //$NON-NLS-1$
+                        output.append(wrapped);
+                    }
                 }
             }
 
-            System.out.println(output.toString());
+            mWriter.write(output.toString());
 
-            System.out.println(String.format("%1$d errors, %2$d warnings",
+            mWriter.write(String.format("%1$d errors, %2$d warnings",
                     errorCount, warningCount));
+            mWriter.write('\n');
+            mWriter.flush();
         }
     }
 }

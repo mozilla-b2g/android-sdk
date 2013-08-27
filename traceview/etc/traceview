@@ -86,7 +86,7 @@ else
     vmarch=`${javaCmd} -jar "${frameworkdir}"/archquery.jar`
     if [ -n "$ANDROID_BUILD_TOP" ]; then
         osname=`uname -s | tr A-Z a-z`
-        swtpath="${ANDROID_BUILD_TOP}/prebuilt/${osname}-${vmarch}/swt"
+        swtpath="${ANDROID_BUILD_TOP}/prebuilts/tools/${osname}-${vmarch}/swt"
     else
         swtpath="${frameworkdir}/${vmarch}"
     fi
@@ -101,4 +101,6 @@ else
     exit 1
 fi
 
+echo "The standalone version of traceview is deprecated."
+echo "Please use Android Device Monitor (tools/monitor) instead."
 exec "${javaCmd}" $javaOpts -Djava.ext.dirs="$frameworkdir" -Dcom.android.traceview.toolsdir="$progdir" -jar "$jarpath" "$@"

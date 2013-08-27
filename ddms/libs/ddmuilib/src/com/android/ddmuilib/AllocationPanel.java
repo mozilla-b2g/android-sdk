@@ -17,10 +17,10 @@
 package com.android.ddmuilib;
 
 import com.android.ddmlib.AllocationInfo;
-import com.android.ddmlib.Client;
 import com.android.ddmlib.AllocationInfo.AllocationSorter;
 import com.android.ddmlib.AllocationInfo.SortMode;
 import com.android.ddmlib.AndroidDebugBridge.IClientChangeListener;
+import com.android.ddmlib.Client;
 import com.android.ddmlib.ClientData.AllocationTrackingStatus;
 
 import org.eclipse.jface.preference.IPreferenceStore;
@@ -48,11 +48,11 @@ import org.eclipse.swt.layout.FormLayout;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Button;
-import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Event;
+import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Listener;
 import org.eclipse.swt.widgets.Sash;
 import org.eclipse.swt.widgets.Table;
@@ -61,6 +61,7 @@ import org.eclipse.swt.widgets.Text;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Locale;
 
 /**
  * Base class for our information panels.
@@ -104,6 +105,7 @@ public class AllocationPanel extends TablePanel {
      * {@link AllocationInfo}.
      */
     private class AllocationContentProvider implements IStructuredContentProvider {
+        @Override
         public Object[] getElements(Object inputElement) {
             if (inputElement instanceof Client) {
                 AllocationInfo[] allocs = ((Client)inputElement).getClientData().getAllocations();
@@ -119,10 +121,12 @@ public class AllocationPanel extends TablePanel {
             return new Object[0];
         }
 
+        @Override
         public void dispose() {
             // pass
         }
 
+        @Override
         public void inputChanged(Viewer viewer, Object oldInput, Object newInput) {
             // pass
         }
@@ -134,10 +138,12 @@ public class AllocationPanel extends TablePanel {
      */
     private static class AllocationLabelProvider implements ITableLabelProvider {
 
+        @Override
         public Image getColumnImage(Object element, int columnIndex) {
             return null;
         }
 
+        @Override
         public String getColumnText(Object element, int columnIndex) {
             if (element instanceof AllocationInfo) {
                 AllocationInfo alloc = (AllocationInfo)element;
@@ -160,19 +166,23 @@ public class AllocationPanel extends TablePanel {
             return null;
         }
 
+        @Override
         public void addListener(ILabelProviderListener listener) {
             // pass
         }
 
+        @Override
         public void dispose() {
             // pass
         }
 
+        @Override
         public boolean isLabelProperty(Object element, String property) {
             // pass
             return false;
         }
 
+        @Override
         public void removeListener(ILabelProviderListener listener) {
             // pass
         }
@@ -237,6 +247,7 @@ public class AllocationPanel extends TablePanel {
         gridData.widthHint = 200;
 
         filterText.addModifyListener(new ModifyListener() {
+            @Override
             public void modifyText(ModifyEvent arg0) {
                 mFilterText  = filterText.getText().trim();
                 mAllocationViewer.refresh();
@@ -362,6 +373,7 @@ public class AllocationPanel extends TablePanel {
         mAllocationViewer.setLabelProvider(new AllocationLabelProvider());
 
         mAllocationViewer.addSelectionChangedListener(new ISelectionChangedListener() {
+            @Override
             public void selectionChanged(SelectionChangedEvent event) {
                 AllocationInfo selectedAlloc = getAllocationSelection(event.getSelection());
                 updateAllocationStackTrace(selectedAlloc);
@@ -411,6 +423,7 @@ public class AllocationPanel extends TablePanel {
 
         // allow resizes, but cap at minPanelWidth
         sash.addListener(SWT.Selection, new Listener() {
+            @Override
             public void handleEvent(Event e) {
                 Rectangle sashRect = sash.getBounds();
                 Rectangle panelRect = mAllocationBase.getClientArea();
@@ -455,11 +468,13 @@ public class AllocationPanel extends TablePanel {
      *
      * @see IClientChangeListener#clientChanged(Client, int)
      */
+    @Override
     public void clientChanged(final Client client, int changeMask) {
         if (client == getCurrentClient()) {
             if ((changeMask & Client.CHANGE_HEAP_ALLOCATIONS) != 0) {
                 try {
                     mAllocationTable.getDisplay().asyncExec(new Runnable() {
+                        @Override
                         public void run() {
                             mAllocationViewer.refresh();
                             updateAllocationStackCall();
@@ -471,6 +486,7 @@ public class AllocationPanel extends TablePanel {
             } else if ((changeMask & Client.CHANGE_HEAP_ALLOCATION_STATUS) != 0) {
                 try {
                     mAllocationTable.getDisplay().asyncExec(new Runnable() {
+                        @Override
                         public void run() {
                             setUpButtons(true, client.getClientData().getAllocationStatus());
                         }
@@ -628,12 +644,13 @@ public class AllocationPanel extends TablePanel {
     private AllocationInfo[] getFilteredAllocations(AllocationInfo[] allocations,
             String filterText) {
         ArrayList<AllocationInfo> results = new ArrayList<AllocationInfo>();
-
-        filterText = filterText.toLowerCase();
+        // Using default locale here such that the locale-specific c
+        Locale locale = Locale.getDefault();
+        filterText = filterText.toLowerCase(locale);
         boolean fullTrace = mTraceFilterCheck.getSelection();
 
         for (AllocationInfo info : allocations) {
-            if (info.filter(filterText, fullTrace)) {
+            if (info.filter(filterText, fullTrace, locale)) {
                 results.add(info);
             }
         }

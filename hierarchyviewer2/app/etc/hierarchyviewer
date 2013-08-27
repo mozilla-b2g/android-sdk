@@ -89,7 +89,7 @@ else
     vmarch=`${javaCmd} -jar "${frameworkdir}"/archquery.jar`
     if [ -n "$ANDROID_BUILD_TOP" ]; then
         osname=`uname -s | tr A-Z a-z`
-        swtpath="${ANDROID_BUILD_TOP}/prebuilt/${osname}-${vmarch}/swt"
+        swtpath="${ANDROID_BUILD_TOP}/prebuilts/tools/${osname}-${vmarch}/swt"
     else
         swtpath="${frameworkdir}/${vmarch}"
     fi
@@ -103,6 +103,8 @@ fi
 
 # need to use "java.ext.dirs" because "-jar" causes classpath to be ignored
 # might need more memory, e.g. -Xmx128M
+echo "The standalone version of hieararchyviewer is deprecated."
+echo "Please use Android Device Monitor (tools/monitor) instead."
 exec "$javaCmd" \
     -Xmx512M $os_opts $java_debug \
     -Dcom.android.hierarchyviewer.bindir="$progdir" \

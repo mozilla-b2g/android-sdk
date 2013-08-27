@@ -104,7 +104,7 @@ public class CanvasTransform {
      *
      * @return The scaled image size in pixels.
      */
-    public int getScalledImgSize() {
+    public int getScaledImgSize() {
         return (int) (mImgSize * mScale);
     }
 
@@ -178,5 +178,9 @@ public class CanvasTransform {
 
     public int inverseTranslate(int screenX) {
         return (int) ((screenX - mMargin + mTranslate) / mScale);
+    }
+
+    public int inverseScale(int canwasW) {
+        return (int) (canwasW / mScale);
     }
 }

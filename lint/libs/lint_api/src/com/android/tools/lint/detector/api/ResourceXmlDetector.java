@@ -16,7 +16,9 @@
 
 package com.android.tools.lint.detector.api;
 
+import com.android.annotations.NonNull;
 import com.android.resources.ResourceFolderType;
+import com.google.common.annotations.Beta;
 
 import java.io.File;
 
@@ -28,9 +30,10 @@ import java.io.File;
  * <b>NOTE: This is not a public or final API; if you rely on this be prepared
  * to adjust your code for the next tools release.</b>
  */
+@Beta
 public abstract class ResourceXmlDetector extends Detector implements Detector.XmlScanner {
     @Override
-    public boolean appliesTo(Context context, File file) {
+    public boolean appliesTo(@NonNull Context context, @NonNull File file) {
         return LintUtils.isXmlFile(file);
     }
 
@@ -44,12 +47,12 @@ public abstract class ResourceXmlDetector extends Detector implements Detector.X
      * @return true if this detector can apply to resources in folders of the
      *         given type
      */
-    public boolean appliesTo(ResourceFolderType folderType) {
+    public boolean appliesTo(@NonNull ResourceFolderType folderType) {
         return true;
     }
 
     @Override
-    public void run(Context context) {
+    public void run(@NonNull Context context) {
         // The infrastructure should never call this method on an xml detector since
         // it will run the various visitors instead
         assert false;

@@ -18,10 +18,11 @@ package com.android.sdkuilib.internal.repository;
 
 import com.android.sdklib.AndroidVersion;
 import com.android.sdklib.SdkConstants;
-import com.android.sdklib.internal.repository.Archive;
-import com.android.sdklib.internal.repository.IPackageVersion;
-import com.android.sdklib.internal.repository.Package;
-import com.android.sdklib.internal.repository.SdkSource;
+import com.android.sdklib.internal.repository.archives.Archive;
+import com.android.sdklib.internal.repository.packages.IAndroidVersionProvider;
+import com.android.sdklib.internal.repository.packages.Package;
+import com.android.sdklib.internal.repository.packages.FullRevision;
+import com.android.sdklib.internal.repository.sources.SdkSource;
 import com.android.sdkuilib.internal.repository.icons.ImageFactory;
 import com.android.sdkuilib.ui.GridDialog;
 
@@ -423,28 +424,29 @@ final class SdkUpdaterChooserDialog extends GridDialog {
         if (aOld != null) {
             Package pOld = aOld.getParentPackage();
 
-            int rOld = pOld.getRevision();
-            int rNew = pNew.getRevision();
+            FullRevision rOld = pOld.getRevision();
+            FullRevision rNew = pNew.getRevision();
 
             boolean showRev = true;
 
-            if (pNew instanceof IPackageVersion && pOld instanceof IPackageVersion) {
-                AndroidVersion vOld = ((IPackageVersion) pOld).getVersion();
-                AndroidVersion vNew = ((IPackageVersion) pNew).getVersion();
+            if (pNew instanceof IAndroidVersionProvider &&
+                    pOld instanceof IAndroidVersionProvider) {
+                AndroidVersion vOld = ((IAndroidVersionProvider) pOld).getAndroidVersion();
+                AndroidVersion vNew = ((IAndroidVersionProvider) pNew).getAndroidVersion();
 
                 if (!vOld.equals(vNew)) {
                     // Versions are different, so indicate more than just the revision.
-                    addText(String.format("This update will replace API %1$s revision %2$d with API %3$s revision %4$d.\n\n",
-                            vOld.getApiString(), rOld,
-                            vNew.getApiString(), rNew));
+                    addText(String.format("This update will replace API %1$s revision %2$s with API %3$s revision %4$s.\n\n",
+                            vOld.getApiString(), rOld.toShortString(),
+                            vNew.getApiString(), rNew.toShortString()));
                     showRev = false;
                 }
             }
 
             if (showRev) {
-                addText(String.format("This update will replace revision %1$d with revision %2$d.\n\n",
-                        rOld,
-                        rNew));
+                addText(String.format("This update will replace revision %1$s with revision %2$s.\n\n",
+                        rOld.toShortString(),
+                        rNew.toShortString()));
             }
         }
 
@@ -739,14 +741,17 @@ final class SdkUpdaterChooserDialog extends GridDialog {
 
     private class NewArchivesContentProvider implements IStructuredContentProvider {
 
+        @Override
         public void dispose() {
             // pass
         }
 
+        @Override
         public void inputChanged(Viewer viewer, Object oldInput, Object newInput) {
             // Ignore. The input is always mArchives
         }
 
+        @Override
         public Object[] getElements(Object inputElement) {
             return mArchives.toArray();
         }

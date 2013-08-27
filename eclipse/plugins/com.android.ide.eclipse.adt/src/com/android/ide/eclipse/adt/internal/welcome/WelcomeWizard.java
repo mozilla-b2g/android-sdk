@@ -106,12 +106,13 @@ public class WelcomeWizard extends Wizard {
 
         // Perform installation asynchronously since it takes a while.
         getShell().getDisplay().asyncExec(new Runnable() {
+            @Override
             public void run() {
                 if (createNew) {
                     try {
                         Set<Integer> apiLevels = new HashSet<Integer>();
                         if (installCommon) {
-                            apiLevels.add(7);
+                            apiLevels.add(8);
                         }
                         if (installLatest) {
                             apiLevels.add(AdtUpdateDialog.USE_MAX_REMOTE_API_LEVEL);
@@ -171,6 +172,12 @@ public class WelcomeWizard extends Wizard {
         // Note: we don't have to specify tools & platform-tools since they
         // are required dependencies of any platform.
         boolean result = updater.installNewSdk(apiLevels);
+
+        // TODO: Install extra package here as well since it is now core to most of
+        // the templates
+        // if (result) {
+        //     updater.installExtraPackage(vendor, path);
+        // }
 
         if (disposeShell) {
             shell.dispose();

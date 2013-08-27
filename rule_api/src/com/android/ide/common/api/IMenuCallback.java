@@ -16,6 +16,10 @@
 
 package com.android.ide.common.api;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
+import com.google.common.annotations.Beta;
+
 import java.util.List;
 
 /**
@@ -28,6 +32,7 @@ import java.util.List;
  * to adjust your code for the next tools release.</b>
  * </p>
  */
+@Beta
 public interface IMenuCallback {
     /**
      * Performs the actual work promised by the {@link RuleAction}.
@@ -39,6 +44,22 @@ public interface IMenuCallback {
      *            useful; however for flags it allows one to add or remove items
      *            to the flag's choices.
      */
-    void action(RuleAction action, List<? extends INode> selectedNodes, String valueId,
-            Boolean newValue);
+    void action(
+            @NonNull RuleAction action,
+            @NonNull List<? extends INode> selectedNodes,
+            @Nullable String valueId,
+            @Nullable Boolean newValue);
+
+    /** Callback which does nothing */
+    @NonNull
+    public static final IMenuCallback NONE = new IMenuCallback() {
+        @Override
+        public void action(
+                @NonNull RuleAction action,
+                @NonNull
+                List<? extends INode> selectedNodes,
+                @Nullable String valueId,
+                @Nullable Boolean newValue) {
+        }
+    };
 }

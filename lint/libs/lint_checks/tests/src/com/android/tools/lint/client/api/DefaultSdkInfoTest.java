@@ -1,11 +1,11 @@
 /*
  * Copyright (C) 2011 The Android Open Source Project
  *
- * Licensed under the Eclipse Public License, Version 1.0 (the "License");
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.eclipse.org/org/documents/epl-v10.php
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -42,6 +42,9 @@ public class DefaultSdkInfoTest extends TestCase {
         DefaultSdkInfo info = new DefaultSdkInfo();
         assertTrue(info.isSubViewOf("Button", "Button"));
         assertTrue(info.isSubViewOf("TextView", "Button"));
+        assertTrue(info.isSubViewOf("TextView", "RadioButton"));
+        assertTrue(info.isSubViewOf("AdapterView", "Spinner"));
+        assertTrue(info.isSubViewOf("AdapterView<?>", "Spinner"));
         assertFalse(info.isSubViewOf("Button", "TextView"));
         assertFalse(info.isSubViewOf("CheckBox", "ToggleButton"));
         assertFalse(info.isSubViewOf("ToggleButton", "CheckBox"));
@@ -50,5 +53,8 @@ public class DefaultSdkInfoTest extends TestCase {
         assertFalse(info.isSubViewOf("TableLayout", "LinearLayout"));
         assertTrue(info.isSubViewOf("TextView", "EditText"));
         assertFalse(info.isSubViewOf("EditText", "TextView"));
+        assertTrue(info.isSubViewOf("View", "TextView"));
+        assertFalse(info.isSubViewOf("TextView", "View"));
+        assertFalse(info.isSubViewOf("Spinner", "AdapterView<?>"));
     }
 }

@@ -16,9 +16,11 @@
 
 
 package com.android.ide.common.layout;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
+import static com.android.util.XmlUtils.ANDROID_URI;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.api.DropFeedback;
 import com.android.ide.common.api.IClientRulesEngine;
 import com.android.ide.common.api.IDragElement;
@@ -190,128 +192,164 @@ public class LayoutTestBase extends TestCase {
         rule.onInitialize(fqn, new TestRulesEngine(fqn));
     }
 
-    private static class TestRulesEngine implements IClientRulesEngine {
+    public static class TestRulesEngine implements IClientRulesEngine {
         private final String mFqn;
 
-        protected TestRulesEngine(String fqn) {
+        public TestRulesEngine(String fqn) {
             mFqn = fqn;
         }
 
-        public void debugPrintf(String msg, Object... params) {
+        @Override
+        public void debugPrintf(@NonNull String msg, Object... params) {
             fail("Not supported in tests yet");
         }
 
-        public void displayAlert(String message) {
+        @Override
+        public void displayAlert(@NonNull String message) {
             fail("Not supported in tests yet");
         }
 
-        public String displayInput(String message, String value, IValidator filter) {
+        @Override
+        public String displayInput(@NonNull String message, @Nullable String value,
+                @Nullable IValidator filter) {
             fail("Not supported in tests yet");
             return null;
         }
 
-        public String getFqcn() {
+        @Override
+        public @NonNull String getFqcn() {
             return mFqn;
         }
 
-        public IViewMetadata getMetadata(final String fqcn) {
+        @Override
+        public @NonNull IViewMetadata getMetadata(final @NonNull String fqcn) {
             return new IViewMetadata() {
-                public String getDisplayName() {
+                @Override
+                public @NonNull String getDisplayName() {
                     // This also works when there is no "."
                     return fqcn.substring(fqcn.lastIndexOf('.') + 1);
                 }
 
-                public FillPreference getFillPreference() {
+                @Override
+                public @NonNull FillPreference getFillPreference() {
                     return ViewMetadataRepository.get().getFillPreference(fqcn);
                 }
 
-                public Margins getInsets() {
+                @Override
+                public @NonNull Margins getInsets() {
                     return null;
                 }
 
-                public List<String> getTopAttributes() {
+                @Override
+                public @NonNull List<String> getTopAttributes() {
                     return ViewMetadataRepository.get().getTopAttributes(fqcn);
                 }
             };
         }
 
+        @Override
         public int getMinApiLevel() {
             return 8;
         }
 
-        public IViewRule loadRule(String fqcn) {
+        @Override
+        public IViewRule loadRule(@NonNull String fqcn) {
             fail("Not supported in tests yet");
             return null;
         }
 
+        @Override
         public String displayReferenceInput(String currentValue) {
             fail("Not supported in tests yet");
             return null;
         }
 
-        public IValidator getResourceValidator() {
+        @Override
+        public IValidator getResourceValidator(String resourceTypeName, boolean uniqueInProject,
+                boolean uniqueInLayout, boolean exists, String... allowed) {
             fail("Not supported in tests yet");
             return null;
         }
 
-        public String displayResourceInput(String resourceTypeName, String currentValue) {
+        @Override
+        public String displayResourceInput(@NonNull String resourceTypeName,
+                @Nullable String currentValue) {
             fail("Not supported in tests yet");
             return null;
         }
 
-        public String[] displayMarginInput(String all, String left, String right, String top,
-                String bottom) {
+        @Override
+        public String[] displayMarginInput(@Nullable String all, @Nullable String left,
+                @Nullable String right, @Nullable String top, @Nullable String bottom) {
             fail("Not supported in tests yet");
             return null;
         }
 
+        @Override
         public String displayIncludeSourceInput() {
             fail("Not supported in tests yet");
             return null;
         }
 
-        public void select(Collection<INode> nodes) {
+        @Override
+        public void select(@NonNull Collection<INode> nodes) {
             fail("Not supported in tests yet");
         }
 
+        @Override
         public String displayFragmentSourceInput() {
             fail("Not supported in tests yet");
             return null;
         }
 
+        @Override
         public void layout() {
             fail("Not supported in tests yet");
         }
 
+        @Override
         public void redraw() {
             fail("Not supported in tests yet");
         }
 
-        public Map<INode, Rect> measureChildren(INode parent, AttributeFilter filter) {
+        @Override
+        public Map<INode, Rect> measureChildren(@NonNull INode parent,
+                @Nullable AttributeFilter filter) {
             return null;
         }
 
+        @Override
         public int pxToDp(int px) {
-            fail("Not supported in tests yet");
-            return px;
+            // Arbitrary conversion
+            return px / 3;
         }
 
-        public String getUniqueId(String prefix) {
+        @Override
+        public int dpToPx(int dp) {
+            // Arbitrary conversion
+            return 3 * dp;
+        }
+
+        @Override
+        public @NonNull String getUniqueId(@NonNull String prefix) {
             fail("Not supported in tests yet");
             return null;
         }
 
+        @Override
         public int screenToLayout(int pixels) {
             fail("Not supported in tests yet");
-            return 0;
+            return pixels;
         }
 
-        public int dpToPx(int dp) {
+        @Override
+        public @NonNull String getAppNameSpace() {
             fail("Not supported in tests yet");
-            return 0;
+            return null;
         }
 
-        public String getAppNameSpace() {
+        @Override
+        public @Nullable Object getViewObject(@NonNull INode node) {
             fail("Not supported in tests yet");
             return null;
         }

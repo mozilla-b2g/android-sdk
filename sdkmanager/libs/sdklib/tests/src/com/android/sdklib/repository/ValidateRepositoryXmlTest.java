@@ -52,7 +52,7 @@ public class ValidateRepositoryXmlTest extends TestCase {
     /**
      * Helper method that returns a validator for our Repository XSD
      *
-     * @param version The versoion number, in range {@code 1..NS_LATEST_VERSION}
+     * @param version The version number, in range {@code 1..NS_LATEST_VERSION}
      * @param handler A {@link CaptureErrorHandler}. If null the default will be used,
      *   which will most likely print errors to stderr.
      */
@@ -84,7 +84,7 @@ public class ValidateRepositoryXmlTest extends TestCase {
 
     // --- Tests ------------
 
-    /** Validates that NS_LATEST_VERSION points to the max avaialble XSD schema. */
+    /** Validates that NS_LATEST_VERSION points to the max available XSD schema. */
     public void testRepoLatestVersionNumber() throws Exception {
         CaptureErrorHandler handler = new CaptureErrorHandler();
 
@@ -157,6 +157,32 @@ public class ValidateRepositoryXmlTest extends TestCase {
 
         CaptureErrorHandler handler = new CaptureErrorHandler();
         Validator validator = getRepoValidator(5, handler);
+        validator.validate(source);
+        handler.verify();
+
+    }
+
+    /** Validate a valid sample using namespace version 5 using an InputStream */
+    public void testValidateLocalRepositoryFile6() throws Exception {
+        InputStream xmlStream = this.getClass().getResourceAsStream(
+                    "/com/android/sdklib/testdata/repository_sample_6.xml");
+        Source source = new StreamSource(xmlStream);
+
+        CaptureErrorHandler handler = new CaptureErrorHandler();
+        Validator validator = getRepoValidator(6, handler);
+        validator.validate(source);
+        handler.verify();
+
+    }
+
+    /** Validate a valid sample using namespace version 5 using an InputStream */
+    public void testValidateLocalRepositoryFile7() throws Exception {
+        InputStream xmlStream = this.getClass().getResourceAsStream(
+                    "/com/android/sdklib/testdata/repository_sample_7.xml");
+        Source source = new StreamSource(xmlStream);
+
+        CaptureErrorHandler handler = new CaptureErrorHandler();
+        Validator validator = getRepoValidator(7, handler);
         validator.validate(source);
         handler.verify();
 
@@ -276,8 +302,8 @@ public class ValidateRepositoryXmlTest extends TestCase {
         String document = "<?xml version=\"1.0\"?>" +
             OPEN_TAG_REPO +
             "<r:license id=\"lic1\"> some license </r:license> " +
-            "<r:tool> <r:uses-license ref=\"lic2\" /> <r:revision>1</r:revision> " +
-            "<r:min-platform-tools-rev>1</r:min-platform-tools-rev> " +
+            "<r:tool> <r:uses-license ref=\"lic2\" /> <r:revision> <r:major>1</r:major> </r:revision> " +
+            "<r:min-platform-tools-rev> <r:major>1</r:major> </r:min-platform-tools-rev> " +
             "<r:archives> <r:archive os=\"any\"> <r:size>1</r:size> <r:checksum>2822ae37115ebf13412bbef91339ee0d9454525e</r:checksum> " +
             "<r:url>url</r:url> </r:archive> </r:archives> </r:tool>" +
             CLOSE_TAG_REPO;
@@ -298,12 +324,11 @@ public class ValidateRepositoryXmlTest extends TestCase {
         fail();
     }
 
-    /** A document a slash in an extra path. */
+    /** The latest XSD repository-6 should fail when an 'extra' is present. */
     public void testExtraPathWithSlash() throws Exception {
-        // we define a license named "lic1" and then reference "lic2" instead
         String document = "<?xml version=\"1.0\"?>" +
             OPEN_TAG_REPO +
-            "<r:extra> <r:revision>1</r:revision> <r:path>path/cannot\\contain\\segments</r:path> " +
+            "<r:extra> <r:revision>1</r:revision> <r:path>path</r:path> " +
             "<r:archives> <r:archive os=\"any\"> <r:size>1</r:size> <r:checksum>2822ae37115ebf13412bbef91339ee0d9454525e</r:checksum> " +
             "<r:url>url</r:url> </r:archive> </r:archives> </r:extra>" +
             CLOSE_TAG_REPO;
@@ -316,7 +341,7 @@ public class ValidateRepositoryXmlTest extends TestCase {
             validator.validate(source);
         } catch (SAXParseException e) {
             // We expect a parse error referring to this grammar rule
-            assertRegex("cvc-pattern-valid: Value 'path/cannot\\\\contain\\\\segments' is not facet-valid with respect to pattern.*",
+            assertRegex("cvc-complex-type.2.4.a: Invalid content was found starting with element 'r:extra'.*",
                     e.getMessage());
             return;
         }

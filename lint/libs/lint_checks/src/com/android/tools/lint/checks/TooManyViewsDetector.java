@@ -16,6 +16,7 @@
 
 package com.android.tools.lint.checks;
 
+import com.android.annotations.NonNull;
 import com.android.tools.lint.detector.api.Category;
 import com.android.tools.lint.detector.api.Context;
 import com.android.tools.lint.detector.api.Issue;
@@ -102,12 +103,12 @@ public class TooManyViewsDetector extends LayoutDetector {
     }
 
     @Override
-    public Speed getSpeed() {
+    public @NonNull Speed getSpeed() {
         return Speed.FAST;
     }
 
     @Override
-    public void beforeCheckFile(Context context) {
+    public void beforeCheckFile(@NonNull Context context) {
         mViewCount = mDepth = 0;
         mWarnedAboutDepth = false;
     }
@@ -118,7 +119,7 @@ public class TooManyViewsDetector extends LayoutDetector {
     }
 
     @Override
-    public void visitElement(XmlContext context, Element element) {
+    public void visitElement(@NonNull XmlContext context, @NonNull Element element) {
         mViewCount++;
         mDepth++;
 
@@ -130,17 +131,17 @@ public class TooManyViewsDetector extends LayoutDetector {
             mWarnedAboutDepth = true;
             String msg = String.format("%1$s has more than %2$d levels, bad for performance",
                     context.file.getName(), MAX_DEPTH);
-            context.report(TOO_DEEP, context.getLocation(element), msg, null);
+            context.report(TOO_DEEP, element, context.getLocation(element), msg, null);
         }
         if (mViewCount == MAX_VIEW_COUNT) {
             String msg = String.format("%1$s has more than %2$d views, bad for performance",
                     context.file.getName(), MAX_VIEW_COUNT);
-            context.report(TOO_MANY, context.getLocation(element), msg, null);
+            context.report(TOO_MANY, element, context.getLocation(element), msg, null);
         }
     }
 
     @Override
-    public void visitElementAfter(XmlContext context, Element element) {
+    public void visitElementAfter(@NonNull XmlContext context, @NonNull Element element) {
         mDepth--;
     }
 }

@@ -16,7 +16,10 @@
 
 package com.android.ide.common.resources.platform;
 
+import com.android.annotations.NonNull;
 import com.android.ide.common.api.IAttributeInfo;
+
+import java.util.EnumSet;
 
 
 /**
@@ -29,7 +32,7 @@ public class AttributeInfo implements IAttributeInfo {
     private String mName;
 
     /** Formats of the attribute. Cannot be null. Should have at least one format. */
-    private Format[] mFormats;
+    private EnumSet<Format> mFormats;
     /** Values for enum. null for other types. */
     private String[] mEnumValues;
     /** Values for flag. null for other types. */
@@ -46,7 +49,7 @@ public class AttributeInfo implements IAttributeInfo {
      * @param formats The formats of the attribute. Cannot be null.
      *                Should have at least one format.
      */
-    public AttributeInfo(String name, Format[] formats) {
+    public AttributeInfo(@NonNull String name, @NonNull EnumSet<Format> formats) {
         mName = name;
         mFormats = formats;
     }
@@ -57,7 +60,7 @@ public class AttributeInfo implements IAttributeInfo {
      *                Should have at least one format.
      * @param javadoc Short javadoc (i.e. the first sentence).
      */
-    public AttributeInfo(String name, Format[] formats, String javadoc) {
+    public AttributeInfo(@NonNull String name, @NonNull EnumSet<Format> formats, String javadoc) {
         mName = name;
         mFormats = formats;
         mJavaDoc = javadoc;
@@ -72,28 +75,43 @@ public class AttributeInfo implements IAttributeInfo {
         mDeprecatedDoc = info.mDeprecatedDoc;
     }
 
+    /**
+     * Sets the XML Name of the attribute
+     *
+     * @param name the new name to assign
+     */
+    public void setName(String name) {
+        mName = name;
+    }
+
     /** Returns the XML Name of the attribute */
-    public String getName() {
+    @Override
+    public @NonNull String getName() {
         return mName;
     }
     /** Returns the formats of the attribute. Cannot be null.
      *  Should have at least one format. */
-    public Format[] getFormats() {
+    @Override
+    public @NonNull EnumSet<Format> getFormats() {
         return mFormats;
     }
     /** Returns the values for enums. null for other types. */
+    @Override
     public String[] getEnumValues() {
         return mEnumValues;
     }
     /** Returns the values for flags. null for other types. */
+    @Override
     public String[] getFlagValues() {
         return mFlagValues;
     }
     /** Returns a short javadoc, .i.e. the first sentence. */
-    public String getJavaDoc() {
+    @Override
+    public @NonNull String getJavaDoc() {
         return mJavaDoc;
     }
     /** Returns the documentation for deprecated attributes. Null if not deprecated. */
+    @Override
     public String getDeprecatedDoc() {
         return mDeprecatedDoc;
     }
@@ -138,7 +156,8 @@ public class AttributeInfo implements IAttributeInfo {
      * @return the name of the class (fully qualified class name) which defined
      *         this attribute
      */
-    public String getDefinedBy() {
+    @Override
+    public @NonNull String getDefinedBy() {
         return mDefinedBy;
     }
 }

@@ -15,15 +15,18 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.layout.refactoring;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
 import static com.android.ide.common.layout.LayoutConstants.ANDROID_WIDGET_PREFIX;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_PREFIX;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_TEXT;
 import static com.android.ide.eclipse.adt.AdtConstants.EXT_XML;
+import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.VIEW_FRAGMENT;
+import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.VIEW_INCLUDE;
+import static com.android.util.XmlUtils.ANDROID_URI;
 
+import com.android.annotations.NonNull;
 import com.android.annotations.VisibleForTesting;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.AttributeDescriptor;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.ViewElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.CanvasViewInfo;
 
@@ -74,13 +77,16 @@ public class ChangeViewRefactoring extends VisualRefactoring {
         mTypeFqcn = arguments.get(KEY_TYPE);
     }
 
-    public ChangeViewRefactoring(IFile file, LayoutEditor editor, ITextSelection selection,
+    public ChangeViewRefactoring(
+            IFile file,
+            LayoutEditorDelegate delegate,
+            ITextSelection selection,
             ITreeSelection treeSelection) {
-        super(file, editor, selection, treeSelection);
+        super(file, delegate, selection, treeSelection);
     }
 
     @VisibleForTesting
-    ChangeViewRefactoring(List<Element> selectedElements, LayoutEditor editor) {
+    ChangeViewRefactoring(List<Element> selectedElements, LayoutEditorDelegate editor) {
         super(selectedElements, editor);
     }
 
@@ -147,11 +153,14 @@ public class ChangeViewRefactoring extends VisualRefactoring {
     }
 
     @Override
-    protected List<Change> computeChanges(IProgressMonitor monitor) {
+    protected @NonNull List<Change> computeChanges(IProgressMonitor monitor) {
         String name = getViewClass(mTypeFqcn);
 
-        IFile file = mEditor.getInputFile();
+        IFile file = mDelegate.getEditor().getInputFile();
         List<Change> changes = new ArrayList<Change>();
+        if (file == null) {
+            return changes;
+        }
         TextFileChange change = new TextFileChange(file.getName(), file);
         MultiTextEdit rootEdit = new MultiTextEdit();
         change.setEdit(rootEdit);
@@ -184,7 +193,7 @@ public class ChangeViewRefactoring extends VisualRefactoring {
             String newId = ensureIdMatchesType(element, mTypeFqcn, rootEdit);
             // Update any layout references to the old id with the new id
             if (oldId != null && newId != null) {
-                IStructuredModel model = mEditor.getModelForRead();
+                IStructuredModel model = mDelegate.getEditor().getModelForRead();
                 try {
                     IStructuredDocument doc = model.getStructuredDocument();
                     if (doc != null) {
@@ -259,7 +268,8 @@ public class ChangeViewRefactoring extends VisualRefactoring {
         List<String> types = new ArrayList<String>();
         for (Element primary : getElements()) {
             String oldType = primary.getTagName();
-            if (oldType.indexOf('.') == -1) {
+            if (oldType.indexOf('.') == -1
+                    && !oldType.equals(VIEW_INCLUDE) && !oldType.equals(VIEW_FRAGMENT)) {
                 oldType = ANDROID_WIDGET_PREFIX + oldType;
             }
             types.add(oldType);
@@ -270,7 +280,7 @@ public class ChangeViewRefactoring extends VisualRefactoring {
 
     @Override
     VisualRefactoringWizard createWizard() {
-        return new ChangeViewWizard(this, mEditor);
+        return new ChangeViewWizard(this, mDelegate);
     }
 
     public static class Descriptor extends VisualRefactoringDescriptor {

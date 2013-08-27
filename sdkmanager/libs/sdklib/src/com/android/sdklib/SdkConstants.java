@@ -85,6 +85,9 @@ public final class SdkConstants {
     /** Intent category list file */
     public static final String FN_INTENT_CATEGORIES = "categories.txt";               //$NON-NLS-1$
 
+    /** annotations support jar */
+    public static final String FN_ANNOTATIONS_JAR = "annotations.jar";                //$NON-NLS-1$
+
     /** platform build property file */
     public final static String FN_BUILD_PROP = "build.prop";                          //$NON-NLS-1$
     /** plugin properties file */
@@ -111,41 +114,45 @@ public final class SdkConstants {
     /** dx.jar file */
     public static final String FN_DX_JAR = "dx.jar";                                  //$NON-NLS-1$
 
-    /** dx executable (with extension for the current OS)  */
-    public final static String FN_DX = (CURRENT_PLATFORM == PLATFORM_WINDOWS) ?
-            "dx.bat" : "dx";                                            //$NON-NLS-1$ //$NON-NLS-2$
+    /** dx executable (with extension for the current OS) */
+    public final static String FN_DX =
+        "dx" + ext(".bat", "");                           //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-    /** aapt executable (with extension for the current OS)  */
-    public final static String FN_AAPT = (CURRENT_PLATFORM == PLATFORM_WINDOWS) ?
-            "aapt.exe" : "aapt";                                        //$NON-NLS-1$ //$NON-NLS-2$
+    /** aapt executable (with extension for the current OS) */
+    public final static String FN_AAPT =
+        "aapt" + ext(".exe", "");                         //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-    /** aidl executable (with extension for the current OS)  */
-    public final static String FN_AIDL = (CURRENT_PLATFORM == PLATFORM_WINDOWS) ?
-            "aidl.exe" : "aidl";                                        //$NON-NLS-1$ //$NON-NLS-2$
+    /** aidl executable (with extension for the current OS) */
+    public final static String FN_AIDL =
+        "aidl" + ext(".exe", "");                         //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-    /** renderscript executable (with extension for the current OS)  */
-    public final static String FN_RENDERSCRIPT = (CURRENT_PLATFORM == PLATFORM_WINDOWS) ?
-            "llvm-rs-cc.exe" : "llvm-rs-cc";                            //$NON-NLS-1$ //$NON-NLS-2$
+    /** renderscript executable (with extension for the current OS) */
+    public final static String FN_RENDERSCRIPT =
+        "llvm-rs-cc" + ext(".exe", "");                   //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-    /** adb executable (with extension for the current OS)  */
-    public final static String FN_ADB = (CURRENT_PLATFORM == PLATFORM_WINDOWS) ?
-            "adb.exe" : "adb";                                          //$NON-NLS-1$ //$NON-NLS-2$
+    /** adb executable (with extension for the current OS) */
+    public final static String FN_ADB =
+        "adb" + ext(".exe", "");                          //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
     /** emulator executable for the current OS */
-    public final static String FN_EMULATOR = (CURRENT_PLATFORM == PLATFORM_WINDOWS) ?
-            "emulator.exe" : "emulator";                                //$NON-NLS-1$ //$NON-NLS-2$
+    public final static String FN_EMULATOR =
+        "emulator" + ext(".exe", "");                     //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-    /** zipalign executable (with extension for the current OS)  */
-    public final static String FN_ZIPALIGN = (CURRENT_PLATFORM == PLATFORM_WINDOWS) ?
-            "zipalign.exe" : "zipalign";                                //$NON-NLS-1$ //$NON-NLS-2$
+    /** zipalign executable (with extension for the current OS) */
+    public final static String FN_ZIPALIGN =
+        "zipalign" + ext(".exe", "");                     //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-    /** dexdump executable (with extension for the current OS)  */
-    public final static String FN_DEXDUMP = (CURRENT_PLATFORM == PLATFORM_WINDOWS) ?
-            "dexdump.exe" : "dexdump";                                  //$NON-NLS-1$ //$NON-NLS-2$
+    /** dexdump executable (with extension for the current OS) */
+    public final static String FN_DEXDUMP =
+        "dexdump" + ext(".exe", "");                      //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-    /** zipalign executable (with extension for the current OS)  */
-    public final static String FN_PROGUARD = (CURRENT_PLATFORM == PLATFORM_WINDOWS) ?
-            "proguard.bat" : "proguard.sh";                             //$NON-NLS-1$ //$NON-NLS-2$
+    /** proguard executable (with extension for the current OS) */
+    public final static String FN_PROGUARD =
+        "proguard" + ext(".bat", ".sh");                  //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+    /** find_lock for Windows (with extension for the current OS) */
+    public final static String FN_FIND_LOCK =
+        "find_lock" + ext(".exe", "");                    //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
     /** properties file for SDK Updater packages */
     public final static String FN_SOURCE_PROP = "source.properties";                  //$NON-NLS-1$
@@ -159,8 +166,12 @@ public final class SdkConstants {
      */
     public final static String FN_GDBSERVER = "gdbserver";              //$NON-NLS-1$
 
-    /** default proguard config file */
-    public final static String FN_PROGUARD_CFG = "proguard.cfg";        //$NON-NLS-1$
+    /** global Android proguard config file */
+    public final static String FN_ANDROID_PROGUARD_FILE = "proguard-android.txt";   //$NON-NLS-1$
+    /** global Android proguard config file with optimization enabled */
+    public final static String FN_ANDROID_OPT_PROGUARD_FILE = "proguard-android-optimize.txt";  //$NON-NLS-1$
+    /** default proguard config file with new file extension (for project specific stuff) */
+    public final static String FN_PROJECT_PROGUARD_FILE = "proguard-project.txt";   //$NON-NLS-1$
 
     /* Folder Names for Android Projects . */
 
@@ -188,6 +199,8 @@ public final class SdkConstants {
     public final static String FD_CLASSES_OUTPUT = "classes";           //$NON-NLS-1$
     /** proguard output folder for mapping, etc.. files */
     public final static String FD_PROGUARD = "proguard";                //$NON-NLS-1$
+    /** aidl output folder for copied aidl files */
+    public final static String FD_AIDL = "aidl";                        //$NON-NLS-1$
 
     /* Folder Names for the Android SDK */
 
@@ -204,6 +217,8 @@ public final class SdkConstants {
     public final static String FD_PKG_SOURCES = "sources";              //$NON-NLS-1$
     /** Name of the SDK tools folder. */
     public final static String FD_TOOLS = "tools";                      //$NON-NLS-1$
+    /** Name of the SDK tools/support folder. */
+    public final static String FD_SUPPORT = "support";                  //$NON-NLS-1$
     /** Name of the SDK platform tools folder. */
     public final static String FD_PLATFORM_TOOLS = "platform-tools";    //$NON-NLS-1$
     /** Name of the SDK tools/lib folder. */
@@ -218,9 +233,11 @@ public final class SdkConstants {
     public final static String ABI_ARMEABI = "armeabi";                 //$NON-NLS-1$
     public final static String ABI_ARMEABI_V7A = "armeabi-v7a";         //$NON-NLS-1$
     public final static String ABI_INTEL_ATOM = "x86";                  //$NON-NLS-1$
+    public final static String ABI_MIPS = "mips";                       //$NON-NLS-1$
     /** Name of the CPU arch to support. */
     public final static String CPU_ARCH_ARM = "arm";                    //$NON-NLS-1$
     public final static String CPU_ARCH_INTEL_ATOM = "x86";             //$NON-NLS-1$
+    public final static String CPU_ARCH_MIPS = "mips";                  //$NON-NLS-1$
     /** Name of the CPU model to support. */
     public final static String CPU_MODEL_CORTEX_A8 = "cortex-a8";       //$NON-NLS-1$
 
@@ -247,9 +264,20 @@ public final class SdkConstants {
     /** Name of the addon libs folder. */
     public final static String FD_ADDON_LIBS = "libs";                  //$NON-NLS-1$
 
+    /** Name of the cache folder in the $HOME/.android. */
+    public final static String FD_CACHE = "cache";                      //$NON-NLS-1$
+
+    /** API codename of a release (non preview) system image or platform. **/
+    public final static String CODENAME_RELEASE = "REL";                //$NON-NLS-1$
+
     /** Namespace for the resource XML, i.e. "http://schemas.android.com/apk/res/android" */
     public final static String NS_RESOURCES =
         "http://schemas.android.com/apk/res/android";                   //$NON-NLS-1$
+
+    /** Namespace for the device schema, i.e. "http://schemas.android.com/sdk/devices/1" */
+    public static final String NS_DEVICES_XSD =
+        "http://schemas.android.com/sdk/devices/1";                     //$NON-NLS-1$
+
 
     /** The name of the uses-library that provides "android.test.runner" */
     public final static String ANDROID_TEST_RUNNER_LIB =
@@ -361,7 +389,6 @@ public final class SdkConstants {
             FN_FRAMEWORK_RENDERSCRIPT + File.separator + FN_FRAMEWORK_INCLUDE_CLANG;
 
     /* Folder paths relative to a addon folder */
-
     /** Path of the images directory relative to a folder folder.
      *  This is an OS path, ending with a separator. */
     public final static String OS_ADDON_LIBS_FOLDER = FD_ADDON_LIBS + File.separator;
@@ -375,7 +402,6 @@ public final class SdkConstants {
 
     /** SDK property: default skin */
     public final static String PROP_SDK_DEFAULT_SKIN = "sdk.skin.default"; //$NON-NLS-1$
-
 
     /* Android Class Constants */
     public final static String CLASS_ACTIVITY = "android.app.Activity"; //$NON-NLS-1$
@@ -470,5 +496,13 @@ public final class SdkConstants {
         }
 
         return "Other";
+    }
+
+    private static String ext(String windowsExtension, String nonWindowsExtension) {
+        if (CURRENT_PLATFORM == PLATFORM_WINDOWS) {
+            return windowsExtension;
+        } else {
+            return nonWindowsExtension;
+        }
     }
 }

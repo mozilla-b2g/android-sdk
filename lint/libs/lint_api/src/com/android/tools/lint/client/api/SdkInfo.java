@@ -16,7 +16,17 @@
 
 package com.android.tools.lint.client.api;
 
-/** Information about SDKs */
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
+import com.google.common.annotations.Beta;
+
+/**
+ * Information about SDKs
+ * <p>
+ * <b>NOTE: This is not a public or final API; if you rely on this be prepared
+ * to adjust your code for the next tools release.</b>
+ */
+@Beta
 public abstract class SdkInfo {
     /**
      * Returns true if the given child view is the same class or a sub class of
@@ -27,16 +37,17 @@ public abstract class SdkInfo {
      * @return true if the child view is a sub view of (or the same class as)
      *         the parent view
      */
-    public boolean isSubViewOf(String parentViewFqcn, String childViewFqcn) {
+    public boolean isSubViewOf(@NonNull String parentViewFqcn, @NonNull String childViewFqcn) {
         while (!childViewFqcn.equals("android.view.View")) { //$NON-NLS-1$
             if (parentViewFqcn.equals(childViewFqcn)) {
                 return true;
             }
-            childViewFqcn = getParentViewClass(childViewFqcn);
-            if (childViewFqcn == null) {
+            String parent = getParentViewClass(childViewFqcn);
+            if (parent == null) {
                 // Unknown view - err on the side of caution
                 return true;
             }
+            childViewFqcn = parent;
         }
 
         return false;
@@ -50,7 +61,8 @@ public abstract class SdkInfo {
      * @param fqcn the fully qualified class name of the view
      * @return the fully qualified class name of the parent view, or null
      */
-    public abstract String getParentViewClass(String fqcn);
+    @Nullable
+    public abstract String getParentViewClass(@NonNull String fqcn);
 
     /**
      * Returns the class name of the parent view, or null if the view is the
@@ -61,7 +73,8 @@ public abstract class SdkInfo {
      *            package)
      * @return the view name of the parent
      */
-    public abstract String getParentViewName(String name);
+    @Nullable
+    public abstract String getParentViewName(@NonNull String name);
 
     // TODO: Add access to resource resolution here.
 }

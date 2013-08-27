@@ -17,14 +17,17 @@
 package com.android.ide.eclipse.adt.internal.refactorings.extractstring;
 
 import static com.android.ide.common.layout.LayoutConstants.STRING_PREFIX;
+import static com.android.util.XmlUtils.AMP_ENTITY;
+import static com.android.util.XmlUtils.LT_ENTITY;
+import static com.android.util.XmlUtils.QUOT_ENTITY;
 
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.AttributeDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ReferenceAttributeDescriptor;
-import com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiAttributeNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
+import com.android.ide.eclipse.adt.internal.editors.values.descriptors.ValuesDescriptors;
 import com.android.ide.eclipse.adt.internal.project.AndroidManifestHelper;
 import com.android.resources.ResourceFolderType;
 import com.android.resources.ResourceType;
@@ -999,6 +1002,7 @@ public class ExtractStringRefactoring extends Refactoring {
      */
     private Iterable<IFile> findAllResXmlFiles() {
         return new Iterable<IFile>() {
+            @Override
             public Iterator<IFile> iterator() {
                 return new Iterator<IFile>() {
                     final Queue<IFile> mFiles = new LinkedList<IFile>();
@@ -1036,6 +1040,7 @@ public class ExtractStringRefactoring extends Refactoring {
                         }
                     }
 
+                    @Override
                     public boolean hasNext() {
                         if (!mFiles.isEmpty()) {
                             return true;
@@ -1077,12 +1082,14 @@ public class ExtractStringRefactoring extends Refactoring {
                         }
                     }
 
+                    @Override
                     public IFile next() {
                         IFile file = mFiles.poll();
                         hasNext();
                         return file;
                     }
 
+                    @Override
                     public void remove() {
                         throw new UnsupportedOperationException(
                             "This iterator does not support removal");  //$NON-NLS-1$
@@ -1179,7 +1186,7 @@ public class ExtractStringRefactoring extends Refactoring {
 
         IModelManager modelMan = StructuredModelManager.getModelManager();
 
-        final String NODE_RESOURCES = ResourcesDescriptors.ROOT_ELEMENT;
+        final String NODE_RESOURCES = ValuesDescriptors.ROOT_ELEMENT;
         final String NODE_STRING = "string";    //$NON-NLS-1$ //TODO find or create constant
         final String ATTR_NAME = "name";        //$NON-NLS-1$ //TODO find or create constant
 
@@ -1492,10 +1499,10 @@ public class ExtractStringRefactoring extends Refactoring {
                     sb.append(c);
                     break;
                 case '<':
-                    sb.append("&lt;"); //$NON-NLS-1$
+                    sb.append(LT_ENTITY);
                     break;
                 case '&':
-                    sb.append("&amp;"); //$NON-NLS-1$
+                    sb.append(AMP_ENTITY);
                     break;
                 case '\n':
                     sb.append("\\n"); //$NON-NLS-1$
@@ -1739,7 +1746,7 @@ public class ExtractStringRefactoring extends Refactoring {
         }
         // If we get here, there's a mix. Opt for double-quote around and replace
         // inner double-quotes.
-        attrValue = attrValue.replace("\"", "&quot;");  //$NON-NLS-1$ //$NON-NLS-2$
+        attrValue = attrValue.replace("\"", QUOT_ENTITY);  //$NON-NLS-1$
         return '"' + attrValue + '"';
     }
 
@@ -1752,6 +1759,7 @@ public class ExtractStringRefactoring extends Refactoring {
         final IJavaProject javaProject = JavaCore.create(mProject);
 
         return new Iterable<ICompilationUnit>() {
+            @Override
             public Iterator<ICompilationUnit> iterator() {
                 return new Iterator<ICompilationUnit>() {
                     final Queue<ICompilationUnit> mUnits = new LinkedList<ICompilationUnit>();
@@ -1767,6 +1775,7 @@ public class ExtractStringRefactoring extends Refactoring {
                         }
                     }
 
+                    @Override
                     public boolean hasNext() {
                         if (!mUnits.isEmpty()) {
                             return true;
@@ -1789,12 +1798,14 @@ public class ExtractStringRefactoring extends Refactoring {
                         return false;
                     }
 
+                    @Override
                     public ICompilationUnit next() {
                         ICompilationUnit unit = mUnits.poll();
                         hasNext();
                         return unit;
                     }
 
+                    @Override
                     public void remove() {
                         throw new UnsupportedOperationException(
                                 "This iterator does not support removal");  //$NON-NLS-1$

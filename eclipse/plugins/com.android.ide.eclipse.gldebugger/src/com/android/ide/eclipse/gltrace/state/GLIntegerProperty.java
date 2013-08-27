@@ -17,16 +17,25 @@
 package com.android.ide.eclipse.gltrace.state;
 
 /** Properties that hold an integer value. */
-public class GLIntegerProperty extends GLAbstractAtomicProperty implements IGLProperty {
+public class GLIntegerProperty extends GLAbstractAtomicProperty {
+    public enum DisplayRadix { DECIMAL, HEX };
+
     private final Integer mDefaultValue;
     private Integer mCurrentValue;
+    private final DisplayRadix mRadix;
 
-    public GLIntegerProperty(GLStateType name, Integer defaultValue) {
+    public GLIntegerProperty(GLStateType name, Integer defaultValue, DisplayRadix radix) {
         super(name);
 
         mDefaultValue = mCurrentValue = defaultValue;
+        mRadix = radix;
     }
 
+    public GLIntegerProperty(GLStateType name, Integer defaultValue) {
+        this(name, defaultValue, DisplayRadix.DECIMAL);
+    }
+
+    @Override
     public boolean isDefault() {
         return mCurrentValue == mDefaultValue;
     }
@@ -35,7 +44,12 @@ public class GLIntegerProperty extends GLAbstractAtomicProperty implements IGLPr
         mCurrentValue = newValue;
     }
 
+    @Override
     public String getStringValue() {
+        if (mRadix == DisplayRadix.HEX) {
+            return String.format("0x%08x", Integer.valueOf(mCurrentValue));
+        }
+
         return mCurrentValue.toString();
     }
 
@@ -44,6 +58,7 @@ public class GLIntegerProperty extends GLAbstractAtomicProperty implements IGLPr
         return getType() + "=" + getStringValue(); //$NON-NLS-1$
     }
 
+    @Override
     public void setValue(Object value) {
         if (value instanceof Integer) {
             mCurrentValue = (Integer) value;
@@ -53,6 +68,7 @@ public class GLIntegerProperty extends GLAbstractAtomicProperty implements IGLPr
         }
     }
 
+    @Override
     public Object getValue() {
         return mCurrentValue;
     }

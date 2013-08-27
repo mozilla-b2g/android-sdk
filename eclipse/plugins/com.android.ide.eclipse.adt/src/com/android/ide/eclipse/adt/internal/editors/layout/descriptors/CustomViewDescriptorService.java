@@ -17,29 +17,58 @@
 package com.android.ide.eclipse.adt.internal.editors.layout.descriptors;
 
 import static com.android.sdklib.SdkConstants.CLASS_VIEWGROUP;
+import static com.android.tools.lint.detector.api.LintConstants.AUTO_URI;
+import static com.android.tools.lint.detector.api.LintConstants.URI_PREFIX;
+import static com.android.util.XmlUtils.ANDROID_NS_NAME_PREFIX;
+import static com.android.util.XmlUtils.ANDROID_URI;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
+import com.android.ide.common.resources.ResourceFile;
+import com.android.ide.common.resources.ResourceItem;
+import com.android.ide.common.resources.platform.AttributeInfo;
+import com.android.ide.common.resources.platform.AttrsXmlParser;
 import com.android.ide.common.resources.platform.ViewClassInfo;
+import com.android.ide.common.resources.platform.ViewClassInfo.LayoutParamsInfo;
+import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.ide.eclipse.adt.AdtUtils;
+import com.android.ide.eclipse.adt.internal.editors.IconFactory;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.AttributeDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.DescriptorsUtils;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
+import com.android.ide.eclipse.adt.internal.editors.manifest.ManifestInfo;
+import com.android.ide.eclipse.adt.internal.resources.manager.ProjectResources;
+import com.android.ide.eclipse.adt.internal.resources.manager.ResourceManager;
 import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetData;
+import com.android.ide.eclipse.adt.internal.sdk.ProjectState;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
+import com.android.resources.ResourceType;
 import com.android.sdklib.IAndroidTarget;
+import com.google.common.collect.Maps;
+import com.google.common.collect.ObjectArrays;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.IResource;
+import org.eclipse.core.resources.IWorkspaceRoot;
+import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.CoreException;
+import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.NullProgressMonitor;
+import org.eclipse.jdt.core.IClassFile;
 import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.IType;
 import org.eclipse.jdt.core.ITypeHierarchy;
 import org.eclipse.jdt.core.JavaCore;
 import org.eclipse.jdt.core.JavaModelException;
-import org.eclipse.jdt.ui.ISharedImages;
-import org.eclipse.jdt.ui.JavaUI;
-import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.swt.graphics.Image;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Service responsible for creating/managing {@link ViewElementDescriptor} objects for custom
@@ -164,12 +193,27 @@ public final class CustomViewDescriptorService {
 
                     if (parentDescriptor != null) {
                         // we have a valid parent, lets create a new ViewElementDescriptor.
+                        List<AttributeDescriptor> attrList = new ArrayList<AttributeDescriptor>();
+                        List<AttributeDescriptor> paramList = new ArrayList<AttributeDescriptor>();
+                        Map<ResourceFile, Long> files = findCustomDescriptors(project, type,
+                                attrList, paramList);
 
+                        AttributeDescriptor[] attributes =
+                                getAttributeDescriptor(type, parentDescriptor);
+                        if (!attrList.isEmpty()) {
+                            attributes = join(attrList, attributes);
+                        }
+                        AttributeDescriptor[] layoutAttributes =
+                                getLayoutAttributeDescriptors(type, parentDescriptor);
+                        if (!paramList.isEmpty()) {
+                            layoutAttributes = join(paramList, layoutAttributes);
+                        }
                         String name = DescriptorsUtils.getBasename(fqcn);
                         ViewElementDescriptor descriptor = new CustomViewDescriptor(name, fqcn,
-                                getAttributeDescriptor(type, parentDescriptor),
-                                getLayoutAttributeDescriptors(type, parentDescriptor),
-                                parentDescriptor.getChildren());
+                                attributes,
+                                layoutAttributes,
+                                parentDescriptor.getChildren(),
+                                project, files);
                         descriptor.setSuperClass(parentDescriptor);
 
                         synchronized (mCustomDescriptorMap) {
@@ -193,6 +237,176 @@ public final class CustomViewDescriptorService {
         }
 
         return null;
+    }
+
+    private static AttributeDescriptor[] join(
+            @NonNull List<AttributeDescriptor> attributeList,
+            @NonNull AttributeDescriptor[] attributes) {
+        if (!attributeList.isEmpty()) {
+            return ObjectArrays.concat(
+                    attributeList.toArray(new AttributeDescriptor[attributeList.size()]),
+                    attributes,
+                    AttributeDescriptor.class);
+        } else {
+            return attributes;
+        }
+
+    }
+
+    /** Cache used by {@link #getParser(ResourceFile)} */
+    private Map<ResourceFile, AttrsXmlParser> mParserCache;
+
+    private AttrsXmlParser getParser(ResourceFile file) {
+        if (mParserCache == null) {
+            mParserCache = new HashMap<ResourceFile, AttrsXmlParser>();
+        }
+
+        AttrsXmlParser parser = mParserCache.get(file);
+        if (parser == null) {
+            parser = new AttrsXmlParser(
+                    file.getFile().getOsLocation(),
+                    AdtPlugin.getDefault());
+            parser.preload();
+            mParserCache.put(file, parser);
+        }
+
+        return parser;
+    }
+
+    /** Compute/find the styleable resources for the given type, if possible */
+    private Map<ResourceFile, Long> findCustomDescriptors(
+            IProject project,
+            IType type,
+            List<AttributeDescriptor> customAttributes,
+            List<AttributeDescriptor> customLayoutAttributes) {
+        // Look up the project where the type is declared (could be a library project;
+        // we cannot use type.getJavaProject().getProject())
+        IProject library = getProjectDeclaringType(type);
+        if (library == null) {
+            library = project;
+        }
+
+        String className = type.getElementName();
+        Set<ResourceFile> resourceFiles = findAttrsFiles(library, className);
+        if (resourceFiles != null && resourceFiles.size() > 0) {
+            String appUri = getAppResUri(project);
+            Map<ResourceFile, Long> timestamps =
+                    Maps.newHashMapWithExpectedSize(resourceFiles.size());
+            for (ResourceFile file : resourceFiles) {
+                AttrsXmlParser attrsXmlParser = getParser(file);
+                String fqcn = type.getFullyQualifiedName();
+
+                // Attributes
+                ViewClassInfo classInfo = new ViewClassInfo(true, fqcn, className);
+                attrsXmlParser.loadViewAttributes(classInfo);
+                appendAttributes(customAttributes, classInfo.getAttributes(), appUri);
+
+                // Layout params
+                LayoutParamsInfo layoutInfo = new ViewClassInfo.LayoutParamsInfo(
+                        classInfo, "Layout", null /*superClassInfo*/); //$NON-NLS-1$
+                attrsXmlParser.loadLayoutParamsAttributes(layoutInfo);
+                appendAttributes(customLayoutAttributes, layoutInfo.getAttributes(), appUri);
+
+                timestamps.put(file, file.getFile().getModificationStamp());
+            }
+
+            return timestamps;
+        }
+
+        return null;
+    }
+
+    /**
+     * Finds the set of XML files (if any) in the given library declaring
+     * attributes for the given class name
+     */
+    @Nullable
+    private static Set<ResourceFile> findAttrsFiles(IProject library, String className) {
+        Set<ResourceFile> resourceFiles = null;
+        ResourceManager manager = ResourceManager.getInstance();
+        ProjectResources resources = manager.getProjectResources(library);
+        if (resources != null) {
+            Collection<ResourceItem> items =
+                resources.getResourceItemsOfType(ResourceType.DECLARE_STYLEABLE);
+            for (ResourceItem item : items) {
+                String viewName = item.getName();
+                if (viewName.equals(className)
+                        || (viewName.startsWith(className)
+                            && viewName.equals(className + "_Layout"))) { //$NON-NLS-1$
+                    if (resourceFiles == null) {
+                        resourceFiles = new HashSet<ResourceFile>();
+                    }
+                    resourceFiles.addAll(item.getSourceFileList());
+                }
+            }
+        }
+        return resourceFiles;
+    }
+
+    /**
+     * Find the project containing this type declaration. We cannot use
+     * {@link IType#getJavaProject()} since that will return the including
+     * project and we're after the library project such that we can find the
+     * attrs.xml file in the same project.
+     */
+    @Nullable
+    private static IProject getProjectDeclaringType(IType type) {
+        IClassFile classFile = type.getClassFile();
+        if (classFile != null) {
+            IPath path = classFile.getPath();
+            IWorkspaceRoot workspace = ResourcesPlugin.getWorkspace().getRoot();
+            IResource resource;
+            if (path.isAbsolute()) {
+                resource = AdtUtils.fileToResource(path.toFile());
+            } else {
+                resource = workspace.findMember(path);
+            }
+            if (resource != null && resource.getProject() != null) {
+                return resource.getProject();
+            }
+        }
+
+        return null;
+    }
+
+    /** Returns the name space to use for application attributes */
+    private static String getAppResUri(IProject project) {
+        String appResource;
+        ProjectState projectState = Sdk.getProjectState(project);
+        if (projectState != null && projectState.isLibrary()) {
+            appResource = AUTO_URI;
+        } else {
+            ManifestInfo manifestInfo = ManifestInfo.get(project);
+            appResource = URI_PREFIX + manifestInfo.getPackage();
+        }
+        return appResource;
+    }
+
+
+    /** Append the {@link AttributeInfo} objects converted {@link AttributeDescriptor}
+     * objects into the given attribute list.
+     * <p>
+     * This is nearly identical to
+     *  {@link DescriptorsUtils#appendAttribute(List, String, String, AttributeInfo, boolean, Map)}
+     * but it handles namespace declarations in the attrs.xml file where the android:
+     * namespace is included in the names.
+     */
+    private static void appendAttributes(List<AttributeDescriptor> attributes,
+            AttributeInfo[] attributeInfos, String appResource) {
+        // Custom attributes
+        for (AttributeInfo info : attributeInfos) {
+            String nsUri;
+            if (info.getName().startsWith(ANDROID_NS_NAME_PREFIX)) {
+                info.setName(info.getName().substring(ANDROID_NS_NAME_PREFIX.length()));
+                nsUri = ANDROID_URI;
+            } else {
+                nsUri = appResource;
+            }
+
+            DescriptorsUtils.appendAttribute(attributes,
+                    null /*elementXmlName*/, nsUri, info, false /*required*/,
+                    null /*overrides*/);
+        }
     }
 
     /**
@@ -257,7 +471,7 @@ public final class CustomViewDescriptorService {
                 ViewElementDescriptor descriptor = new CustomViewDescriptor(name, fqcn,
                         getAttributeDescriptor(type, parentDescriptor),
                         getLayoutAttributeDescriptors(type, parentDescriptor),
-                        children);
+                        children, project, null);
                 descriptor.setSuperClass(parentDescriptor);
 
                 // add it to the map
@@ -302,10 +516,14 @@ public final class CustomViewDescriptorService {
         return parentDescriptor.getLayoutAttributes();
     }
 
-    private static class CustomViewDescriptor extends ViewElementDescriptor {
+    private class CustomViewDescriptor extends ViewElementDescriptor {
+        private Map<ResourceFile, Long> mTimeStamps;
+        private IProject mProject;
+
         public CustomViewDescriptor(String name, String fqcn, AttributeDescriptor[] attributes,
                 AttributeDescriptor[] layoutAttributes,
-                ElementDescriptor[] children) {
+                ElementDescriptor[] children, IProject project,
+                Map<ResourceFile, Long> timestamps) {
             super(
                     fqcn, // xml name
                     name, // ui name
@@ -317,17 +535,87 @@ public final class CustomViewDescriptorService {
                     children,
                     false // mandatory
             );
+            mTimeStamps = timestamps;
+            mProject = project;
         }
 
         @Override
         public Image getGenericIcon() {
-            // Java source file icon. We could use the Java class icon here
-            // (IMG_OBJS_CLASS), but it does not work well on anything but
-            // white backgrounds
-            ISharedImages sharedImages = JavaUI.getSharedImages();
-            String key = ISharedImages.IMG_OBJS_CUNIT;
-            ImageDescriptor descriptor = sharedImages.getImageDescriptor(key);
-            return descriptor.createImage();
+            IconFactory iconFactory = IconFactory.getInstance();
+
+            int index = mXmlName.lastIndexOf('.');
+            if (index != -1) {
+                return iconFactory.getIcon(mXmlName.substring(index + 1),
+                        "customView"); //$NON-NLS-1$
+            }
+
+            return iconFactory.getIcon("customView"); //$NON-NLS-1$
+        }
+
+        @Override
+        public boolean syncAttributes() {
+            // Check if any of the descriptors
+            if (mTimeStamps != null) {
+                // Prevent checking actual file timestamps too frequently on rapid burst calls
+                long now = System.currentTimeMillis();
+                if (now - sLastCheck < 1000) {
+                    return true;
+                }
+                sLastCheck = now;
+
+                // Check whether the resource files (typically just one) which defined
+                // custom attributes for this custom view have changed, and if so,
+                // refresh the attribute descriptors.
+                // This doesn't work the cases where you add descriptors for a custom
+                // view after using it, or add attributes in a separate file, but those
+                // scenarios aren't quite as common (and would require a bit more expensive
+                // analysis.)
+                for (Map.Entry<ResourceFile, Long> entry : mTimeStamps.entrySet()) {
+                    ResourceFile file = entry.getKey();
+                    Long timestamp = entry.getValue();
+                    boolean recompute = false;
+                    if (file.getFile().getModificationStamp() > timestamp.longValue()) {
+                        // One or more attributes changed: recompute
+                        recompute = true;
+                        mParserCache.remove(file);
+                    }
+
+                    if (recompute) {
+                        IJavaProject javaProject = JavaCore.create(mProject);
+                        String fqcn = getFullClassName();
+                        IType type = null;
+                        try {
+                            type = javaProject.findType(fqcn);
+                        } catch (CoreException e) {
+                            AdtPlugin.log(e, null);
+                        }
+                        if (type == null || !type.exists()) {
+                            return true;
+                        }
+
+                        List<AttributeDescriptor> attrList = new ArrayList<AttributeDescriptor>();
+                        List<AttributeDescriptor> paramList = new ArrayList<AttributeDescriptor>();
+
+                        mTimeStamps = findCustomDescriptors(mProject, type, attrList, paramList);
+
+                        ViewElementDescriptor parentDescriptor = getSuperClassDesc();
+                        AttributeDescriptor[] attributes =
+                                getAttributeDescriptor(type, parentDescriptor);
+                        if (!attrList.isEmpty()) {
+                            attributes = join(attrList, attributes);
+                        }
+                        attributes = attrList.toArray(new AttributeDescriptor[attrList.size()]);
+                        setAttributes(attributes);
+
+                        return false;
+                    }
+                }
+            }
+
+            return true;
         }
     }
+
+    /** Timestamp of the most recent {@link CustomViewDescriptor#syncAttributes} check */
+    private static long sLastCheck;
 }

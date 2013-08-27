@@ -34,8 +34,12 @@ import java.util.regex.Pattern;
  * A Device. It can be a physical device or an emulator.
  */
 final class Device implements IDevice {
+    private static final String DEVICE_MODEL_PROPERTY = "ro.product.model"; //$NON-NLS-1$
+    private static final String DEVICE_MANUFACTURER_PROPERTY = "ro.product.manufacturer"; //$NON-NLS-1$
 
     private final static int INSTALL_TIMEOUT = 2*60*1000; //2min
+    private static final int BATTERY_TIMEOUT = 2*1000; //2 seconds
+    private static final int GETPROP_TIMEOUT = 2*1000; //2 seconds
 
     /** Emulator Serial Number regexp. */
     final static String RE_EMULATOR_SN = "emulator-(\\d+)"; //$NON-NLS-1$
@@ -57,6 +61,7 @@ final class Device implements IDevice {
     private DeviceMonitor mMonitor;
 
     private static final String LOG_TAG = "Device";
+    private static final char SEPARATOR = '-';
 
     /**
      * Socket for the connection monitoring client connection/disconnection.
@@ -67,6 +72,8 @@ final class Device implements IDevice {
 
     private Integer mLastBatteryLevel = null;
     private long mLastBatteryCheckTime = 0;
+
+    private String mName;
 
     /**
      * Output receiver for "pm install package.apk" command line.
@@ -97,6 +104,7 @@ final class Device implements IDevice {
             }
         }
 
+        @Override
         public boolean isCancelled() {
             return false;
         }
@@ -151,6 +159,7 @@ final class Device implements IDevice {
             }
         }
 
+        @Override
         public boolean isCancelled() {
             return false;
         }
@@ -160,11 +169,13 @@ final class Device implements IDevice {
      * (non-Javadoc)
      * @see com.android.ddmlib.IDevice#getSerialNumber()
      */
+    @Override
     public String getSerialNumber() {
         return mSerialNumber;
     }
 
     /** {@inheritDoc} */
+    @Override
     public String getAvdName() {
         return mAvdName;
     }
@@ -181,10 +192,70 @@ final class Device implements IDevice {
         mAvdName = avdName;
     }
 
+    @Override
+    public String getName() {
+        if (mName == null) {
+            mName = constructName();
+        }
+
+        return mName;
+    }
+
+    private String constructName() {
+        if (isEmulator()) {
+            String avdName = getAvdName();
+            if (avdName != null) {
+                return String.format("%s [%s]", avdName, getSerialNumber());
+            } else {
+                return getSerialNumber();
+            }
+        } else {
+            String manufacturer = cleanupStringForDisplay(
+                    getProperty(DEVICE_MANUFACTURER_PROPERTY));
+            String model = cleanupStringForDisplay(
+                    getProperty(DEVICE_MODEL_PROPERTY));
+
+            StringBuilder sb = new StringBuilder(20);
+
+            if (manufacturer != null) {
+                sb.append(manufacturer);
+                sb.append(SEPARATOR);
+            }
+
+            if (model != null) {
+                sb.append(model);
+                sb.append(SEPARATOR);
+            }
+
+            sb.append(getSerialNumber());
+            return sb.toString();
+        }
+    }
+
+    private String cleanupStringForDisplay(String s) {
+        if (s == null) {
+            return null;
+        }
+
+        StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+
+            if (Character.isLetterOrDigit(c)) {
+                sb.append(Character.toLowerCase(c));
+            } else {
+                sb.append('_');
+            }
+        }
+
+        return sb.toString();
+    }
+
     /*
      * (non-Javadoc)
      * @see com.android.ddmlib.IDevice#getState()
      */
+    @Override
     public DeviceState getState() {
         return mState;
     }
@@ -201,6 +272,7 @@ final class Device implements IDevice {
      * (non-Javadoc)
      * @see com.android.ddmlib.IDevice#getProperties()
      */
+    @Override
     public Map<String, String> getProperties() {
         return Collections.unmodifiableMap(mProperties);
     }
@@ -209,6 +281,7 @@ final class Device implements IDevice {
      * (non-Javadoc)
      * @see com.android.ddmlib.IDevice#getPropertyCount()
      */
+    @Override
     public int getPropertyCount() {
         return mProperties.size();
     }
@@ -217,6 +290,7 @@ final class Device implements IDevice {
      * (non-Javadoc)
      * @see com.android.ddmlib.IDevice#getProperty(java.lang.String)
      */
+    @Override
     public String getProperty(String name) {
         return mProperties.get(name);
     }
@@ -224,6 +298,7 @@ final class Device implements IDevice {
     /**
      * {@inheritDoc}
      */
+    @Override
     public boolean arePropertiesSet() {
         return mArePropertiesSet;
     }
@@ -231,6 +306,7 @@ final class Device implements IDevice {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String getPropertyCacheOrSync(String name) throws TimeoutException,
             AdbCommandRejectedException, ShellCommandUnresponsiveException, IOException {
         if (mArePropertiesSet) {
@@ -243,10 +319,11 @@ final class Device implements IDevice {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String getPropertySync(String name) throws TimeoutException,
             AdbCommandRejectedException, ShellCommandUnresponsiveException, IOException {
         CollectingOutputReceiver receiver = new CollectingOutputReceiver();
-        executeShellCommand(String.format("getprop '%s'", name), receiver);
+        executeShellCommand(String.format("getprop '%s'", name), receiver, GETPROP_TIMEOUT);
         String value = receiver.getOutput().trim();
         if (value.isEmpty()) {
             return null;
@@ -254,6 +331,7 @@ final class Device implements IDevice {
         return value;
     }
 
+    @Override
     public String getMountPoint(String name) {
         return mMountPoints.get(name);
     }
@@ -268,6 +346,7 @@ final class Device implements IDevice {
      * (non-Javadoc)
      * @see com.android.ddmlib.IDevice#isOnline()
      */
+    @Override
     public boolean isOnline() {
         return mState == DeviceState.ONLINE;
     }
@@ -276,6 +355,7 @@ final class Device implements IDevice {
      * (non-Javadoc)
      * @see com.android.ddmlib.IDevice#isEmulator()
      */
+    @Override
     public boolean isEmulator() {
         return mSerialNumber.matches(RE_EMULATOR_SN);
     }
@@ -284,6 +364,7 @@ final class Device implements IDevice {
      * (non-Javadoc)
      * @see com.android.ddmlib.IDevice#isOffline()
      */
+    @Override
     public boolean isOffline() {
         return mState == DeviceState.OFFLINE;
     }
@@ -292,6 +373,7 @@ final class Device implements IDevice {
      * (non-Javadoc)
      * @see com.android.ddmlib.IDevice#isBootLoader()
      */
+    @Override
     public boolean isBootLoader() {
         return mState == DeviceState.BOOTLOADER;
     }
@@ -300,6 +382,7 @@ final class Device implements IDevice {
      * (non-Javadoc)
      * @see com.android.ddmlib.IDevice#hasClients()
      */
+    @Override
     public boolean hasClients() {
         return mClients.size() > 0;
     }
@@ -308,6 +391,7 @@ final class Device implements IDevice {
      * (non-Javadoc)
      * @see com.android.ddmlib.IDevice#getClients()
      */
+    @Override
     public Client[] getClients() {
         synchronized (mClients) {
             return mClients.toArray(new Client[mClients.size()]);
@@ -318,6 +402,7 @@ final class Device implements IDevice {
      * (non-Javadoc)
      * @see com.android.ddmlib.IDevice#getClient(java.lang.String)
      */
+    @Override
     public Client getClient(String applicationName) {
         synchronized (mClients) {
             for (Client c : mClients) {
@@ -335,6 +420,7 @@ final class Device implements IDevice {
      * (non-Javadoc)
      * @see com.android.ddmlib.IDevice#getSyncService()
      */
+    @Override
     public SyncService getSyncService()
             throws TimeoutException, AdbCommandRejectedException, IOException {
         SyncService syncService = new SyncService(AndroidDebugBridge.getSocketAddress(), this);
@@ -349,15 +435,18 @@ final class Device implements IDevice {
      * (non-Javadoc)
      * @see com.android.ddmlib.IDevice#getFileListingService()
      */
+    @Override
     public FileListingService getFileListingService() {
         return new FileListingService(this);
     }
 
+    @Override
     public RawImage getScreenshot()
             throws TimeoutException, AdbCommandRejectedException, IOException {
         return AdbHelper.getFrameBuffer(AndroidDebugBridge.getSocketAddress(), this);
     }
 
+    @Override
     public void executeShellCommand(String command, IShellOutputReceiver receiver)
             throws TimeoutException, AdbCommandRejectedException, ShellCommandUnresponsiveException,
             IOException {
@@ -365,6 +454,7 @@ final class Device implements IDevice {
                 receiver, DdmPreferences.getTimeOut());
     }
 
+    @Override
     public void executeShellCommand(String command, IShellOutputReceiver receiver,
             int maxTimeToOutputResponse)
             throws TimeoutException, AdbCommandRejectedException, ShellCommandUnresponsiveException,
@@ -373,30 +463,57 @@ final class Device implements IDevice {
                 receiver, maxTimeToOutputResponse);
     }
 
+    @Override
     public void runEventLogService(LogReceiver receiver)
             throws TimeoutException, AdbCommandRejectedException, IOException {
         AdbHelper.runEventLogService(AndroidDebugBridge.getSocketAddress(), this, receiver);
     }
 
+    @Override
     public void runLogService(String logname, LogReceiver receiver)
             throws TimeoutException, AdbCommandRejectedException, IOException {
         AdbHelper.runLogService(AndroidDebugBridge.getSocketAddress(), this, logname, receiver);
     }
 
+    @Override
     public void createForward(int localPort, int remotePort)
             throws TimeoutException, AdbCommandRejectedException, IOException {
-        AdbHelper.createForward(AndroidDebugBridge.getSocketAddress(), this, localPort, remotePort);
+        AdbHelper.createForward(AndroidDebugBridge.getSocketAddress(), this,
+                String.format("tcp:%d", localPort),     //$NON-NLS-1$
+                String.format("tcp:%d", remotePort));   //$NON-NLS-1$
     }
 
+    @Override
+    public void createForward(int localPort, String remoteSocketName,
+            DeviceUnixSocketNamespace namespace) throws TimeoutException,
+            AdbCommandRejectedException, IOException {
+        AdbHelper.createForward(AndroidDebugBridge.getSocketAddress(), this,
+                String.format("tcp:%d", localPort),     //$NON-NLS-1$
+                String.format("%s:%s", namespace.getType(), remoteSocketName));   //$NON-NLS-1$
+    }
+
+    @Override
     public void removeForward(int localPort, int remotePort)
             throws TimeoutException, AdbCommandRejectedException, IOException {
-        AdbHelper.removeForward(AndroidDebugBridge.getSocketAddress(), this, localPort, remotePort);
+        AdbHelper.removeForward(AndroidDebugBridge.getSocketAddress(), this,
+                String.format("tcp:%d", localPort),     //$NON-NLS-1$
+                String.format("tcp:%d", remotePort));   //$NON-NLS-1$
+    }
+
+    @Override
+    public void removeForward(int localPort, String remoteSocketName,
+            DeviceUnixSocketNamespace namespace) throws TimeoutException,
+            AdbCommandRejectedException, IOException {
+        AdbHelper.removeForward(AndroidDebugBridge.getSocketAddress(), this,
+                String.format("tcp:%d", localPort),     //$NON-NLS-1$
+                String.format("%s:%s", namespace.getType(), remoteSocketName));   //$NON-NLS-1$
     }
 
     /*
      * (non-Javadoc)
      * @see com.android.ddmlib.IDevice#getClientName(int)
      */
+    @Override
     public String getClientName(int pid) {
         synchronized (mClients) {
             for (Client c : mClients) {
@@ -497,6 +614,7 @@ final class Device implements IDevice {
         mMountPoints.put(name, value);
     }
 
+    @Override
     public void pushFile(String local, String remote)
             throws IOException, AdbCommandRejectedException, TimeoutException, SyncException {
         SyncService sync = null;
@@ -534,6 +652,7 @@ final class Device implements IDevice {
         }
     }
 
+    @Override
     public void pullFile(String remote, String local)
             throws IOException, AdbCommandRejectedException, TimeoutException, SyncException {
         SyncService sync = null;
@@ -571,6 +690,7 @@ final class Device implements IDevice {
         }
     }
 
+    @Override
     public String installPackage(String packageFilePath, boolean reinstall, String... extraArgs)
             throws InstallException {
         try {
@@ -589,6 +709,7 @@ final class Device implements IDevice {
         }
     }
 
+    @Override
     public String syncPackageToDevice(String localFilePath)
             throws IOException, AdbCommandRejectedException, TimeoutException, SyncException {
         SyncService sync = null;
@@ -637,6 +758,7 @@ final class Device implements IDevice {
         return new File(filePath).getName();
     }
 
+    @Override
     public String installRemotePackage(String remoteFilePath, boolean reinstall,
             String... extraArgs) throws InstallException {
         try {
@@ -664,6 +786,7 @@ final class Device implements IDevice {
         }
     }
 
+    @Override
     public void removeRemotePackage(String remoteFilePath) throws InstallException {
         try {
             executeShellCommand("rm " + remoteFilePath, new NullOutputReceiver(), INSTALL_TIMEOUT);
@@ -678,6 +801,7 @@ final class Device implements IDevice {
         }
     }
 
+    @Override
     public String uninstallPackage(String packageName) throws InstallException {
         try {
             InstallReceiver receiver = new InstallReceiver();
@@ -698,17 +822,20 @@ final class Device implements IDevice {
      * (non-Javadoc)
      * @see com.android.ddmlib.IDevice#reboot()
      */
+    @Override
     public void reboot(String into)
             throws TimeoutException, AdbCommandRejectedException, IOException {
         AdbHelper.reboot(into, AndroidDebugBridge.getSocketAddress(), this);
     }
 
+    @Override
     public Integer getBatteryLevel() throws TimeoutException, AdbCommandRejectedException,
             IOException, ShellCommandUnresponsiveException {
         // use default of 5 minutes
         return getBatteryLevel(5 * 60 * 1000);
     }
 
+    @Override
     public Integer getBatteryLevel(long freshnessMs) throws TimeoutException,
             AdbCommandRejectedException, IOException, ShellCommandUnresponsiveException {
         if (mLastBatteryLevel != null
@@ -716,7 +843,7 @@ final class Device implements IDevice {
             return mLastBatteryLevel;
         }
         BatteryReceiver receiver = new BatteryReceiver();
-        executeShellCommand("dumpsys battery", receiver);
+        executeShellCommand("dumpsys battery", receiver, BATTERY_TIMEOUT);
         mLastBatteryLevel = receiver.getBatteryLevel();
         mLastBatteryCheckTime = System.currentTimeMillis();
         return mLastBatteryLevel;

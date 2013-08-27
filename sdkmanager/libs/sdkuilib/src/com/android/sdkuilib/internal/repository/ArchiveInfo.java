@@ -16,8 +16,8 @@
 
 package com.android.sdkuilib.internal.repository;
 
-import com.android.sdklib.internal.repository.Archive;
-import com.android.sdklib.internal.repository.ArchiveReplacement;
+import com.android.sdklib.internal.repository.archives.Archive;
+import com.android.sdklib.internal.repository.archives.ArchiveReplacement;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -150,6 +150,7 @@ class ArchiveInfo extends ArchiveReplacement implements Comparable<ArchiveInfo> 
      *
      * @see Archive#compareTo(Archive)
      */
+    @Override
     public int compareTo(ArchiveInfo rhs) {
         if (getNewArchive() != null && rhs != null) {
             return getNewArchive().compareTo(rhs.getNewArchive());

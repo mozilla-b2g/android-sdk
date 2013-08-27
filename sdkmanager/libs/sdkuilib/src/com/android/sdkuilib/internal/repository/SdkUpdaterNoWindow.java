@@ -102,25 +102,25 @@ public class SdkUpdaterNoWindow {
      *
      * @param pkgFilter A list of {@link SdkRepoConstants#NODES} to limit the type of packages
      *   we can update. A null or empty list means to update everything possible.
-     * @param includeObsoletes True to also list and install obsolete packages.
+     * @param includeAll True to list and install all packages, including obsolete ones.
      * @param dryMode True to check what would be updated/installed but do not actually
      *   download or install anything.
      */
     public void updateAll(
             ArrayList<String> pkgFilter,
-            boolean includeObsoletes,
+            boolean includeAll,
             boolean dryMode) {
-        mUpdaterData.updateOrInstallAll_NoGUI(pkgFilter, includeObsoletes, dryMode);
+        mUpdaterData.updateOrInstallAll_NoGUI(pkgFilter, includeAll, dryMode);
     }
 
     /**
      * Lists remote packages available for install using 'android update sdk --no-ui'.
      *
-     * @param includeObsoletes True to also list and install obsolete packages.
+     * @param includeAll True to list and install all packages, including obsolete ones.
      * @param extendedOutput True to display more details on each package.
      */
-    public void listRemotePackages(boolean includeObsoletes, boolean extendedOutput) {
-        mUpdaterData.listRemotePackages_NoGUI(includeObsoletes, extendedOutput);
+    public void listRemotePackages(boolean includeAll, boolean extendedOutput) {
+        mUpdaterData.listRemotePackages_NoGUI(includeAll, extendedOutput);
     }
 
     // -----
@@ -155,10 +155,12 @@ public class SdkUpdaterNoWindow {
      * provides {@link ConsoleTaskMonitor} objects.
      */
     private class ConsoleTaskFactory implements ITaskFactory {
+        @Override
         public void start(String title, ITask task) {
             start(title, null /*parentMonitor*/, task);
         }
 
+        @Override
         public void start(String title, ITaskMonitor parentMonitor, ITask task) {
             if (parentMonitor == null) {
                 task.run(new ConsoleTaskMonitor(title, task));
@@ -205,6 +207,7 @@ public class SdkUpdaterNoWindow {
         /**
          * Sets the description in the current task dialog.
          */
+        @Override
         public void setDescription(String format, Object...args) {
 
             String last = mLastDesc;
@@ -241,28 +244,34 @@ public class SdkUpdaterNoWindow {
             mSdkLog.printf("%s", line);                                             //$NON-NLS-1$
         }
 
+        @Override
         public void log(String format, Object...args) {
             setDescription("  " + format, args);                                    //$NON-NLS-1$
         }
 
+        @Override
         public void logError(String format, Object...args) {
             setDescription(format, args);
         }
 
+        @Override
         public void logVerbose(String format, Object...args) {
             // The ConsoleTask does not display verbose log messages.
         }
 
         // --- ISdkLog ---
 
+        @Override
         public void error(Throwable t, String errorFormat, Object... args) {
             mSdkLog.error(t, errorFormat, args);
         }
 
+        @Override
         public void warning(String warningFormat, Object... args) {
             mSdkLog.warning(warningFormat, args);
         }
 
+        @Override
         public void printf(String msgFormat, Object... args) {
             mSdkLog.printf(msgFormat, args);
         }
@@ -274,6 +283,7 @@ public class SdkUpdaterNoWindow {
          * *after* {@link #incProgress(int)}: we don't try to adjust it on the
          * fly.
          */
+        @Override
         public void setProgressMax(int max) {
             assert max > 0;
             // Always set the dialog's progress max to 10k since it only handles
@@ -283,6 +293,7 @@ public class SdkUpdaterNoWindow {
             assert mIncCoef > 0;
         }
 
+        @Override
         public int getProgressMax() {
             return mIncCoef > 0 ? (int) (MAX_COUNT / mIncCoef) : 0;
         }
@@ -290,6 +301,7 @@ public class SdkUpdaterNoWindow {
         /**
          * Increments the current value of the progress bar.
          */
+        @Override
         public void incProgress(int delta) {
             if (delta > 0 && mIncCoef > 0) {
                 internalIncProgress(delta * mIncCoef);
@@ -308,6 +320,7 @@ public class SdkUpdaterNoWindow {
          * Returns the current value of the progress bar,
          * between 0 and up to {@link #setProgressMax(int)} - 1.
          */
+        @Override
         public int getProgress() {
             assert mIncCoef > 0;
             return mIncCoef > 0 ? (int)(mValue / mIncCoef) : 0;
@@ -316,6 +329,7 @@ public class SdkUpdaterNoWindow {
         /**
          * Returns true if the "Cancel" button was selected.
          */
+        @Override
         public boolean isCancelRequested() {
             return false;
         }
@@ -330,13 +344,40 @@ public class SdkUpdaterNoWindow {
          * @param message The error message
          * @return true if YES was clicked.
          */
+        @Override
         public boolean displayPrompt(final String title, final String message) {
             // TODO Make it interactive if mForce==false
-            mSdkLog.printf("\n%s\n%s\n[y/n] => %s\n",
+            mSdkLog.printf("\n%1$s\n%2$s\n%3$s",        //$NON-NLS-1$
                     title,
                     message,
-                    mForce ? "yes" : "no (use --force to override)");
-            return mForce;
+                    mForce ? "--force used, will reply yes\n" :
+                             "Note: you  can use --force to override to yes.\n");
+            if (mForce) {
+                return true;
+            }
+
+            while (true) {
+                mSdkLog.printf("%1$s", "[y/n] =>");     //$NON-NLS-1$
+                try {
+                    byte[] readBuffer = new byte[2048];
+                    String reply = readLine(readBuffer).trim();
+                    mSdkLog.printf("\n");               //$NON-NLS-1$
+                    if (reply.length() > 0 && reply.length() <= 3) {
+                        char c = reply.charAt(0);
+                        if (c == 'y' || c == 'Y') {
+                            return true;
+                        } else if (c == 'n' || c == 'N') {
+                            return false;
+                        }
+                    }
+                    mSdkLog.printf("Unknown reply '%s'. Please use y[es]/n[o].\n");  //$NON-NLS-1$
+
+                } catch (IOException e) {
+                    // Exception. Be conservative and say no.
+                    mSdkLog.printf("\n");               //$NON-NLS-1$
+                    return false;
+                }
+            }
         }
 
         /**
@@ -363,6 +404,7 @@ public class SdkUpdaterNoWindow {
          *         be filled with empty strings.
          * @see ITaskMonitor#displayLoginCredentialsPrompt(String, String)
          */
+        @Override
         public UserCredentials displayLoginCredentialsPrompt(String title, String message) {
             String login = "";    //$NON-NLS-1$
             String password = ""; //$NON-NLS-1$
@@ -401,6 +443,14 @@ public class SdkUpdaterNoWindow {
             return new UserCredentials(login, password, workstation, domain);
         }
 
+        /**
+         * Reads current console input in the given buffer.
+         *
+         * @param buffer Buffer to hold the user input. Must be larger than the largest
+         *   expected input. Cannot be null.
+         * @return A new string. May be empty but not null.
+         * @throws IOException in case the buffer isn't long enough.
+         */
         private String readLine(byte[] buffer) throws IOException {
             int count = System.in.read(buffer);
 
@@ -422,6 +472,7 @@ public class SdkUpdaterNoWindow {
          * Creates a sub-monitor that will use up to tickCount on the progress bar.
          * tickCount must be 1 or more.
          */
+        @Override
         public ITaskMonitor createSubMonitor(int tickCount) {
             assert mIncCoef > 0;
             assert tickCount > 0;
@@ -462,47 +513,57 @@ public class SdkUpdaterNoWindow {
             mSubValue = start;
         }
 
+        @Override
         public boolean isCancelRequested() {
             return mRoot.isCancelRequested();
         }
 
+        @Override
         public void setDescription(String format, Object... args) {
             mRoot.setDescription(format, args);
         }
 
+        @Override
         public void log(String format, Object... args) {
             mRoot.log(format, args);
         }
 
+        @Override
         public void logError(String format, Object... args) {
             mRoot.logError(format, args);
         }
 
+        @Override
         public void logVerbose(String format, Object... args) {
             mRoot.logVerbose(format, args);
         }
 
+        @Override
         public void setProgressMax(int max) {
             assert max > 0;
             mSubCoef = max > 0 ? mSpan / max : 0;
             assert mSubCoef > 0;
         }
 
+        @Override
         public int getProgressMax() {
             return mSubCoef > 0 ? (int) (mSpan / mSubCoef) : 0;
         }
 
+        @Override
         public int getProgress() {
             assert mSubCoef > 0;
             return mSubCoef > 0 ? (int)((mSubValue - mStart) / mSubCoef) : 0;
         }
 
+        @Override
         public void incProgress(int delta) {
             if (delta > 0 && mSubCoef > 0) {
                 subIncProgress(delta * mSubCoef);
             }
         }
 
+        @Override
         public void subIncProgress(double realDelta) {
             mSubValue += realDelta;
             if (mParent != null) {
@@ -512,14 +573,17 @@ public class SdkUpdaterNoWindow {
             }
         }
 
+        @Override
         public boolean displayPrompt(String title, String message) {
             return mRoot.displayPrompt(title, message);
         }
 
+        @Override
         public UserCredentials displayLoginCredentialsPrompt(String title, String message) {
             return mRoot.displayLoginCredentialsPrompt(title, message);
         }
 
+        @Override
         public ITaskMonitor createSubMonitor(int tickCount) {
             assert mSubCoef > 0;
             assert tickCount > 0;
@@ -531,14 +595,17 @@ public class SdkUpdaterNoWindow {
 
         // --- ISdkLog ---
 
+        @Override
         public void error(Throwable t, String errorFormat, Object... args) {
             mRoot.error(t, errorFormat, args);
         }
 
+        @Override
         public void warning(String warningFormat, Object... args) {
             mRoot.warning(warningFormat, args);
         }
 
+        @Override
         public void printf(String msgFormat, Object... args) {
             mRoot.printf(msgFormat, args);
         }

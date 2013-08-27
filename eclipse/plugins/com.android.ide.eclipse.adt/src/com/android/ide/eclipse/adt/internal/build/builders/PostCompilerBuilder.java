@@ -35,13 +35,16 @@ import com.android.ide.eclipse.adt.internal.project.LibraryClasspathContainerIni
 import com.android.ide.eclipse.adt.internal.project.ProjectHelper;
 import com.android.ide.eclipse.adt.internal.sdk.ProjectState;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
+import com.android.ide.eclipse.adt.io.IFileWrapper;
 import com.android.prefs.AndroidLocation.AndroidLocationException;
 import com.android.sdklib.SdkConstants;
+import com.android.sdklib.build.ApkBuilder;
 import com.android.sdklib.build.ApkCreationException;
 import com.android.sdklib.build.DuplicateFileException;
 import com.android.sdklib.build.IArchiveBuilder;
 import com.android.sdklib.build.SealedApkException;
 import com.android.sdklib.internal.build.DebugKeyProvider.KeytoolException;
+import com.android.sdklib.xml.AndroidManifest;
 
 import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
@@ -50,7 +53,6 @@ import org.eclipse.core.resources.IMarker;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.IResourceDelta;
-import org.eclipse.core.resources.IResourceDeltaVisitor;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IProgressMonitor;
@@ -58,7 +60,6 @@ import org.eclipse.core.runtime.IStatus;
 import org.eclipse.jdt.core.IJavaModelMarker;
 import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.JavaCore;
-import org.eclipse.jdt.core.JavaModelException;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -66,6 +67,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.jar.Attributes;
@@ -81,7 +83,6 @@ public class PostCompilerBuilder extends BaseBuilder {
     public static final String ID = "com.android.ide.eclipse.adt.ApkBuilder"; //$NON-NLS-1$
 
     private static final String PROPERTY_CONVERT_TO_DEX = "convertToDex"; //$NON-NLS-1$
-    private static final String PROPERTY_UPDATE_CRUNCH_CACHE = "updateCrunchCache"; //$NON-NLS-1$
     private static final String PROPERTY_PACKAGE_RESOURCES = "packageResources"; //$NON-NLS-1$
     private static final String PROPERTY_BUILD_APK = "buildApk"; //$NON-NLS-1$
 
@@ -98,13 +99,6 @@ public class PostCompilerBuilder extends BaseBuilder {
     private boolean mConvertToDex = false;
 
     /**
-     * PNG Cache update flag. This is set to true if one of the changed/added/removed
-     * files is a .png file. Upon visiting all the delta resources, if this
-     * flag is true, then we know we'll have to update the PNG cache
-     */
-    private boolean mUpdateCrunchCache = false;
-
-    /**
      * Package resources flag. This is set to true if one of the changed/added/removed
      * file is a resource file. Upon visiting all the delta resource, if
      * this flag is true, then we know we'll have to repackage the resources.
@@ -119,88 +113,9 @@ public class PostCompilerBuilder extends BaseBuilder {
     private AndroidPrintStream mOutStream = null;
     private AndroidPrintStream mErrStream = null;
 
-    /**
-     * Basic Resource Delta Visitor class to check if a referenced project had a change in its
-     * compiled java files.
-     */
-    private static class ReferencedProjectDeltaVisitor implements IResourceDeltaVisitor {
-
-        private boolean mConvertToDex = false;
-        private boolean mMakeFinalPackage;
-
-        private IPath mOutputFolder;
-        private List<IPath> mSourceFolders;
-
-        private ReferencedProjectDeltaVisitor(IJavaProject javaProject) {
-            try {
-                mOutputFolder = javaProject.getOutputLocation();
-                mSourceFolders = BaseProjectHelper.getSourceClasspaths(javaProject);
-            } catch (JavaModelException e) {
-            }
-        }
-
-        /**
-         * {@inheritDoc}
-         * @throws CoreException
-         */
-        public boolean visit(IResourceDelta delta) throws CoreException {
-            //  no need to keep looking if we already know we need to convert
-            // to dex and make the final package.
-            if (mConvertToDex && mMakeFinalPackage) {
-                return false;
-            }
-
-            // get the resource and the path segments.
-            IResource resource = delta.getResource();
-            IPath resourceFullPath = resource.getFullPath();
-
-            if (mOutputFolder.isPrefixOf(resourceFullPath)) {
-                int type = resource.getType();
-                if (type == IResource.FILE) {
-                    String ext = resource.getFileExtension();
-                    if (AdtConstants.EXT_CLASS.equals(ext)) {
-                        mConvertToDex = true;
-                    }
-                }
-                return true;
-            } else {
-                for (IPath sourceFullPath : mSourceFolders) {
-                    if (sourceFullPath.isPrefixOf(resourceFullPath)) {
-                        int type = resource.getType();
-                        if (type == IResource.FILE) {
-                            // check if the file is a valid file that would be
-                            // included during the final packaging.
-                            if (BuildHelper.checkFileForPackaging((IFile)resource)) {
-                                mMakeFinalPackage = true;
-                            }
-
-                            return false;
-                        } else if (type == IResource.FOLDER) {
-                            // if this is a folder, we check if this is a valid folder as well.
-                            // If this is a folder that needs to be ignored, we must return false,
-                            // so that we ignore its content.
-                            return BuildHelper.checkFolderForPackaging((IFolder)resource);
-                        }
-                    }
-                }
-            }
-
-            return true;
-        }
-
-        /**
-         * Returns if one of the .class file was modified.
-         */
-        boolean needDexConvertion() {
-            return mConvertToDex;
-        }
-
-        boolean needMakeFinalPackage() {
-            return mMakeFinalPackage;
-        }
-    }
 
     private ResourceMarker mResourceMarker = new ResourceMarker() {
+        @Override
         public void setWarning(IResource resource, String message) {
             BaseProjectHelper.markResource(resource, AdtConstants.MARKER_PACKAGING,
                     message, IMarker.SEVERITY_WARNING);
@@ -219,8 +134,8 @@ public class PostCompilerBuilder extends BaseBuilder {
         // Get the project.
         IProject project = getProject();
 
-        if (DEBUG) {
-            System.out.println("CLEAN(POST) " + project.getName());
+        if (DEBUG_LOG) {
+            AdtPlugin.log(IStatus.INFO, "%s CLEAN(POST)", project.getName());
         }
 
         // Clear the project of the generic markers
@@ -243,15 +158,17 @@ public class PostCompilerBuilder extends BaseBuilder {
     }
 
     // build() returns a list of project from which this project depends for future compilation.
-    @SuppressWarnings({"unchecked"})
     @Override
-    protected IProject[] build(int kind, Map args, IProgressMonitor monitor)
+    protected IProject[] build(
+            int kind,
+            @SuppressWarnings("rawtypes") Map args,
+            IProgressMonitor monitor)
             throws CoreException {
         // get a project object
         IProject project = getProject();
 
-        if (DEBUG) {
-            System.out.println("BUILD(POST) " + project.getName());
+        if (DEBUG_LOG) {
+            AdtPlugin.log(IStatus.INFO, "%s BUILD(POST)", project.getName());
         }
 
         // Benchmarking start
@@ -261,7 +178,7 @@ public class PostCompilerBuilder extends BaseBuilder {
             String msg = "BENCHMARK ADT: Ending Compilation \n BENCHMARK ADT: Time Elapsed: " +    //$NON-NLS-1$
                          (System.nanoTime() - BuildHelper.sStartJavaCTime)/Math.pow(10, 6) + "ms"; //$NON-NLS-1$
             AdtPlugin.printBuildToConsole(BuildVerbosity.ALWAYS, project, msg);
-            msg = "BENCHMARK ADT: Starting PostCompilation";                                        //$NON-NLS-1$
+            msg = "BENCHMARK ADT: Starting PostCompilation";                                       //$NON-NLS-1$
             AdtPlugin.printBuildToConsole(BuildVerbosity.ALWAYS, project, msg);
             startBuildTime = System.nanoTime();
         }
@@ -298,19 +215,12 @@ public class PostCompilerBuilder extends BaseBuilder {
             refList.addAll(javaProjects);
             allRefProjects = refList.toArray(new IProject[size]);
 
-            // Top level check to make sure the build can move forward.
-            abortOnBadSetup(javaProject);
-
             // get the android output folder
             IFolder androidOutputFolder = BaseProjectHelper.getAndroidOutputFolder(project);
             IFolder resOutputFolder = androidOutputFolder.getFolder(SdkConstants.FD_RES);
 
-            // now we need to get the classpath list
-            List<IPath> sourceList = BaseProjectHelper.getSourceClasspaths(javaProject);
-
             // First thing we do is go through the resource delta to not
             // lose it if we have to abort the build for any reason.
-            PostCompilerDeltaVisitor dv = null;
             if (args.containsKey(POST_C_REQUESTED)
                     && AdtPrefs.getPrefs().getBuildSkipPostCompileOnFileSave()) {
                 // Skip over flag setting
@@ -318,12 +228,11 @@ public class PostCompilerBuilder extends BaseBuilder {
                 AdtPlugin.printBuildToConsole(BuildVerbosity.VERBOSE, project,
                         Messages.Start_Full_Apk_Build);
 
-                if (DEBUG) {
-                    System.out.println("\tfull build!");
+                if (DEBUG_LOG) {
+                    AdtPlugin.log(IStatus.INFO, "%s full build!", project.getName());
                 }
 
                 // Full build: we do all the steps.
-                mUpdateCrunchCache = true;
                 mPackageResources = true;
                 mConvertToDex = true;
                 mBuildFinalPackage = true;
@@ -335,75 +244,95 @@ public class PostCompilerBuilder extends BaseBuilder {
                 IResourceDelta delta = getDelta(project);
                 if (delta == null) {
                     // no delta? Same as full build: we do all the steps.
-                    mUpdateCrunchCache = true;
                     mPackageResources = true;
                     mConvertToDex = true;
                     mBuildFinalPackage = true;
                 } else {
-                    dv = new PostCompilerDeltaVisitor(this, sourceList, androidOutputFolder);
+                    PatternBasedDeltaVisitor dv = new PatternBasedDeltaVisitor(
+                            project, project,
+                            "POST:Main");
+
+                    ChangedFileSet manifestCfs = ChangedFileSetHelper.getMergedManifestCfs(project);
+                    dv.addSet(manifestCfs);
+
+                    ChangedFileSet resCfs = ChangedFileSetHelper.getResCfs(project);
+                    dv.addSet(resCfs);
+
+                    ChangedFileSet androidCodeCfs = ChangedFileSetHelper.getCodeCfs(project);
+                    dv.addSet(androidCodeCfs);
+
+                    ChangedFileSet javaResCfs = ChangedFileSetHelper.getJavaResCfs(project);
+                    dv.addSet(javaResCfs);
+                    dv.addSet(ChangedFileSetHelper.NATIVE_LIBS);
+
                     delta.accept(dv);
 
                     // save the state
-                    mUpdateCrunchCache |= dv.getUpdateCrunchCache();
-                    mPackageResources |= dv.getPackageResources();
-                    mConvertToDex |= dv.getConvertToDex();
-                    mBuildFinalPackage |= dv.getMakeFinalPackage();
+                    mPackageResources |= dv.checkSet(manifestCfs) || dv.checkSet(resCfs);
+
+                    mConvertToDex |= dv.checkSet(androidCodeCfs);
+
+                    mBuildFinalPackage |= dv.checkSet(javaResCfs) ||
+                            dv.checkSet(ChangedFileSetHelper.NATIVE_LIBS);
                 }
 
-                // if the main resources didn't change, then we check for the library
-                // ones (will trigger resource repackaging too)
-                if ((mPackageResources == false || mBuildFinalPackage == false) &&
-                        libProjects.size() > 0) {
+                // check the libraries
+                if (libProjects.size() > 0) {
                     for (IProject libProject : libProjects) {
                         delta = getDelta(libProject);
                         if (delta != null) {
-                            LibraryDeltaVisitor visitor = new LibraryDeltaVisitor();
+                            PatternBasedDeltaVisitor visitor = new PatternBasedDeltaVisitor(
+                                    project, libProject,
+                                    "POST:Lib");
+
+                            ChangedFileSet libResCfs = ChangedFileSetHelper.getFullResCfs(
+                                    libProject);
+                            visitor.addSet(libResCfs);
+                            visitor.addSet(ChangedFileSetHelper.NATIVE_LIBS);
+                            // FIXME: add check on the library.jar?
+
                             delta.accept(visitor);
 
-                            mPackageResources |= visitor.getResChange();
-                            mBuildFinalPackage |= visitor.getLibChange();
-
-                            if (mPackageResources && mBuildFinalPackage) {
-                                break;
-                            }
+                            mPackageResources |= visitor.checkSet(libResCfs);
+                            mBuildFinalPackage |= visitor.checkSet(
+                                    ChangedFileSetHelper.NATIVE_LIBS);
                         }
                     }
                 }
 
-                // also go through the delta for all the referenced projects, until we are forced to
-                // compile anyway
+                // also go through the delta for all the referenced projects
                 final int referencedCount = referencedJavaProjects.size();
-                for (int i = 0 ; i < referencedCount &&
-                        (mBuildFinalPackage == false || mConvertToDex == false); i++) {
+                for (int i = 0 ; i < referencedCount; i++) {
                     IJavaProject referencedJavaProject = referencedJavaProjects.get(i);
                     delta = getDelta(referencedJavaProject.getProject());
                     if (delta != null) {
-                        ReferencedProjectDeltaVisitor refProjectDv =
-                                new ReferencedProjectDeltaVisitor(referencedJavaProject);
+                        PatternBasedDeltaVisitor visitor = new PatternBasedDeltaVisitor(
+                                project, referencedJavaProject.getProject(),
+                                "POST:RefedProject");
 
-                        delta.accept(refProjectDv);
+                        ChangedFileSet javaResCfs = ChangedFileSetHelper.getJavaResCfs(project);
+                        visitor.addSet(javaResCfs);
+
+                        ChangedFileSet bytecodeCfs = ChangedFileSetHelper.getByteCodeCfs(project);
+                        visitor.addSet(bytecodeCfs);
+
+                        delta.accept(visitor);
 
                         // save the state
-                        mConvertToDex |= refProjectDv.needDexConvertion();
-                        mBuildFinalPackage |= refProjectDv.needMakeFinalPackage();
+                        mConvertToDex |= visitor.checkSet(bytecodeCfs);
+                        mBuildFinalPackage |= visitor.checkSet(javaResCfs);
                     }
                 }
             }
 
             // store the build status in the persistent storage
             saveProjectBooleanProperty(PROPERTY_CONVERT_TO_DEX, mConvertToDex);
-            saveProjectBooleanProperty(PROPERTY_UPDATE_CRUNCH_CACHE, mUpdateCrunchCache);
             saveProjectBooleanProperty(PROPERTY_PACKAGE_RESOURCES, mPackageResources);
             saveProjectBooleanProperty(PROPERTY_BUILD_APK, mBuildFinalPackage);
 
-            if (dv != null && dv.mXmlError) {
-                AdtPlugin.printBuildToConsole(BuildVerbosity.VERBOSE, project,
-                Messages.Xml_Error);
-
-                // if there was some XML errors, we just return w/o doing
-                // anything since we've put some markers in the files anyway
-                return allRefProjects;
-            }
+            // Top level check to make sure the build can move forward. Only do this after recording
+            // delta changes.
+            abortOnBadSetup(javaProject);
 
             // remove older packaging markers.
             removeMarkersFromContainer(javaProject.getProject(), AdtConstants.MARKER_PACKAGING);
@@ -424,32 +353,35 @@ public class PostCompilerBuilder extends BaseBuilder {
                     mConvertToDex = true;
                 }
 
-                // also update the crunch cache if needed.
-                if (mUpdateCrunchCache) {
-                    if (DEBUG) {
-                        System.out.println("\trunning crunch!");
-                    }
-                    BuildHelper helper = new BuildHelper(project,
-                            mOutStream, mErrStream,
-                            true /*debugMode*/,
-                            AdtPrefs.getPrefs().getBuildVerbosity() == BuildVerbosity.VERBOSE);
-                    updateCrunchCache(project, helper);
-
-                    // refresh recursively bin/res folder
-                    resOutputFolder.refreshLocal(IResource.DEPTH_INFINITE, monitor);
+                // also update the crunch cache always since aapt does it smartly only
+                // on the files that need it.
+                if (DEBUG_LOG) {
+                    AdtPlugin.log(IStatus.INFO, "%s running crunch!", project.getName());
                 }
+                BuildHelper helper = new BuildHelper(project,
+                        mOutStream, mErrStream,
+                        true /*debugMode*/,
+                        AdtPrefs.getPrefs().getBuildVerbosity() == BuildVerbosity.VERBOSE,
+                        mResourceMarker);
+                updateCrunchCache(project, helper);
+
+                // refresh recursively bin/res folder
+                resOutputFolder.refreshLocal(IResource.DEPTH_INFINITE, monitor);
 
                 if (mConvertToDex) { // in this case this means some class files changed and
                                      // we need to update the jar file.
-                    if (DEBUG) {
-                        System.out.println("\tupdating jar!");
+                    if (DEBUG_LOG) {
+                        AdtPlugin.log(IStatus.INFO, "%s updating jar!", project.getName());
                     }
+
+                    // resource to the AndroidManifest.xml file
+                    IFile manifestFile = project.getFile(SdkConstants.FN_ANDROID_MANIFEST_XML);
+                    String appPackage = AndroidManifest.getPackage(new IFileWrapper(manifestFile));
+
                     IFolder javaOutputFolder = BaseProjectHelper.getJavaOutputFolder(project);
 
-                    writeLibraryPackage(jarIFile, project, javaOutputFolder,
-                            referencedJavaProjects);
+                    writeLibraryPackage(jarIFile, project, appPackage, javaOutputFolder);
                     saveProjectBooleanProperty(PROPERTY_CONVERT_TO_DEX, mConvertToDex = false);
-
 
                     // refresh the bin folder content with no recursion to update the library
                     // jar file.
@@ -495,7 +427,6 @@ public class PostCompilerBuilder extends BaseBuilder {
                 tmp = androidOutputFolder.findMember(AdtConstants.FN_RESOURCES_AP_);
                 if (tmp == null || tmp.exists() == false) {
                     mPackageResources = true;
-                    mBuildFinalPackage = true;
                 }
             }
 
@@ -504,7 +435,6 @@ public class PostCompilerBuilder extends BaseBuilder {
                 tmp = androidOutputFolder.findMember(SdkConstants.FN_APK_CLASSES_DEX);
                 if (tmp == null || tmp.exists() == false) {
                     mConvertToDex = true;
-                    mBuildFinalPackage = true;
                 }
             }
 
@@ -545,18 +475,8 @@ public class PostCompilerBuilder extends BaseBuilder {
                 BuildHelper helper = new BuildHelper(project,
                         mOutStream, mErrStream,
                         true /*debugMode*/,
-                        AdtPrefs.getPrefs().getBuildVerbosity() == BuildVerbosity.VERBOSE);
-
-                // resource to the AndroidManifest.xml file
-                IFile manifestFile = project.getFile(SdkConstants.FN_ANDROID_MANIFEST_XML);
-
-                if (manifestFile == null || manifestFile.exists() == false) {
-                    // mark project and exit
-                    String msg = String.format(Messages.s_File_Missing,
-                            SdkConstants.FN_ANDROID_MANIFEST_XML);
-                    markProject(AdtConstants.MARKER_PACKAGING, msg, IMarker.SEVERITY_ERROR);
-                    return allRefProjects;
-                }
+                        AdtPrefs.getPrefs().getBuildVerbosity() == BuildVerbosity.VERBOSE,
+                        mResourceMarker);
 
                 IPath androidBinLocation = androidOutputFolder.getLocation();
                 if (androidBinLocation == null) {
@@ -565,6 +485,18 @@ public class PostCompilerBuilder extends BaseBuilder {
                     return allRefProjects;
                 }
                 String osAndroidBinPath = androidBinLocation.toOSString();
+
+                // resource to the AndroidManifest.xml file
+                IFile manifestFile = androidOutputFolder.getFile(
+                        SdkConstants.FN_ANDROID_MANIFEST_XML);
+
+                if (manifestFile == null || manifestFile.exists() == false) {
+                    // mark project and exit
+                    String msg = String.format(Messages.s_File_Missing,
+                            SdkConstants.FN_ANDROID_MANIFEST_XML);
+                    markProject(AdtConstants.MARKER_PACKAGING, msg, IMarker.SEVERITY_ERROR);
+                    return allRefProjects;
+                }
 
                 // Remove the old .apk.
                 // This make sure that if the apk is corrupted, then dx (which would attempt
@@ -577,10 +509,12 @@ public class PostCompilerBuilder extends BaseBuilder {
                 // notified.
                 finalPackage.delete();
 
-                // Check if we need to update the PNG cache
-                if (mUpdateCrunchCache) {
-                    if (DEBUG) {
-                        System.out.println("\trunning crunch!");
+                // Check if we need to package the resources.
+                if (mPackageResources) {
+                    // also update the crunch cache always since aapt does it smartly only
+                    // on the files that need it.
+                    if (DEBUG_LOG) {
+                        AdtPlugin.log(IStatus.INFO, "%s running crunch!", project.getName());
                     }
                     if (updateCrunchCache(project, helper) == false) {
                         return allRefProjects;
@@ -588,12 +522,9 @@ public class PostCompilerBuilder extends BaseBuilder {
 
                     // refresh recursively bin/res folder
                     resOutputFolder.refreshLocal(IResource.DEPTH_INFINITE, monitor);
-                }
 
-                // Check if we need to package the resources.
-                if (mPackageResources) {
-                    if (DEBUG) {
-                        System.out.println("\tpackaging resources!");
+                    if (DEBUG_LOG) {
+                        AdtPlugin.log(IStatus.INFO, "%s packaging resources!", project.getName());
                     }
                     // remove some aapt_package only markers.
                     removeMarkersFromContainer(project, AdtConstants.MARKER_AAPT_PACKAGE);
@@ -637,12 +568,11 @@ public class PostCompilerBuilder extends BaseBuilder {
 
                 // then we check if we need to package the .class into classes.dex
                 if (mConvertToDex) {
-                    if (DEBUG) {
-                        System.out.println("\trunning dex!");
+                    if (DEBUG_LOG) {
+                        AdtPlugin.log(IStatus.INFO, "%s running dex!", project.getName());
                     }
                     try {
-                        String[] dxInputPaths = helper.getCompiledCodePaths(
-                                true /*includeProjectOutputs*/, mResourceMarker);
+                        Collection<String> dxInputPaths = helper.getCompiledCodePaths();
 
                         helper.executeDx(javaProject, dxInputPaths, classesDexPath);
                     } catch (DexException e) {
@@ -676,13 +606,12 @@ public class PostCompilerBuilder extends BaseBuilder {
                 // This is the default package with all the resources.
 
                 try {
-                    if (DEBUG) {
-                        System.out.println("\tmaking final package!");
+                    if (DEBUG_LOG) {
+                        AdtPlugin.log(IStatus.INFO, "%s making final package!", project.getName());
                     }
                     helper.finalDebugPackage(
                             osAndroidBinPath + File.separator + AdtConstants.FN_RESOURCES_AP_,
-                        classesDexPath, osFinalPackagePath,
-                        javaProject, libProjects, referencedJavaProjects, mResourceMarker);
+                        classesDexPath, osFinalPackagePath, libProjects, mResourceMarker);
                 } catch (KeytoolException e) {
                     String eMessage = e.getMessage();
 
@@ -795,12 +724,16 @@ public class PostCompilerBuilder extends BaseBuilder {
     private static class JarBuilder implements IArchiveBuilder {
 
         private static Pattern R_PATTERN = Pattern.compile("R(\\$.*)?\\.class"); //$NON-NLS-1$
+        private static Pattern MANIFEST_PATTERN = Pattern.compile("Manifest(\\$.*)?\\.class"); //$NON-NLS-1$
+        private static String BUILD_CONFIG_CLASS = "BuildConfig.class"; //$NON-NLS-1$
 
         private final byte[] buffer = new byte[1024];
         private final JarOutputStream mOutputStream;
+        private final String mAppPackage;
 
-        JarBuilder(JarOutputStream outputStream) {
+        JarBuilder(JarOutputStream outputStream, String appPackage) {
             mOutputStream = outputStream;
+            mAppPackage = appPackage.replace('.', '/');
         }
 
         public void addFile(IFile file, IFolder rootFolder) throws ApkCreationException {
@@ -809,9 +742,15 @@ public class PostCompilerBuilder extends BaseBuilder {
                 return;
             }
 
-            // we don't package any R[$*] classes.
+            IPath packageApp = file.getParent().getFullPath().makeRelativeTo(
+                    rootFolder.getFullPath());
+
             String name = file.getName();
-            if (R_PATTERN.matcher(name).matches()) {
+            // Ignore the library's R/Manifest/BuildConfig classes.
+            if (mAppPackage.equals(packageApp.toString()) &&
+                            (BUILD_CONFIG_CLASS.equals(name) ||
+                            MANIFEST_PATTERN.matcher(name).matches() ||
+                            R_PATTERN.matcher(name).matches())) {
                 return;
             }
 
@@ -825,6 +764,7 @@ public class PostCompilerBuilder extends BaseBuilder {
             }
         }
 
+        @Override
         public void addFile(File file, String archivePath) throws ApkCreationException,
                 SealedApkException, DuplicateFileException {
             try {
@@ -886,17 +826,18 @@ public class PostCompilerBuilder extends BaseBuilder {
             }
         }
 
-        // crunch has been done. Reset state
-        mUpdateCrunchCache = false;
-
-        // and store it
-        saveProjectBooleanProperty(PROPERTY_UPDATE_CRUNCH_CACHE, mUpdateCrunchCache);
-
         return true;
     }
 
-    private void writeLibraryPackage(IFile jarIFile, IProject project, IFolder javaOutputFolder,
-            List<IJavaProject> referencedJavaProjects) {
+    /**
+     * Writes the library jar file.
+     * @param jarIFile the destination file
+     * @param project the library project
+     * @param appPackage the library android package
+     * @param javaOutputFolder the JDT output folder.
+     */
+    private void writeLibraryPackage(IFile jarIFile, IProject project, String appPackage,
+            IFolder javaOutputFolder) {
 
         JarOutputStream jos = null;
         try {
@@ -907,33 +848,13 @@ public class PostCompilerBuilder extends BaseBuilder {
             jos = new JarOutputStream(
                     new FileOutputStream(jarIFile.getLocation().toFile()), manifest);
 
-            JarBuilder jarBuilder = new JarBuilder(jos);
+            JarBuilder jarBuilder = new JarBuilder(jos, appPackage);
 
             // write the class files
             writeClassFilesIntoJar(jarBuilder, javaOutputFolder, javaOutputFolder);
 
-            // now write the standard Java resources
-            BuildHelper.writeResources(jarBuilder, JavaCore.create(project));
-
-            // do the same for all the referencedJava project
-            for (IJavaProject javaProject : referencedJavaProjects) {
-                // in case an Android project was referenced (which won't work), the
-                // best thing is to ignore this project.
-                if (javaProject.getProject().hasNature(AdtConstants.NATURE_DEFAULT)) {
-                    continue;
-                }
-
-                IFolder refProjectOutput = BaseProjectHelper.getJavaOutputFolder(
-                        javaProject.getProject());
-
-                if (refProjectOutput != null) {
-                    // write the class files
-                    writeClassFilesIntoJar(jarBuilder, refProjectOutput, refProjectOutput);
-
-                    // now write the standard Java resources
-                    BuildHelper.writeResources(jarBuilder, javaProject);
-                }
-            }
+            // now write the standard Java resources from the output folder
+            ApkBuilder.addSourceFolder(jarBuilder, javaOutputFolder.getLocation().toFile());
 
             saveProjectBooleanProperty(PROPERTY_CONVERT_TO_DEX, mConvertToDex);
         } catch (Exception e) {
@@ -969,7 +890,6 @@ public class PostCompilerBuilder extends BaseBuilder {
         // load the build status. We pass true as the default value to
         // force a recompile in case the property was not found
         mConvertToDex = loadProjectBooleanProperty(PROPERTY_CONVERT_TO_DEX, true);
-        mUpdateCrunchCache = loadProjectBooleanProperty(PROPERTY_UPDATE_CRUNCH_CACHE, true);
         mPackageResources = loadProjectBooleanProperty(PROPERTY_PACKAGE_RESOURCES, true);
         mBuildFinalPackage = loadProjectBooleanProperty(PROPERTY_BUILD_APK, true);
     }

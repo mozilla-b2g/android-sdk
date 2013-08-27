@@ -16,6 +16,10 @@
 
 package com.android.ide.common.api;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
+import com.google.common.annotations.Beta;
+
 /**
  * Represents an XML element with a name, attributes and inner elements.
  * <p/>
@@ -26,12 +30,14 @@ package com.android.ide.common.api;
  * to adjust your code for the next tools release.</b>
  * </p>
  */
+@Beta
 public interface IDragElement {
 
     /**
      * Returns the element name, which must match a fully qualified class name of
      * a View to inflate.
      */
+    @NonNull
     public abstract String getFqcn();
 
     /**
@@ -41,6 +47,7 @@ public interface IDragElement {
      *
      * The bounds are absolute for the canvas.
      */
+    @NonNull
     public abstract Rect getBounds();
 
     /**
@@ -48,6 +55,7 @@ public interface IDragElement {
      * from an existing canvas. Returns null if the element has no parent, such as a top
      * level element or an element originating from the object palette.
      */
+    @Nullable
     public abstract String getParentFqcn();
 
     /**
@@ -56,22 +64,34 @@ public interface IDragElement {
      *
      * The returned rectangle can be invalid. It is never null.
      */
+    @NonNull
     public abstract Rect getParentBounds();
 
     /**
      * Returns a list of attributes. The list can be empty but is never null.
      */
+    @NonNull
     public abstract IDragAttribute[] getAttributes();
 
     /**
      * Returns the requested attribute or null if not found.
      */
-    public abstract IDragAttribute getAttribute(String uri, String localName);
+    @Nullable
+    public abstract IDragAttribute getAttribute(@Nullable String uri, @NonNull String localName);
 
     /**
      * Returns a list of inner elements. The list can be empty but is never null.
      */
+    @NonNull
     public abstract IDragElement[] getInnerElements();
+
+    /**
+     * Returns true if the given {@link INode} represents this drag element
+     *
+     * @param node the node to be checked
+     * @return true if the given node represents this drag element
+     */
+    public abstract boolean isSame(@NonNull INode node);
 
     /**
      * An XML attribute in the {@link IDragElement}.
@@ -87,12 +107,15 @@ public interface IDragElement {
          * Returns the namespace URI of the attribute.
          * Can be empty for an attribute without a namespace but is never null.
          */
+        @NonNull
         public abstract String getUri();
 
         /** Returns the XML local name of the attribute. Cannot be null nor empty. */
+        @NonNull
         public abstract String getName();
 
         /** Returns the value of the attribute. Cannot be null. Can be empty. */
+        @NonNull
         public abstract String getValue();
     }
 }

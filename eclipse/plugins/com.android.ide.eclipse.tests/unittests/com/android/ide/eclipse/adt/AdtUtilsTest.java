@@ -15,6 +15,10 @@
  */
 package com.android.ide.eclipse.adt;
 
+import com.google.common.collect.Iterables;
+
+import java.util.Arrays;
+
 import junit.framework.TestCase;
 
 @SuppressWarnings("javadoc")
@@ -29,6 +33,28 @@ public class AdtUtilsTest extends TestCase {
 
         assertFalse(AdtUtils.endsWithIgnoreCase("foob", "foo"));
         assertFalse(AdtUtils.endsWithIgnoreCase("foo", "fo"));
+    }
+
+    public void testStartsWithIgnoreCase() {
+        assertTrue(AdtUtils.startsWithIgnoreCase("foo", "foo"));
+        assertTrue(AdtUtils.startsWithIgnoreCase("foo", "Foo"));
+        assertTrue(AdtUtils.startsWithIgnoreCase("foo", "foo"));
+        assertTrue(AdtUtils.startsWithIgnoreCase("barfoo", "bar"));
+        assertTrue(AdtUtils.startsWithIgnoreCase("BarFoo", "bar"));
+        assertTrue(AdtUtils.startsWithIgnoreCase("BarFoo", "bAr"));
+
+        assertFalse(AdtUtils.startsWithIgnoreCase("bfoo", "foo"));
+        assertFalse(AdtUtils.startsWithIgnoreCase("fo", "foo"));
+    }
+
+    public void testStartsWith() {
+        assertTrue(AdtUtils.startsWith("foo", 0, "foo"));
+        assertTrue(AdtUtils.startsWith("foo", 0, "Foo"));
+        assertTrue(AdtUtils.startsWith("Foo", 0, "foo"));
+        assertTrue(AdtUtils.startsWith("aFoo", 1, "foo"));
+
+        assertFalse(AdtUtils.startsWith("aFoo", 0, "foo"));
+        assertFalse(AdtUtils.startsWith("aFoo", 2, "foo"));
     }
 
     public void testEndsWith() {
@@ -93,15 +119,56 @@ public class AdtUtilsTest extends TestCase {
         assertNull(null, AdtUtils.capitalize(null));
     }
 
-    public void testEditDistance() {
-        // editing kitten to sitting has edit distance 3:
-        //   replace k with s
-        //   replace e with i
-        //   append g
-        assertEquals(3, AdtUtils.editDistance("kitten", "sitting"));
+    public void testCamelCaseToUnderlines() {
+        assertEquals("", AdtUtils.camelCaseToUnderlines(""));
+        assertEquals("foo", AdtUtils.camelCaseToUnderlines("foo"));
+        assertEquals("foo", AdtUtils.camelCaseToUnderlines("Foo"));
+        assertEquals("foo_bar", AdtUtils.camelCaseToUnderlines("FooBar"));
+        assertEquals("test_xml", AdtUtils.camelCaseToUnderlines("testXML"));
+        assertEquals("test_foo", AdtUtils.camelCaseToUnderlines("testFoo"));
+    }
 
-        assertEquals(3, AdtUtils.editDistance("saturday", "sunday"));
-        assertEquals(1, AdtUtils.editDistance("button", "bitton"));
-        assertEquals(6, AdtUtils.editDistance("radiobutton", "bitton"));
+    public void testUnderlinesToCamelCase() {
+        assertEquals("", AdtUtils.underlinesToCamelCase(""));
+        assertEquals("", AdtUtils.underlinesToCamelCase("_"));
+        assertEquals("Foo", AdtUtils.underlinesToCamelCase("foo"));
+        assertEquals("FooBar", AdtUtils.underlinesToCamelCase("foo_bar"));
+        assertEquals("FooBar", AdtUtils.underlinesToCamelCase("foo__bar"));
+        assertEquals("Foo", AdtUtils.underlinesToCamelCase("foo_"));
+    }
+
+    public void testStripSuffix() {
+        assertEquals("Foo", AdtUtils.stripSuffix("Foo", ""));
+        assertEquals("Fo", AdtUtils.stripSuffix("Foo", "o"));
+        assertEquals("F", AdtUtils.stripSuffix("Fo", "o"));
+        assertEquals("", AdtUtils.stripSuffix("Foo", "Foo"));
+        assertEquals("LinearLayout_Layout",
+                AdtUtils.stripSuffix("LinearLayout_LayoutParams", "Params"));
+        assertEquals("Foo", AdtUtils.stripSuffix("Foo", "Bar"));
+    }
+
+    public void testSplitPath() throws Exception {
+        assertTrue(Arrays.equals(new String[] { "/foo", "/bar", "/baz" },
+                Iterables.toArray(AdtUtils.splitPath("/foo:/bar:/baz"), String.class)));
+
+        assertTrue(Arrays.equals(new String[] { "/foo", "/bar" },
+                Iterables.toArray(AdtUtils.splitPath("/foo;/bar"), String.class)));
+
+        assertTrue(Arrays.equals(new String[] { "/foo", "/bar:baz" },
+                Iterables.toArray(AdtUtils.splitPath("/foo;/bar:baz"), String.class)));
+
+        assertTrue(Arrays.equals(new String[] { "\\foo\\bar", "\\bar\\foo" },
+                Iterables.toArray(AdtUtils.splitPath("\\foo\\bar;\\bar\\foo"), String.class)));
+
+        assertTrue(Arrays.equals(new String[] { "${sdk.dir}\\foo\\bar", "\\bar\\foo" },
+                Iterables.toArray(AdtUtils.splitPath("${sdk.dir}\\foo\\bar;\\bar\\foo"),
+                        String.class)));
+
+        assertTrue(Arrays.equals(new String[] { "${sdk.dir}/foo/bar", "/bar/foo" },
+                Iterables.toArray(AdtUtils.splitPath("${sdk.dir}/foo/bar:/bar/foo"),
+                        String.class)));
+
+        assertTrue(Arrays.equals(new String[] { "C:\\foo", "/bar" },
+                Iterables.toArray(AdtUtils.splitPath("C:\\foo:/bar"), String.class)));
     }
 }

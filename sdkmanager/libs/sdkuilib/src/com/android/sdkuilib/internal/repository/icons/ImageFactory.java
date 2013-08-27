@@ -16,10 +16,11 @@
 
 package com.android.sdkuilib.internal.repository.icons;
 
-import com.android.sdklib.internal.repository.Archive;
-import com.android.sdklib.internal.repository.Package;
-import com.android.sdklib.internal.repository.SdkSource;
-import com.android.sdklib.internal.repository.SdkSourceCategory;
+import com.android.sdklib.internal.repository.archives.Archive;
+import com.android.sdklib.internal.repository.packages.Package;
+import com.android.sdklib.internal.repository.sources.SdkSource;
+import com.android.sdklib.internal.repository.sources.SdkSourceCategory;
+import com.android.sdkuilib.internal.repository.sdkman2.PkgContentProvider;
 
 import org.eclipse.swt.SWTException;
 import org.eclipse.swt.graphics.Image;
@@ -28,6 +29,7 @@ import org.eclipse.swt.widgets.Display;
 import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.Locale;
 import java.util.Map;
 
 
@@ -101,23 +103,22 @@ public class ImageFactory {
         if (clz.endsWith(Package.class.getSimpleName())) {
             String name = clz.replaceFirst(Package.class.getSimpleName(), "")   //$NON-NLS-1$
                              .replace("SystemImage", "sysimg")    //$NON-NLS-1$ //$NON-NLS-2$
-                             .toLowerCase();
+                             .toLowerCase(Locale.US);
             name += "_pkg_16.png";                                              //$NON-NLS-1$
             return getImageByName(name);
         }
 
         if (object instanceof SdkSourceCategory) {
-            return getImageByName("source_cat_icon16.png");                     //$NON-NLS-1$
+            return getImageByName("source_cat_icon_16.png");                     //$NON-NLS-1$
 
         } else if (object instanceof SdkSource) {
-            return getImageByName("source_icon16.png");                         //$NON-NLS-1$
+            return getImageByName("source_icon_16.png");                         //$NON-NLS-1$
 
-        // TODO reintroduce this in SDK Manager 2 in repository view
-        // } else if (object instanceof RepoSourcesAdapter.RepoSourceError) {
-        //     return getImageByName("error_icon16.png");                       //$NON-NLS-1$
-        //
-        // } else if (object instanceof RepoSourcesAdapter.RepoSourceEmpty) {
-        //     return getImageByName("nopkg_icon16.png");                       //$NON-NLS-1$
+        } else if (object instanceof PkgContentProvider.RepoSourceError) {
+            return getImageByName("error_icon_16.png");                       //$NON-NLS-1$
+
+        } else if (object instanceof PkgContentProvider.RepoSourceNotification) {
+            return getImageByName("nopkg_icon_16.png");                       //$NON-NLS-1$
         }
 
         if (object instanceof Archive) {
@@ -130,6 +131,12 @@ public class ImageFactory {
 
         if (object instanceof String) {
             return getImageByName((String) object);
+        }
+
+
+        if (object != null) {
+            // For debugging
+            // System.out.println("No image for object " + object.getClass().getSimpleName());
         }
 
         return null;

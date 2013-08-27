@@ -30,15 +30,14 @@ import com.android.ide.eclipse.adt.internal.editors.descriptors.IDescriptorProvi
 import com.android.ide.eclipse.adt.internal.editors.descriptors.SeparatorAttributeDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.TextAttributeDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.TextValueDescriptor;
-import com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.DomUtilities;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiAttributeNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiFlagAttributeNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiResourceAttributeNode;
 import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetData;
-import com.android.sdklib.SdkConstants;
 import com.android.util.Pair;
+import com.android.util.XmlUtils;
 
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.jface.text.BadLocationException;
@@ -53,14 +52,13 @@ import org.eclipse.jface.text.contentassist.IContextInformationValidator;
 import org.eclipse.jface.text.source.ISourceViewer;
 import org.eclipse.swt.graphics.Image;
 import org.eclipse.wst.sse.core.internal.provisional.IndexedRegion;
-import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -113,7 +111,7 @@ public abstract class AndroidContentAssist implements IContentAssistProcessor {
      *      The Id can be one of {@link AndroidTargetData#DESCRIPTOR_MANIFEST},
      *      {@link AndroidTargetData#DESCRIPTOR_LAYOUT},
      *      {@link AndroidTargetData#DESCRIPTOR_MENU},
-     *      or {@link AndroidTargetData#DESCRIPTOR_XML}.
+     *      or {@link AndroidTargetData#DESCRIPTOR_OTHER_XML}.
      *      All other values will throw an {@link IllegalArgumentException} later at runtime.
      */
     public AndroidContentAssist(int descriptorId) {
@@ -131,11 +129,12 @@ public abstract class AndroidContentAssist implements IContentAssistProcessor {
      *
      * @see org.eclipse.jface.text.contentassist.IContentAssistProcessor#computeCompletionProposals(org.eclipse.jface.text.ITextViewer, int)
      */
+    @Override
     public ICompletionProposal[] computeCompletionProposals(ITextViewer viewer, int offset) {
         String wordPrefix = extractElementPrefix(viewer, offset);
 
         if (mEditor == null) {
-            mEditor = AndroidXmlEditor.getAndroidXmlEditor(viewer);
+            mEditor = AndroidXmlEditor.fromTextViewer(viewer);
             if (mEditor == null) {
                 // This should not happen. Duck and forget.
                 AdtPlugin.log(IStatus.ERROR, "Editor not found during completion");
@@ -274,55 +273,6 @@ public abstract class AndroidContentAssist implements IContentAssistProcessor {
     }
 
     /**
-     * Returns the namespace prefix matching the Android Resource URI.
-     * If no such declaration is found, returns the default "android" prefix.
-     *
-     * @param node The current node. Must not be null.
-     * @param nsUri The namespace URI of which the prefix is to be found,
-     *              e.g. {@link SdkConstants#NS_RESOURCES}
-     * @return The first prefix declared or the default "android" prefix.
-     */
-    private static String lookupNamespacePrefix(Node node, String nsUri) {
-        // Note: Node.lookupPrefix is not implemented in wst/xml/core NodeImpl.java
-        // The following emulates this:
-        //   String prefix = node.lookupPrefix(SdkConstants.NS_RESOURCES);
-
-        if (XmlnsAttributeDescriptor.XMLNS_URI.equals(nsUri)) {
-            return XmlnsAttributeDescriptor.XMLNS;
-        }
-
-        HashSet<String> visited = new HashSet<String>();
-
-        String prefix = null;
-        for (; prefix == null &&
-                    node != null &&
-                    node.getNodeType() == Node.ELEMENT_NODE;
-               node = node.getParentNode()) {
-            NamedNodeMap attrs = node.getAttributes();
-            for (int n = attrs.getLength() - 1; n >= 0; --n) {
-                Node attr = attrs.item(n);
-                if (XmlnsAttributeDescriptor.XMLNS.equals(attr.getPrefix())) {
-                    String uri = attr.getNodeValue();
-                    if (SdkConstants.NS_RESOURCES.equals(uri)) {
-                        return attr.getLocalName();
-                    }
-                    visited.add(uri);
-                }
-            }
-        }
-
-        // Use a sensible default prefix if we can't find one.
-        // We need to make sure the prefix is not one that was declared in the scope
-        // visited above.
-        prefix = SdkConstants.NS_RESOURCES.equals(nsUri) ? "android" : "ns"; //$NON-NLS-1$ //$NON-NLS-2$
-        String base = prefix;
-        for (int i = 1; visited.contains(prefix); i++) {
-            prefix = base + Integer.toString(i);
-        }
-        return prefix;
-    }
-
-    /**
      * Gets the choices when the user is editing the name of an XML element.
      * <p/>
      * The user is editing the name of an element (the "parent").
@@ -360,6 +310,7 @@ public abstract class AndroidContentAssist implements IContentAssistProcessor {
             System.arraycopy(elements, 0, copy, 0, elements.length);
 
             Arrays.sort(copy, new Comparator<ElementDescriptor>() {
+                @Override
                 public int compare(ElementDescriptor e1, ElementDescriptor e2) {
                     return e1.getXmlLocalName().compareTo(e2.getXmlLocalName());
                 }
@@ -459,7 +410,9 @@ public abstract class AndroidContentAssist implements IContentAssistProcessor {
                 choices = currentUiNode.getAttributeDescriptors();
             } else {
                 ElementDescriptor parentDesc = getDescriptor(parent);
-                choices = parentDesc.getAttributes();
+                if (parentDesc != null) {
+                    choices = parentDesc.getAttributes();
+                }
             }
         }
         return choices;
@@ -494,7 +447,7 @@ public abstract class AndroidContentAssist implements IContentAssistProcessor {
         AttributeDescriptor attributeDescriptor = currAttrNode.getDescriptor();
         IAttributeInfo attributeInfo = attributeDescriptor.getAttributeInfo();
         if (value.startsWith(PREFIX_RESOURCE_REF)
-                && !Format.REFERENCE.in(attributeInfo.getFormats())) {
+                && !attributeInfo.getFormats().contains(Format.REFERENCE)) {
             // Special case: If the attribute value looks like a reference to a
             // resource, offer to complete it, since in many cases our metadata
             // does not correctly state whether a resource value is allowed. We don't
@@ -620,7 +573,7 @@ public abstract class AndroidContentAssist implements IContentAssistProcessor {
                 if (nsUri != null) {
                     nsPrefix = nsUriMap.get(nsUri);
                     if (nsPrefix == null) {
-                        nsPrefix = lookupNamespacePrefix(currentNode, nsUri);
+                        nsPrefix = XmlUtils.lookupNamespacePrefix(currentNode, nsUri);
                         nsUriMap.put(nsUri, nsPrefix);
                     }
                 }
@@ -845,6 +798,7 @@ public abstract class AndroidContentAssist implements IContentAssistProcessor {
         return getRootDescriptor().findChildrenDescriptor(nodeName, true /* recursive */);
     }
 
+    @Override
     public IContextInformation[] computeContextInformation(ITextViewer viewer, int offset) {
         return null;
     }
@@ -858,18 +812,22 @@ public abstract class AndroidContentAssist implements IContentAssistProcessor {
      * @return the auto activation characters for completion proposal or <code>null</code>
      *      if no auto activation is desired
      */
+    @Override
     public char[] getCompletionProposalAutoActivationCharacters() {
         return new char[]{ '<', ':', '=' };
     }
 
+    @Override
     public char[] getContextInformationAutoActivationCharacters() {
         return null;
     }
 
+    @Override
     public IContextInformationValidator getContextInformationValidator() {
         return null;
     }
 
+    @Override
     public String getErrorMessage() {
         return null;
     }
@@ -1217,12 +1175,12 @@ public abstract class AndroidContentAssist implements IContentAssistProcessor {
      */
     private Object[] completeSuffix(Object[] choices, String value, UiAttributeNode currAttrNode) {
         IAttributeInfo attributeInfo = currAttrNode.getDescriptor().getAttributeInfo();
-        Format[] formats = attributeInfo.getFormats();
+        EnumSet<Format> formats = attributeInfo.getFormats();
         List<Object> suffixes = new ArrayList<Object>();
 
         if (value.length() > 0 && Character.isDigit(value.charAt(0))) {
-            boolean hasDimension = Format.DIMENSION.in(formats);
-            boolean hasFraction = Format.FRACTION.in(formats);
+            boolean hasDimension = formats.contains(Format.DIMENSION);
+            boolean hasFraction = formats.contains(Format.FRACTION);
 
             if (hasDimension || hasFraction) {
                 // Split up the value into a numeric part (the prefix) and the
@@ -1266,7 +1224,7 @@ public abstract class AndroidContentAssist implements IContentAssistProcessor {
             }
         }
 
-        boolean hasFlag = Format.FLAG.in(formats);
+        boolean hasFlag = formats.contains(Format.FLAG);
         if (hasFlag) {
             boolean isDone = false;
             String[] flagValues = attributeInfo.getFlagValues();

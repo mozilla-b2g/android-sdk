@@ -51,7 +51,13 @@
         <view
             class="android.widget.Button"
             topAttrs="text,style"
-            relatedTo="ImageButton" />
+            name="Button"
+            init=""
+            relatedTo="ImageButton">
+            <view
+                name="Small Button"
+                init="style=?android:attr/buttonStyleSmall,android:text=Button" />
+        </view>
         <view
             class="android.widget.ToggleButton"
             topAttrs="textOff,textOn,style,background"
@@ -205,13 +211,15 @@
             class="include"
             topAttrs="layout"
             name="Include Other Layout"
-            render="skip" />
+            render="skip"
+            relatedTo="fragment" />
         <view
             class="fragment"
             topAttrs="class,name"
             name="Fragment"
             fill="opposite"
-            render="skip" />
+            render="skip"
+            relatedTo="include" />
         <view
             class="android.widget.TableLayout"
             topAttrs="stretchColumns,shrinkColumns,orientation"
@@ -262,6 +270,7 @@
             render="skip" />
         <view
             class="android.widget.SlidingDrawer"
+            render="skip"
             topAttrs="allowSingleTap,bottomOffset,content,handle,topOffset,visibility" />
         <view
             class="android.widget.TabHost"

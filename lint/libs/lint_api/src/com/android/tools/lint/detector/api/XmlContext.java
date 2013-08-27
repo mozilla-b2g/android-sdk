@@ -16,14 +16,19 @@
 
 package com.android.tools.lint.detector.api;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
+import com.android.resources.ResourceFolderType;
 import com.android.tools.lint.client.api.IDomParser;
-import com.android.tools.lint.client.api.LintClient;
+import com.android.tools.lint.client.api.LintDriver;
+import com.google.common.annotations.Beta;
 
 import org.w3c.dom.Document;
 import org.w3c.dom.Node;
 
 import java.io.File;
-import java.util.EnumSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * A {@link Context} used when checking XML files.
@@ -31,23 +36,34 @@ import java.util.EnumSet;
  * <b>NOTE: This is not a public or final API; if you rely on this be prepared
  * to adjust your code for the next tools release.</b>
  */
+@Beta
 public class XmlContext extends Context {
     /** The XML parser */
     public IDomParser parser;
     /** The XML document */
     public Document document;
+    private final ResourceFolderType mFolderType;
 
     /**
      * Construct a new {@link XmlContext}
      *
-     * @param client the client requesting a lint check
+     * @param driver the driver running through the checks
      * @param project the project containing the file being checked
+     * @param main the main project if this project is a library project, or
+     *            null if this is not a library project. The main project is
+     *            the root project of all library projects, not necessarily the
+     *            directly including project.
      * @param file the file being checked
-     * @param scope the scope for the lint job
+     * @param folderType the {@link ResourceFolderType} of this file, if any
      */
-    public XmlContext(LintClient client, Project project, File file,
-            EnumSet<Scope> scope) {
-        super(client, project, file, scope);
+    public XmlContext(
+            @NonNull LintDriver driver,
+            @NonNull Project project,
+            @Nullable Project main,
+            @NonNull File file,
+            @Nullable ResourceFolderType folderType) {
+        super(driver, project, main, file);
+        mFolderType = folderType;
     }
 
     /**
@@ -56,11 +72,118 @@ public class XmlContext extends Context {
      * @param node the node to look up the location for
      * @return the location for the node
      */
-    public Location getLocation(Node node) {
+    @NonNull
+    public Location getLocation(@NonNull Node node) {
         if (parser != null) {
             return parser.getLocation(this, node);
         }
 
         return Location.create(file);
+    }
+
+    /**
+     * Creates a new location within an XML text node
+     *
+     * @param textNode the text node
+     * @param begin the start offset within the text node (inclusive)
+     * @param end the end offset within the text node (exclusive)
+     * @return a new location
+     */
+    @NonNull
+    public Location getLocation(@NonNull Node textNode, int begin, int end) {
+        assert textNode.getNodeType() == Node.TEXT_NODE;
+        if (parser != null) {
+            return parser.getLocation(this, textNode, begin, end);
+        }
+
+        return Location.create(file);
+    }
+
+
+    /**
+     * Reports an issue applicable to a given DOM node. The DOM node is used as the
+     * scope to check for suppress lint annotations.
+     *
+     * @param issue the issue to report
+     * @param scope the DOM node scope the error applies to. The lint infrastructure
+     *    will check whether there are suppress directives on this node (or its enclosing
+     *    nodes) and if so suppress the warning without involving the client.
+     * @param location the location of the issue, or null if not known
+     * @param message the message for this warning
+     * @param data any associated data, or null
+     */
+    public void report(
+            @NonNull Issue issue,
+            @Nullable Node scope,
+            @Nullable Location location,
+            @NonNull String message,
+            @Nullable Object data) {
+        if (scope != null && mDriver.isSuppressed(issue, scope)) {
+            return;
+        }
+        super.report(issue, location, message, data);
+    }
+
+    @Override
+    public void report(
+            @NonNull Issue issue,
+            @Nullable Location location,
+            @NonNull String message,
+            @Nullable Object data) {
+        // Warn if clients use the non-scoped form? No, there are cases where an
+        //  XML detector's error isn't applicable to one particular location (or it's
+        //  not feasible to compute it cheaply)
+        //mDriver.getClient().log(null, "Warning: Issue " + issue
+        //        + " was reported without a scope node: Can't be suppressed.");
+
+        // For now just check the document root itself
+        if (document != null && mDriver.isSuppressed(issue, document)) {
+            return;
+        }
+
+        super.report(issue, location, message, data);
+    }
+
+    /**
+     * Returns the resource folder type of this XML file, if any.
+     *
+     * @return the resource folder type or null
+     */
+    @Nullable
+    public ResourceFolderType getResourceFolderType() {
+        return mFolderType;
+    }
+
+
+    private final static Pattern sVersionPattern = Pattern.compile("^v(\\d+)$");//$NON-NLS-1$
+
+    private static File sCachedFolder = null;
+    private static int sCachedFolderVersion = -1;
+
+    /**
+     * Returns the folder version. For example, for the file values-v14/foo.xml,
+     * it returns 14.
+     *
+     * @return the folder version, or -1 if no specific version was specified
+     */
+    public int getFolderVersion() {
+        File parent = file.getParentFile();
+        if (parent.equals(sCachedFolder)) {
+            return sCachedFolderVersion;
+        }
+
+        sCachedFolder = parent;
+        sCachedFolderVersion = -1;
+
+        String[] qualifiers = parent.getName().split("-"); //$NON-NLS-1$
+        for (String qualifier : qualifiers) {
+            Matcher matcher = sVersionPattern.matcher(qualifier);
+            if (matcher.matches()) {
+                sCachedFolderVersion = Integer.parseInt(matcher.group(1));
+                break;
+            }
+        }
+
+        return sCachedFolderVersion;
     }
 }

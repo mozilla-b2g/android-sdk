@@ -16,12 +16,14 @@
 
 package com.android.tools.lint.checks;
 
+import static com.android.tools.lint.detector.api.LintConstants.ANDROID_PKG_PREFIX;
 import static com.android.tools.lint.detector.api.LintConstants.ATTR_CLASS;
 import static com.android.tools.lint.detector.api.LintConstants.ATTR_LAYOUT;
 import static com.android.tools.lint.detector.api.LintConstants.ATTR_STYLE;
 import static com.android.tools.lint.detector.api.LintConstants.VIEW_TAG;
 import static com.android.tools.lint.detector.api.LintConstants.XMLNS_PREFIX;
 
+import com.android.annotations.NonNull;
 import com.android.tools.lint.detector.api.Category;
 import com.android.tools.lint.detector.api.Issue;
 import com.android.tools.lint.detector.api.LayoutDetector;
@@ -69,7 +71,7 @@ public class DetectMissingPrefix extends LayoutDetector {
     }
 
     @Override
-    public Speed getSpeed() {
+    public @NonNull Speed getSpeed() {
         return Speed.FAST;
     }
 
@@ -79,7 +81,7 @@ public class DetectMissingPrefix extends LayoutDetector {
     }
 
     @Override
-    public void visitAttribute(XmlContext context, Attr attribute) {
+    public void visitAttribute(@NonNull XmlContext context, @NonNull Attr attribute) {
         String uri = attribute.getNamespaceURI();
         if (uri == null || uri.length() == 0) {
             String name = attribute.getName();
@@ -99,7 +101,7 @@ public class DetectMissingPrefix extends LayoutDetector {
                 return;
             }
 
-            context.report(MISSING_NAMESPACE,
+            context.report(MISSING_NAMESPACE, attribute,
                     context.getLocation(attribute),
                     "Attribute is missing the Android namespace prefix",
                     null);
@@ -114,6 +116,6 @@ public class DetectMissingPrefix extends LayoutDetector {
             return true;
         }
 
-        return tag.indexOf('.') != -1 && !tag.startsWith("android."); //$NON-NLS-1$
+        return tag.indexOf('.') != -1 && !tag.startsWith(ANDROID_PKG_PREFIX);
     }
 }

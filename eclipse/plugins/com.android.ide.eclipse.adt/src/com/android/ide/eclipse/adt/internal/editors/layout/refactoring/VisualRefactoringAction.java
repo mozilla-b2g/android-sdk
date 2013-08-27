@@ -18,7 +18,7 @@ package com.android.ide.eclipse.adt.internal.editors.layout.refactoring;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.AdtUtils;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.CanvasViewInfo;
 
 import org.eclipse.core.resources.IFile;
@@ -31,6 +31,7 @@ import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jface.viewers.ITreeSelection;
 import org.eclipse.ui.IEditorInput;
 import org.eclipse.ui.IEditorPart;
+import org.eclipse.ui.IEditorSite;
 import org.eclipse.ui.IWorkbenchWindow;
 import org.eclipse.ui.IWorkbenchWindowActionDelegate;
 import org.eclipse.ui.part.FileEditorInput;
@@ -39,16 +40,18 @@ abstract class VisualRefactoringAction implements IWorkbenchWindowActionDelegate
     protected IWorkbenchWindow mWindow;
     protected ITextSelection mTextSelection;
     protected ITreeSelection mTreeSelection;
-    protected LayoutEditor mEditor;
+    protected LayoutEditorDelegate mDelegate;
     protected IFile mFile;
 
     /**
      * Keep track of the current workbench window.
      */
+    @Override
     public void init(IWorkbenchWindow window) {
         mWindow = window;
     }
 
+    @Override
     public void dispose() {
     }
 
@@ -57,6 +60,7 @@ abstract class VisualRefactoringAction implements IWorkbenchWindowActionDelegate
      * <p/>
      * Keep a link to the relevant selection structure
      */
+    @Override
     public void selectionChanged(IAction action, ISelection selection) {
         // Look for selections in XML and in the layout UI editor
 
@@ -86,18 +90,16 @@ abstract class VisualRefactoringAction implements IWorkbenchWindowActionDelegate
              }
         }
 
-
-        if (editor instanceof LayoutEditor) {
-            mEditor = (LayoutEditor) editor;
-        }
+        mDelegate = LayoutEditorDelegate.fromEditor(editor);
 
         action.setEnabled((mTextSelection != null || mTreeSelection != null)
-                && mFile != null && mEditor != null);
+                && mFile != null && mDelegate != null);
     }
 
     /**
      * Create a new instance of our refactoring and a wizard to configure it.
      */
+    @Override
     public abstract void run(IAction action);
 
     /**
@@ -131,19 +133,19 @@ abstract class VisualRefactoringAction implements IWorkbenchWindowActionDelegate
         return null;
     }
 
-    public static IAction create(String title, LayoutEditor editor,
+    public static IAction create(String title, LayoutEditorDelegate editorDelegate,
             Class<? extends VisualRefactoringAction> clz) {
-        return new ActionWrapper(title, editor, clz);
+        return new ActionWrapper(title, editorDelegate, clz);
     }
 
     private static class ActionWrapper extends Action {
         private Class<? extends VisualRefactoringAction> mClass;
-        private LayoutEditor mEditor;
+        private LayoutEditorDelegate mEditorDelegate;
 
-        ActionWrapper(String title, LayoutEditor editor,
+        ActionWrapper(String title, LayoutEditorDelegate editorDelegate,
                 Class<? extends VisualRefactoringAction> clz) {
             super(title);
-            mEditor = editor;
+            mEditorDelegate = editorDelegate;
             mClass = clz;
         }
 
@@ -156,8 +158,9 @@ abstract class VisualRefactoringAction implements IWorkbenchWindowActionDelegate
                 AdtPlugin.log(e, null);
                 return;
             }
-            action.init(mEditor.getEditorSite().getWorkbenchWindow());
-            ISelection selection = mEditor.getEditorSite().getSelectionProvider().getSelection();
+            IEditorSite site = mEditorDelegate.getEditor().getEditorSite();
+            action.init(site.getWorkbenchWindow());
+            ISelection selection = site.getSelectionProvider().getSelection();
             action.selectionChanged(ActionWrapper.this, selection);
             if (isEnabled()) {
                 action.run(ActionWrapper.this);

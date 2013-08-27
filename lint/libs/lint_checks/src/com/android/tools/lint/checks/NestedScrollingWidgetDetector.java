@@ -22,6 +22,7 @@ import static com.android.tools.lint.detector.api.LintConstants.HORIZONTAL_SCROL
 import static com.android.tools.lint.detector.api.LintConstants.LIST_VIEW;
 import static com.android.tools.lint.detector.api.LintConstants.SCROLL_VIEW;
 
+import com.android.annotations.NonNull;
 import com.android.tools.lint.detector.api.Category;
 import com.android.tools.lint.detector.api.Context;
 import com.android.tools.lint.detector.api.Issue;
@@ -62,26 +63,26 @@ public class NestedScrollingWidgetDetector extends LayoutDetector {
     }
 
     @Override
-    public void beforeCheckFile(Context context) {
+    public void beforeCheckFile(@NonNull Context context) {
         mVisitingHorizontalScroll = 0;
         mVisitingVerticalScroll = 0;
     }
 
     @Override
-    public Speed getSpeed() {
+    public @NonNull Speed getSpeed() {
         return Speed.FAST;
     }
 
     @Override
     public Collection<String> getApplicableElements() {
-        return Arrays.asList(new String[] {
+        return Arrays.asList(
                 SCROLL_VIEW,
                 LIST_VIEW,
                 GRID_VIEW,
                 // Horizontal
                 GALLERY,
                 HORIZONTAL_SCROLL_VIEW
-        });
+        );
     }
 
     private Element findOuterScrollingWidget(Node node, boolean vertical) {
@@ -103,7 +104,7 @@ public class NestedScrollingWidgetDetector extends LayoutDetector {
     }
 
     @Override
-    public void visitElement(XmlContext context, Element element) {
+    public void visitElement(@NonNull XmlContext context, @NonNull Element element) {
         boolean vertical = isVerticalScroll(element);
         if (vertical) {
             mVisitingVerticalScroll++;
@@ -123,13 +124,13 @@ public class NestedScrollingWidgetDetector extends LayoutDetector {
                             "horizontally scrolling widget (%2$s)";
                 }
                 String msg = String.format(format, parent.getTagName(), element.getTagName());
-                context.report(ISSUE, context.getLocation(element), msg, null);
+                context.report(ISSUE, element, context.getLocation(element), msg, null);
             }
         }
     }
 
     @Override
-    public void visitElementAfter(XmlContext context, Element element) {
+    public void visitElementAfter(@NonNull XmlContext context, @NonNull Element element) {
         if (isVerticalScroll(element)) {
             mVisitingVerticalScroll--;
             assert mVisitingVerticalScroll >= 0;

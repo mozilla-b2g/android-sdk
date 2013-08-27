@@ -17,12 +17,13 @@
 package com.android.ide.eclipse.gltrace.model;
 
 import com.android.ide.eclipse.gltrace.GLProtoBuf;
-import com.android.ide.eclipse.gltrace.GLProtoBuf.GLMessage;
-import com.android.ide.eclipse.gltrace.GLProtoBuf.GLMessage.DataType;
 import com.android.ide.eclipse.gltrace.GLProtoBuf.GLMessage.Function;
+import com.android.ide.eclipse.gltrace.state.transforms.IStateTransform;
+import com.android.sdklib.util.SparseArray;
 
 import org.eclipse.swt.graphics.Image;
 
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -35,14 +36,26 @@ import java.util.List;
  * specified offset.
  */
 public class GLCall {
+    /** Marker name provided by a {@link Function#glPushGroupMarkerEXT} call. */
+    public static final int PROPERTY_MARKERNAME = 0;
+
+    /** Size argument in a {@link Function#glVertexAttribPointerData} call. */
+    public static final int PROPERTY_VERTEX_ATTRIB_POINTER_SIZE = 1;
+
+    /** Type argument in a {@link Function#glVertexAttribPointerData} call. */
+    public static final int PROPERTY_VERTEX_ATTRIB_POINTER_TYPE = 2;
+
+    /** Data argument in a {@link Function#glVertexAttribPointerData} call. */
+    public static final int PROPERTY_VERTEX_ATTRIB_POINTER_DATA = 3;
+
     /** Index of this call in the trace. */
-    private final int mIndex;
+    private int mIndex;
+
+    /** Time on device when this call was invoked. */
+    private final long mStartTime;
 
     /** Offset of the protobuf message corresponding to this call in the trace file. */
     private final long mTraceFileOffset;
-
-    /** Corresponding protobuf message with its image data stripped. */
-    private final GLMessage mMessage;
 
     /** Flag indicating whether the original protobuf message included FB data. */
     private final boolean mHasFb;
@@ -50,24 +63,51 @@ public class GLCall {
     /** Thumbnail image of the framebuffer if available. */
     private final Image mThumbnailImage;
 
-    public GLCall(int index, long traceFileOffset, GLMessage msg, Image thumbnailImage) {
+    /** Full string representation of this call. */
+    private final String mDisplayString;
+
+    /** The actual GL Function called. */
+    private final Function mFunction;
+
+    /** GL Context identifier corresponding to the context of this call. */
+    private final int mContextId;
+
+    /** Duration of this call (MONOTONIC/wall clock time). */
+    private final int mWallDuration;
+
+    /** Duration of this call (THREAD time). */
+    private final int mThreadDuration;
+
+    /** List of state transformations performed by this call. */
+    private List<IStateTransform> mStateTransforms = Collections.emptyList();
+
+    /** Error conditions while creating state transforms for this call. */
+    private String mStateTransformationCreationErrorMessage;
+
+    /** List of properties associated to this call. */
+    private SparseArray<Object> mProperties;
+
+    public GLCall(int index, long startTime, long traceFileOffset, String displayString,
+            Image thumbnailImage, Function function, boolean hasFb, int contextId,
+            int wallTime, int threadTime) {
         mIndex = index;
+        mStartTime = startTime;
         mTraceFileOffset = traceFileOffset;
-
-        if (msg.hasFb()) {
-            // strip off the FB contents
-            msg = msg.toBuilder().clearFb().build();
-            mHasFb = true;
-        } else {
-            mHasFb = false;
-        }
-
-        mMessage = msg;
         mThumbnailImage = thumbnailImage;
+        mDisplayString = displayString;
+        mFunction = function;
+        mHasFb = hasFb;
+        mContextId = contextId;
+        mWallDuration = wallTime;
+        mThreadDuration = threadTime;
     }
 
     public int getIndex() {
         return mIndex;
+    }
+
+    public void setIndex(int i) {
+        mIndex = i;
     }
 
     public long getOffsetInTraceFile() {
@@ -75,15 +115,11 @@ public class GLCall {
     }
 
     public Function getFunction() {
-        return mMessage.getFunction();
+        return mFunction;
     }
 
-    public List<DataType> getArgsList() {
-        return mMessage.getArgsList();
-    }
-
-    public DataType getArg(int index) {
-        return mMessage.getArgs(index);
+    public int getContextId() {
+        return mContextId;
     }
 
     public boolean hasFb() {
@@ -92,5 +128,66 @@ public class GLCall {
 
     public Image getThumbnailImage() {
         return mThumbnailImage;
+    }
+
+    public long getStartTime() {
+        return mStartTime;
+    }
+
+    public int getWallDuration() {
+        return mWallDuration;
+    }
+
+    public int getThreadDuration() {
+        return mThreadDuration;
+    }
+
+    public void setStateTransformations(List<IStateTransform> transforms) {
+        mStateTransforms = transforms;
+    }
+
+    public void setStateTransformationCreationError(String errorMessage) {
+        mStateTransformationCreationErrorMessage = errorMessage;
+    }
+
+    public boolean hasErrors() {
+        return mStateTransformationCreationErrorMessage != null;
+    }
+
+    public String getError() {
+        return mStateTransformationCreationErrorMessage;
+    }
+
+    public List<IStateTransform> getStateTransformations() {
+        return mStateTransforms;
+    }
+
+    @Override
+    public String toString() {
+        return mDisplayString;
+    }
+
+    /**
+     * Associate a certain value to the property name. Property names are defined
+     * as constants in {@link GLCall}.
+     */
+    public void addProperty(int propertyName, Object value) {
+        if (mProperties == null) {
+            mProperties = new SparseArray<Object>(1);
+        }
+
+        mProperties.put(propertyName, value);
+    }
+
+    /**
+     * Obtain the value for the given property. Returns null if no such property
+     * is associated with this {@link GLCall}.
+     */
+    public Object getProperty(int propertyName) {
+        if (mProperties == null) {
+            return null;
+        }
+
+        return mProperties.get(propertyName);
     }
 }

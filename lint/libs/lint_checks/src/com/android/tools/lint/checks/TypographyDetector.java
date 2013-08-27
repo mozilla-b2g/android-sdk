@@ -19,6 +19,7 @@ package com.android.tools.lint.checks;
 import static com.android.tools.lint.detector.api.LintConstants.TAG_STRING;
 import static com.android.tools.lint.detector.api.LintConstants.TAG_STRING_ARRAY;
 
+import com.android.annotations.NonNull;
 import com.android.annotations.VisibleForTesting;
 import com.android.resources.ResourceFolderType;
 import com.android.tools.lint.detector.api.Category;
@@ -178,6 +179,9 @@ public class TypographyDetector extends ResourceXmlDetector {
     private static final String FRACTION_MESSAGE =
             "Use fraction character %1$c (%2$s) instead of %3$s ?";
 
+    private static final String FRACTION_MESSAGE_PATTERN =
+            "Use fraction character (.+) \\((.+)\\) instead of (.+) \\?";
+
     private boolean mCheckDashes;
     private boolean mCheckQuotes;
     private boolean mCheckFractions;
@@ -189,25 +193,25 @@ public class TypographyDetector extends ResourceXmlDetector {
     }
 
     @Override
-    public boolean appliesTo(ResourceFolderType folderType) {
+    public boolean appliesTo(@NonNull ResourceFolderType folderType) {
         return folderType == ResourceFolderType.VALUES;
     }
 
     @Override
-    public Speed getSpeed() {
+    public @NonNull Speed getSpeed() {
         return Speed.FAST;
     }
 
     @Override
     public Collection<String> getApplicableElements() {
-        return Arrays.asList(new String[] {
+        return Arrays.asList(
                 TAG_STRING,
                 TAG_STRING_ARRAY
-        });
+        );
     }
 
     @Override
-    public void beforeCheckProject(Context context) {
+    public void beforeCheckProject(@NonNull Context context) {
         mCheckDashes = context.isEnabled(DASHES);
         mCheckQuotes = context.isEnabled(QUOTES);
         mCheckFractions = context.isEnabled(FRACTIONS);
@@ -216,7 +220,7 @@ public class TypographyDetector extends ResourceXmlDetector {
     }
 
     @Override
-    public void visitElement(XmlContext context, Element element) {
+    public void visitElement(@NonNull XmlContext context, @NonNull Element element) {
         NodeList childNodes = element.getChildNodes();
         for (int i = 0, n = childNodes.getLength(); i < n; i++) {
             Node child = childNodes.item(i);
@@ -243,7 +247,7 @@ public class TypographyDetector extends ResourceXmlDetector {
             // Replace ... with ellipsis character?
             int ellipsis = text.indexOf("..."); //$NON-NLS-1$
             if (ellipsis != -1 && !text.startsWith(".", ellipsis + 3)) { //$NON-NLS-1$
-                context.report(ELLIPSIS, context.getLocation(element),
+                context.report(ELLIPSIS, element, context.getLocation(element),
                         ELLIPSIS_MESSAGE, null);
             }
         }
@@ -263,7 +267,7 @@ public class TypographyDetector extends ResourceXmlDetector {
                             Character.isWhitespace(matcher.group(1).charAt(
                                     matcher.group(1).length() - 1));
                     if (!isNegativeNumber) {
-                        context.report(DASHES, context.getLocation(element),
+                        context.report(DASHES, element, context.getLocation(element),
                             EN_DASH_MESSAGE,
                             null);
                     }
@@ -274,7 +278,7 @@ public class TypographyDetector extends ResourceXmlDetector {
                 // Don't suggest replacing -- or "--" with an m dash since these are sometimes
                 // used as digit marker strings
                 if (emdash > 1 && !text.startsWith("-", emdash + 2)) {   //$NON-NLS-1$
-                    context.report(DASHES, context.getLocation(element),
+                    context.report(DASHES, element, context.getLocation(element),
                             EM_DASH_MESSAGE, null);
                 }
             }
@@ -288,7 +292,7 @@ public class TypographyDetector extends ResourceXmlDetector {
                 if (quoteEnd != -1 && quoteEnd > quoteStart + 1
                         && (quoteEnd < text.length() -1 || quoteStart > 0)
                         && SINGLE_QUOTE.matcher(text).matches()) {
-                    context.report(QUOTES, context.getLocation(element),
+                    context.report(QUOTES, element, context.getLocation(element),
                         SINGLE_QUOTE_MESSAGE, null);
                     return;
                 }
@@ -296,7 +300,7 @@ public class TypographyDetector extends ResourceXmlDetector {
                 // Check for apostrophes that can be replaced by typographic apostrophes
                 if (quoteEnd == -1 && quoteStart > 0
                         && Character.isLetterOrDigit(text.charAt(quoteStart - 1))) {
-                    context.report(QUOTES, context.getLocation(element),
+                    context.report(QUOTES, element, context.getLocation(element),
                             TYPOGRAPHIC_APOSTROPHE_MESSAGE, null);
                     return;
                 }
@@ -308,7 +312,7 @@ public class TypographyDetector extends ResourceXmlDetector {
                 int quoteEnd = text.indexOf('"', quoteStart + 1);
                 if (quoteEnd != -1 && quoteEnd > quoteStart + 1) {
                     if (quoteEnd < text.length() -1 || quoteStart > 0) {
-                        context.report(QUOTES, context.getLocation(element),
+                        context.report(QUOTES, element, context.getLocation(element),
                             DBL_QUOTES_MESSAGE, null);
                         return;
                     }
@@ -318,7 +322,7 @@ public class TypographyDetector extends ResourceXmlDetector {
             // Check for grave accent quotations
             if (text.indexOf('`') != -1 && GRAVE_QUOTATION.matcher(text).matches()) {
                 // Are we indenting ``like this'' or `this' ? If so, complain
-                context.report(QUOTES, context.getLocation(element),
+                context.report(QUOTES, element, context.getLocation(element),
                         GRAVE_QUOTE_MESSAGE, null);
                 return;
             }
@@ -337,19 +341,19 @@ public class TypographyDetector extends ResourceXmlDetector {
                 String top = matcher.group(1);    // Numerator
                 String bottom = matcher.group(2); // Denominator
                 if (top.equals("1") && bottom.equals("2")) { //$NON-NLS-1$ //$NON-NLS-2$
-                    context.report(FRACTIONS, context.getLocation(element),
+                    context.report(FRACTIONS, element, context.getLocation(element),
                             String.format(FRACTION_MESSAGE, '\u00BD', "&#189;", "1/2"), null);
                 } else if (top.equals("1") && bottom.equals("4")) { //$NON-NLS-1$ //$NON-NLS-2$
-                    context.report(FRACTIONS, context.getLocation(element),
+                    context.report(FRACTIONS, element, context.getLocation(element),
                             String.format(FRACTION_MESSAGE, '\u00BC', "&#188;", "1/4"), null);
                 } else if (top.equals("3") && bottom.equals("4")) { //$NON-NLS-1$ //$NON-NLS-2$
-                    context.report(FRACTIONS, context.getLocation(element),
+                    context.report(FRACTIONS, element, context.getLocation(element),
                             String.format(FRACTION_MESSAGE, '\u00BE', "&#190;", "3/4"), null);
                 } else if (top.equals("1") && bottom.equals("3")) { //$NON-NLS-1$ //$NON-NLS-2$
-                    context.report(FRACTIONS, context.getLocation(element),
+                    context.report(FRACTIONS, element, context.getLocation(element),
                             String.format(FRACTION_MESSAGE, '\u2153', "&#8531;", "1/3"), null);
                 } else if (top.equals("2") && bottom.equals("3")) { //$NON-NLS-1$ //$NON-NLS-2$
-                    context.report(FRACTIONS, context.getLocation(element),
+                    context.report(FRACTIONS, element, context.getLocation(element),
                             String.format(FRACTION_MESSAGE, '\u2154', "&#8532;", "2/3"), null);
                 }
             }
@@ -360,7 +364,7 @@ public class TypographyDetector extends ResourceXmlDetector {
             if (text.indexOf('(') != -1
                     && (text.contains("(c)") || text.contains("(C)"))) { //$NON-NLS-1$ //$NON-NLS-2$
                 // Suggest replacing with copyright symbol?
-                context.report(OTHER, context.getLocation(element),
+                context.report(OTHER, element, context.getLocation(element),
                     COPYRIGHT_MESSAGE, null);
                 // Replace (R) and TM as well? There are unicode characters for these but they
                 // are probably not very common within Android app strings.
@@ -475,6 +479,17 @@ public class TypographyDetector extends ResourceXmlDetector {
                 if (endOffset != -1) {
                     edits.add(new ReplaceEdit(offset, 1, "\u2018"));     //$NON-NLS-1$
                     edits.add(new ReplaceEdit(endOffset, 1, "\u2019"));  //$NON-NLS-1$
+                }
+            }
+        } else {
+            Matcher matcher = Pattern.compile(FRACTION_MESSAGE_PATTERN).matcher(message);
+            if (matcher.find()) {
+                //  "Use fraction character %1$c (%2$s) instead of %3$s ?";
+                String replace = matcher.group(3);
+                int offset = text.indexOf(replace);
+                if (offset != -1) {
+                    String replaceWith = matcher.group(2);
+                    edits.add(new ReplaceEdit(offset, replace.length(), replaceWith));
                 }
             }
         }

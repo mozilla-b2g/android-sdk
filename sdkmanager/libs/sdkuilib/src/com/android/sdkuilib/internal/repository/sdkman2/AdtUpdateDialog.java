@@ -19,12 +19,12 @@ package com.android.sdkuilib.internal.repository.sdkman2;
 
 import com.android.sdklib.AndroidVersion;
 import com.android.sdklib.ISdkLog;
-import com.android.sdklib.internal.repository.ExtraPackage;
-import com.android.sdklib.internal.repository.Package;
-import com.android.sdklib.internal.repository.PlatformPackage;
-import com.android.sdklib.internal.repository.PlatformToolPackage;
-import com.android.sdklib.internal.repository.SdkSource;
-import com.android.sdklib.internal.repository.ToolPackage;
+import com.android.sdklib.internal.repository.packages.ExtraPackage;
+import com.android.sdklib.internal.repository.packages.Package;
+import com.android.sdklib.internal.repository.packages.PlatformPackage;
+import com.android.sdklib.internal.repository.packages.PlatformToolPackage;
+import com.android.sdklib.internal.repository.packages.ToolPackage;
+import com.android.sdklib.internal.repository.sources.SdkSource;
 import com.android.sdkuilib.internal.repository.SettingsController;
 import com.android.sdkuilib.internal.repository.UpdaterData;
 import com.android.sdkuilib.internal.repository.sdkman2.PackageLoader.IAutoInstallTask;
@@ -45,8 +45,8 @@ import org.eclipse.swt.widgets.Shell;
 
 import java.io.File;
 import java.util.Map;
-import java.util.Set;
 import java.util.Map.Entry;
+import java.util.Set;
 
 /**
  * This is a private implementation of UpdateWindow for ADT,
@@ -76,7 +76,7 @@ public class AdtUpdateDialog extends SwtBaseDialog {
     private Map<Package, File> mResultPaths = null;
     private SettingsController mSettingsController;
     private PackageFilter mPackageFilter;
-    private PackageLoader mPackageMananger;
+    private PackageLoader mPackageLoader;
 
     private ProgressBar mProgressBar;
     private Label mStatusText;
@@ -221,14 +221,15 @@ public class AdtUpdateDialog extends SwtBaseDialog {
 
         mUpdaterData.broadcastOnSdkLoaded();
 
-        mPackageMananger = new PackageLoader(mUpdaterData);
+        mPackageLoader = new PackageLoader(mUpdaterData);
     }
 
     @Override
     protected void eventLoop() {
-        mPackageMananger.loadPackagesWithInstallTask(
+        mPackageLoader.loadPackagesWithInstallTask(
                 mPackageFilter.installFlags(),
                 new IAutoInstallTask() {
+            @Override
             public Package[] filterLoadedSource(SdkSource source, Package[] packages) {
                 for (Package pkg : packages) {
                     mPackageFilter.visit(pkg);
@@ -236,17 +237,20 @@ public class AdtUpdateDialog extends SwtBaseDialog {
                 return packages;
             }
 
+            @Override
             public boolean acceptPackage(Package pkg) {
                 // Is this the package we want to install?
                 return mPackageFilter.accept(pkg);
             }
 
+            @Override
             public void setResult(boolean success, Map<Package, File> installPaths) {
                 // Capture the result from the installation.
                 mResultCode = Boolean.valueOf(success);
                 mResultPaths = installPaths;
             }
 
+            @Override
             public void taskCompleted() {
                 // We can close that window now.
                 close();
@@ -305,8 +309,18 @@ public class AdtUpdateDialog extends SwtBaseDialog {
             boolean accept(Package pkg) {
                 if (pkg instanceof ExtraPackage) {
                     ExtraPackage ep = (ExtraPackage) pkg;
-                    return ep.getVendor().equals(mVendor) &&
-                           ep.getPath().equals(mPath);
+                    if (ep.getVendorId().equals(mVendor)) {
+                        // Check actual extra <path> field first
+                        if (ep.getPath().equals(mPath)) {
+                            return true;
+                        }
+                        // If not, check whether this is one of the <old-paths> values.
+                        for (String oldPath : ep.getOldPaths()) {
+                            if (oldPath.equals(mPath)) {
+                                return true;
+                            }
+                        }
+                    }
                 }
                 return false;
             }
@@ -332,7 +346,7 @@ public class AdtUpdateDialog extends SwtBaseDialog {
             boolean accept(Package pkg) {
                 if (pkg instanceof PlatformPackage) {
                     PlatformPackage pp = (PlatformPackage) pkg;
-                    AndroidVersion v = pp.getVersion();
+                    AndroidVersion v = pp.getAndroidVersion();
                     return !v.isPreview() && v.getApiLevel() == mApiLevel;
                 }
                 return false;
@@ -345,7 +359,7 @@ public class AdtUpdateDialog extends SwtBaseDialog {
                         pkg instanceof PlatformPackage &&
                         !pkg.isLocal()) {
                     PlatformPackage pp = (PlatformPackage) pkg;
-                    AndroidVersion v = pp.getVersion();
+                    AndroidVersion v = pp.getAndroidVersion();
                     if (!v.isPreview()) {
                         int api = v.getApiLevel();
                         if (api > mApiLevel) {
@@ -374,7 +388,7 @@ public class AdtUpdateDialog extends SwtBaseDialog {
                 if (!pkg.isLocal()) {
                     if (pkg instanceof PlatformPackage) {
                         PlatformPackage pp = (PlatformPackage) pkg;
-                        AndroidVersion v = pp.getVersion();
+                        AndroidVersion v = pp.getAndroidVersion();
                         if (!v.isPreview()) {
                             int level = v.getApiLevel();
                             if ((mFindMaxApi && level == mMaxApiLevel) ||
@@ -404,7 +418,7 @@ public class AdtUpdateDialog extends SwtBaseDialog {
                         pkg instanceof PlatformPackage &&
                         !pkg.isLocal()) {
                     PlatformPackage pp = (PlatformPackage) pkg;
-                    AndroidVersion v = pp.getVersion();
+                    AndroidVersion v = pp.getAndroidVersion();
                     if (!v.isPreview()) {
                         int api = v.getApiLevel();
                         if (api > mMaxApiLevel) {

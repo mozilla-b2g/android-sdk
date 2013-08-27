@@ -16,6 +16,7 @@
 
 package com.android.sdklib.internal.project;
 
+import com.android.annotations.NonNull;
 import com.android.io.IAbstractFile;
 import com.android.io.IAbstractFolder;
 import com.android.io.StreamException;
@@ -90,18 +91,15 @@ public class ProjectPropertiesWorkingCopy extends ProjectProperties {
      * <p/>
      * Typical usage:
      * <ul>
-     * <li>Create a ProjectProperties with {@code PropertyType#BUILD}
-     * <li>Merge in values using {@code PropertyType#DEFAULT}
+     * <li>Create a ProjectProperties with {@code PropertyType#ANT}
+     * <li>Merge in values using {@code PropertyType#PROJECT}
      * <li>The result is that this contains all the properties from default plus those
      *     overridden by the build.properties file.
      * </ul>
      *
      * @param type One the possible {@link PropertyType}s.
      * @return this object, for chaining.
-     *
-     * @deprecated FIXME this method is not referenced anywhere.
      */
-    @Deprecated
     public synchronized ProjectPropertiesWorkingCopy merge(PropertyType type) {
         if (mProjectFolder.exists() && mType != type) {
             IAbstractFile propFile = mProjectFolder.getFile(type.getFilename());
@@ -229,8 +227,7 @@ public class ProjectPropertiesWorkingCopy extends ProjectProperties {
             }
         }
 
-        value = value.replaceAll("\\\\", "\\\\\\\\");
-        writer.write(String.format("%s=%s\n", key, value));
+        writer.write(String.format("%s=%s\n", key, escape(value)));
     }
 
     /**
@@ -244,4 +241,11 @@ public class ProjectPropertiesWorkingCopy extends ProjectProperties {
         super(projectFolder, map, type);
     }
 
+    @NonNull
+    public ProjectProperties makeReadOnlyCopy() {
+        // copy the current properties in a new map
+        Map<String, String> propList = new HashMap<String, String>(mProperties);
+
+        return new ProjectProperties(mProjectFolder, propList, mType);
+    }
 }

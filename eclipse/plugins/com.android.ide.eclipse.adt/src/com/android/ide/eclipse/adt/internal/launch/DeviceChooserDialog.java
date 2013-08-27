@@ -93,6 +93,7 @@ public class DeviceChooserDialog extends Dialog implements IDeviceChangeListener
      * a {@link AndroidDebugBridge}.
      */
     private static class ContentProvider implements IStructuredContentProvider {
+        @Override
         public Object[] getElements(Object inputElement) {
             if (inputElement instanceof AndroidDebugBridge) {
                 return ((AndroidDebugBridge)inputElement).getDevices();
@@ -101,10 +102,12 @@ public class DeviceChooserDialog extends Dialog implements IDeviceChangeListener
             return new Object[0];
         }
 
+        @Override
         public void dispose() {
             // pass
         }
 
+        @Override
         public void inputChanged(Viewer viewer, Object oldInput, Object newInput) {
             // pass
         }
@@ -117,6 +120,7 @@ public class DeviceChooserDialog extends Dialog implements IDeviceChangeListener
      */
     private class LabelProvider implements ITableLabelProvider {
 
+        @Override
         public Image getColumnImage(Object element, int columnIndex) {
             if (element instanceof IDevice) {
                 IDevice device = (IDevice)element;
@@ -157,12 +161,13 @@ public class DeviceChooserDialog extends Dialog implements IDeviceChangeListener
             return null;
         }
 
+        @Override
         public String getColumnText(Object element, int columnIndex) {
             if (element instanceof IDevice) {
                 IDevice device = (IDevice)element;
                 switch (columnIndex) {
                     case 0:
-                        return device.getSerialNumber();
+                        return device.getName();
                     case 1:
                         if (device.isEmulator()) {
                             return device.getAvdName();
@@ -199,19 +204,23 @@ public class DeviceChooserDialog extends Dialog implements IDeviceChangeListener
             return null;
         }
 
+        @Override
         public void addListener(ILabelProviderListener listener) {
             // pass
         }
 
+        @Override
         public void dispose() {
             // pass
         }
 
+        @Override
         public boolean isLabelProperty(Object element, String property) {
             // pass
             return false;
         }
 
+        @Override
         public void removeListener(ILabelProviderListener listener) {
             // pass
         }
@@ -252,6 +261,7 @@ public class DeviceChooserDialog extends Dialog implements IDeviceChangeListener
     public DeviceChooserDialog(Shell parent, DeviceChooserResponse response, String packageName,
             IAndroidTarget projectTarget) {
         super(parent);
+
         mResponse = response;
         mPackageName = packageName;
         mProjectTarget = projectTarget;
@@ -536,9 +546,11 @@ public class DeviceChooserDialog extends Dialog implements IDeviceChangeListener
      *
      * @see IDeviceChangeListener#deviceConnected(IDevice)
      */
+    @Override
     public void deviceConnected(IDevice device) {
         final DeviceChooserDialog dialog = this;
         exec(new Runnable() {
+            @Override
             public void run() {
                 if (mDeviceTable.isDisposed() == false) {
                     // refresh all
@@ -568,6 +580,7 @@ public class DeviceChooserDialog extends Dialog implements IDeviceChangeListener
      *
      * @see IDeviceChangeListener#deviceDisconnected(IDevice)
      */
+    @Override
     public void deviceDisconnected(IDevice device) {
         deviceConnected(device);
     }
@@ -581,10 +594,12 @@ public class DeviceChooserDialog extends Dialog implements IDeviceChangeListener
      *
      * @see IDeviceChangeListener#deviceChanged(IDevice, int)
      */
+    @Override
     public void deviceChanged(final IDevice device, int changeMask) {
         if ((changeMask & (IDevice.CHANGE_STATE | IDevice.CHANGE_BUILD_INFO)) != 0) {
             final DeviceChooserDialog dialog = this;
             exec(new Runnable() {
+                @Override
                 public void run() {
                     if (mDeviceTable.isDisposed() == false) {
                         // refresh the device
@@ -714,10 +729,12 @@ public class DeviceChooserDialog extends Dialog implements IDeviceChangeListener
 
         private IDevice[] mDevices;
 
+        @Override
         public void prepare() {
             mDevices = AndroidDebugBridge.getBridge().getDevices();
         }
 
+        @Override
         public boolean accept(AvdInfo avd) {
             if (mDevices != null) {
                 for (IDevice d : mDevices) {
@@ -731,6 +748,7 @@ public class DeviceChooserDialog extends Dialog implements IDeviceChangeListener
             return true;
         }
 
+        @Override
         public void cleanup() {
             mDevices = null;
         }

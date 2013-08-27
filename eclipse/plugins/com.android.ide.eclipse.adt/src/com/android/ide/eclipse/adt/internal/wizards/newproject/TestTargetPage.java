@@ -60,7 +60,7 @@ class TestTargetPage extends WizardPage implements SelectionListener {
      */
     TestTargetPage(NewProjectWizardState values) {
         super("testTargetPage"); //$NON-NLS-1$
-        setTitle("Select TestTarget");
+        setTitle("Select Test Target");
         setDescription("Choose a project to test");
         mValues = values;
     }
@@ -68,6 +68,7 @@ class TestTargetPage extends WizardPage implements SelectionListener {
     /**
      * Create contents of the wizard.
      */
+    @Override
     public void createControl(Composite parent) {
         Composite container = new Composite(parent, SWT.NULL);
 
@@ -148,6 +149,7 @@ class TestTargetPage extends WizardPage implements SelectionListener {
         validatePage();
     }
 
+    @Override
     public void widgetSelected(SelectionEvent e) {
         if (mIgnore) {
             return;
@@ -183,6 +185,7 @@ class TestTargetPage extends WizardPage implements SelectionListener {
         return project;
     }
 
+    @Override
     public void widgetDefaultSelected(SelectionEvent e) {
     }
 

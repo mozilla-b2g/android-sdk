@@ -53,6 +53,7 @@ class Warning implements Comparable<Warning> {
     }
 
     // ---- Implements Comparable<Warning> ----
+    @Override
     public int compareTo(Warning other) {
         // Sort by category, then by priority, then by id,
         // then by file, then by line
@@ -77,7 +78,7 @@ class Warning implements Comparable<Warning> {
         if (file != null && other.file != null) {
             int fileDelta = file.getName().compareTo(
                     other.file.getName());
-            if (fileDelta != -1) {
+            if (fileDelta != 0) {
                 return fileDelta;
             }
         }

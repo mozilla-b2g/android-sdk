@@ -16,8 +16,11 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
+import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
 import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.VIEW_MERGE;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.api.INode;
 import com.android.ide.common.rendering.api.RenderSession;
 import com.android.ide.common.rendering.api.ViewInfo;
@@ -28,6 +31,8 @@ import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
 import com.android.util.Pair;
 
 import org.eclipse.swt.graphics.Rectangle;
+import org.w3c.dom.Attr;
+import org.w3c.dom.Document;
 import org.w3c.dom.Node;
 
 import java.awt.image.BufferedImage;
@@ -115,6 +120,9 @@ public class ViewHierarchy {
     /** Map from nodes to canvas view infos */
     private Map<UiViewElementNode, CanvasViewInfo> mNodeToView = Collections.emptyMap();
 
+    /** Map from DOM nodes to canvas view infos */
+    private Map<Node, CanvasViewInfo> mDomNodeToView = Collections.emptyMap();
+
     /**
      * Disposes the view hierarchy content.
      */
@@ -179,7 +187,7 @@ public class ViewHierarchy {
                     if (root != null) {
                         infos = CanvasViewInfo.create(root, layoutlib5);
                         if (DUMP_INFO) {
-                            dump(root, 0);
+                            dump(session, root, 0);
                         }
                     } else {
                         infos = null;
@@ -192,7 +200,7 @@ public class ViewHierarchy {
 
                 if (mLastValidViewInfoRoot.getUiViewNode() == null &&
                         mLastValidViewInfoRoot.getChildren().isEmpty()) {
-                    GraphicalEditorPart editor = mCanvas.getLayoutEditor().getGraphicalEditor();
+                    GraphicalEditorPart editor = mCanvas.getEditorDelegate().getGraphicalEditor();
                     if (editor.getIncludedWithin() != null) {
                         // Somehow, this view was supposed to be rendered within another
                         // view, yet this view was rendered as part of the other view.
@@ -218,11 +226,17 @@ public class ViewHierarchy {
             mInvisibleParents.clear();
             addInvisibleParents(mLastValidViewInfoRoot, explodedNodes);
 
+            mDomNodeToView = new HashMap<Node, CanvasViewInfo>(mNodeToView.size());
+            for (Map.Entry<UiViewElementNode, CanvasViewInfo> entry : mNodeToView.entrySet()) {
+                mDomNodeToView.put(entry.getKey().getXmlNode(), entry.getValue());
+            }
+
             // Update the selection
             mCanvas.getSelectionManager().sync();
         } else {
             mIncludedBounds = null;
             mInvisibleParents.clear();
+            mDomNodeToView = Collections.emptyMap();
         }
     }
 
@@ -232,7 +246,7 @@ public class ViewHierarchy {
                 mCanvas.getHorizontalTransform().getMargin() + image.getWidth(),
                 mCanvas.getVerticalTransform().getMargin() + image.getHeight());
         LayoutPoint layoutSize = imageSize.toLayout();
-        UiDocumentNode model = mCanvas.getLayoutEditor().getUiRootNode();
+        UiDocumentNode model = mCanvas.getEditorDelegate().getUiRootNode();
         List<UiElementNode> children = model.getUiChildren();
         return new ViewInfo(VIEW_MERGE, children.get(0), 0, 0, layoutSize.x, layoutSize.y);
     }
@@ -244,7 +258,7 @@ public class ViewHierarchy {
      * @return true if there is a {@code <merge>} at the root of this editor's document
      */
     private boolean hasMergeRoot() {
-        UiDocumentNode model = mCanvas.getLayoutEditor().getUiRootNode();
+        UiDocumentNode model = mCanvas.getEditorDelegate().getUiRootNode();
         if (model != null) {
             List<UiElementNode> children = model.getUiChildren();
             if (children != null && children.size() > 0
@@ -422,36 +436,24 @@ public class ViewHierarchy {
      * @return The {@link CanvasViewInfo} corresponding to the given node, or
      *         null if no match was found.
      */
-    public CanvasViewInfo findViewInfoFor(Node node) {
-        if (mLastValidViewInfoRoot != null) {
-            return findViewInfoForNode(node, mLastValidViewInfoRoot);
-        }
-        return null;
-    }
+    @Nullable
+    public CanvasViewInfo findViewInfoFor(@Nullable Node node) {
+        CanvasViewInfo vi = mDomNodeToView.get(node);
 
-    /**
-     * Tries to find a child with the same view XML node in the view info sub-tree.
-     * Returns null if not found.
-     */
-    private CanvasViewInfo findViewInfoForNode(Node xmlNode, CanvasViewInfo canvasViewInfo) {
-        if (canvasViewInfo == null) {
-            return null;
-        }
-        if (canvasViewInfo.getXmlNode() == xmlNode) {
-            return canvasViewInfo;
-        }
-
-        // Try to find a matching child
-        for (CanvasViewInfo child : canvasViewInfo.getChildren()) {
-            CanvasViewInfo v = findViewInfoForNode(xmlNode, child);
-            if (v != null) {
-                return v;
+        if (vi == null) {
+            if (node == null) {
+                return null;
+            } else if (node.getNodeType() == Node.TEXT_NODE) {
+                return mDomNodeToView.get(node.getParentNode());
+            } else if (node.getNodeType() == Node.ATTRIBUTE_NODE) {
+                return mDomNodeToView.get(((Attr) node).getOwnerElement());
+            } else if (node.getNodeType() == Node.DOCUMENT_NODE) {
+                return mDomNodeToView.get(((Document) node).getDocumentElement());
             }
         }
 
-        return null;
+        return vi;
     }
-
 
     /**
      * Tries to find the inner most child matching the given x,y coordinates in
@@ -600,7 +602,11 @@ public class ViewHierarchy {
      * @return A {@link CanvasViewInfo} matching the given key, or null if not
      *         found.
      */
-    public CanvasViewInfo findViewInfoFor(NodeProxy proxy) {
+    @Nullable
+    public CanvasViewInfo findViewInfoFor(@Nullable NodeProxy proxy) {
+        if (proxy == null) {
+            return null;
+        }
         return mNodeToView.get(proxy.getNode());
     }
 
@@ -693,12 +699,28 @@ public class ViewHierarchy {
     }
 
     /**
+     * Returns a map of the default properties for the given view object in this session
+     *
+     * @param viewObject the object to look up the properties map for
+     * @return the map of properties, or null if not found
+     */
+    @Nullable
+    public Map<String, String> getDefaultProperties(@NonNull Object viewObject) {
+        if (mSession != null) {
+            return mSession.getDefaultProperties(viewObject);
+        }
+
+        return null;
+    }
+
+    /**
      * Dumps a {@link ViewInfo} hierarchy to stdout
      *
+     * @param session the corresponding session, if any
      * @param info the {@link ViewInfo} object to dump
      * @param depth the depth to indent it to
      */
-    public static void dump(ViewInfo info, int depth) {
+    public static void dump(RenderSession session, ViewInfo info, int depth) {
         if (DUMP_INFO) {
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < depth; i++) {
@@ -721,14 +743,28 @@ public class ViewHierarchy {
                 sb.append("<"); //$NON-NLS-1$
                 sb.append(node.getDescriptor().getXmlName());
                 sb.append(">"); //$NON-NLS-1$
+
+                String id = node.getAttributeValue(ATTR_ID);
+                if (id != null && !id.isEmpty()) {
+                    sb.append(" ");
+                    sb.append(id);
+                }
             } else if (cookie != null) {
                 sb.append(" " + cookie); //$NON-NLS-1$
             }
+            /* Display defaults?
+            if (info.getViewObject() != null) {
+                Map<String, String> defaults = session.getDefaultProperties(info.getCookie());
+                sb.append(" - defaults: "); //$NON-NLS-1$
+                sb.append(defaults);
+                sb.append('\n');
+            }
+            */
 
             System.out.println(sb.toString());
 
             for (ViewInfo child : info.getChildren()) {
-                dump(child, depth + 1);
+                dump(session, child, depth + 1);
             }
         }
     }

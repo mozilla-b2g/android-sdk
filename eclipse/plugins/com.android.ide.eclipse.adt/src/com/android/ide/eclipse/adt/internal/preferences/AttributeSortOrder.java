@@ -15,7 +15,7 @@
  */
 package com.android.ide.eclipse.adt.internal.preferences;
 
-import static com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor.XMLNS;
+import static com.android.util.XmlUtils.XMLNS;
 
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiAttributeNode;
 
@@ -37,6 +37,9 @@ public enum AttributeSortOrder {
 
     public final String key;
 
+    /**
+     * @return a comparator for use by this attribute sort order
+     */
     public Comparator<Attr> getAttributeComparator() {
         switch (this) {
             case ALPHABETICAL:
@@ -51,6 +54,7 @@ public enum AttributeSortOrder {
 
     /** Comparator which can be used to sort attributes in the coding style priority order */
     private static final Comparator<Attr> SORTED_ORDER_COMPARATOR = new Comparator<Attr>() {
+        @Override
         public int compare(Attr attr1, Attr attr2) {
             // Namespace declarations should always go first
             if (XMLNS.equals(attr1.getPrefix())) {
@@ -63,8 +67,9 @@ public enum AttributeSortOrder {
             }
 
             // Sort by preferred attribute order
-            return UiAttributeNode.compareAttributes(attr1.getLocalName(),
-                    attr2.getLocalName());
+            return UiAttributeNode.compareAttributes(
+                    attr1.getPrefix(), attr1.getLocalName(),
+                    attr2.getPrefix(), attr2.getLocalName());
         }
     };
 
@@ -73,6 +78,7 @@ public enum AttributeSortOrder {
      * (which is not the same as the node map iteration order in the DOM model)
      */
     private static final Comparator<Attr> EXISTING_ORDER_COMPARATOR = new Comparator<Attr>() {
+        @Override
         public int compare(Attr attr1, Attr attr2) {
             IndexedRegion region1 = (IndexedRegion) attr1;
             IndexedRegion region2 = (IndexedRegion) attr2;
@@ -86,6 +92,7 @@ public enum AttributeSortOrder {
      * is always first)
      */
     private static final Comparator<Attr> ALPHABETICAL_COMPARATOR = new Comparator<Attr>() {
+        @Override
         public int compare(Attr attr1, Attr attr2) {
             // Namespace declarations should always go first
             if (XMLNS.equals(attr1.getPrefix())) {
@@ -97,7 +104,9 @@ public enum AttributeSortOrder {
                 return 1;
             }
 
-            return attr1.getLocalName().compareTo(attr2.getLocalName());
+            // Sort by name rather than localname to ensure we sort by namespaces first,
+            // then by names.
+            return attr1.getName().compareTo(attr2.getName());
         }
     };
 }

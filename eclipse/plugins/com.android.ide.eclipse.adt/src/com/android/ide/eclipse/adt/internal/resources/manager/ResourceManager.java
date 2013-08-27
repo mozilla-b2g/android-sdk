@@ -155,7 +155,14 @@ public final class ResourceManager {
      */
     public ProjectResources getProjectResources(IProject project) {
         synchronized (mMap) {
-            return mMap.get(project);
+            ProjectResources resources = mMap.get(project);
+
+            if (resources == null) {
+                resources = new ProjectResources(project);
+                mMap.put(project, resources);
+            }
+
+            return resources;
         }
     }
 
@@ -167,6 +174,24 @@ public final class ResourceManager {
      *            as a place to stash errors encountered
      */
     public void processDelta(IResourceDelta delta, IdeScanningContext context) {
+        doProcessDelta(delta, context);
+
+        // when a project is added to the workspace it is possible this is called before the
+        // repo is actually created so this will return null.
+        ResourceRepository repo = context.getRepository();
+        if (repo != null) {
+            repo.postUpdateCleanUp();
+        }
+    }
+
+    /**
+     * Update the resource repository with a delta
+     *
+     * @param delta the resource changed delta to process.
+     * @param context a context object with state for the current update, such
+     *            as a place to stash errors encountered
+     */
+    private void doProcessDelta(IResourceDelta delta, IdeScanningContext context) {
         // Skip over deltas that don't fit our mask
         int mask = IResourceDelta.ADDED | IResourceDelta.REMOVED | IResourceDelta.CHANGED;
         int kind = delta.getKind();
@@ -339,26 +364,36 @@ public final class ResourceManager {
      * do not appear in the public API of {@link ResourceManager}.
      */
     private final IProjectListener mProjectListener = new IProjectListener() {
+        @Override
         public void projectClosed(IProject project) {
             synchronized (mMap) {
                 mMap.remove(project);
             }
         }
 
+        @Override
         public void projectDeleted(IProject project) {
             synchronized (mMap) {
                 mMap.remove(project);
             }
         }
 
+        @Override
         public void projectOpened(IProject project) {
             createProject(project);
         }
 
+        @Override
         public void projectOpenedWithWorkspace(IProject project) {
             createProject(project);
         }
 
+        @Override
+        public void allProjectsOpenedWithWorkspace() {
+            // nothing to do.
+        }
+
+        @Override
         public void projectRenamed(IProject project, IPath from) {
             // renamed project get a delete/open event too, so this can be ignored.
         }
@@ -370,6 +405,7 @@ public final class ResourceManager {
      * accessed through the {@link ResourceManager#visitDelta(IResourceDelta delta)} method.
      */
     private final IRawDeltaListener mRawDeltaListener = new IRawDeltaListener() {
+        @Override
         public void visitDelta(IResourceDelta workspaceDelta) {
             // If we're auto-building, then PreCompilerBuilder will pass us deltas and
             // they will be processed as part of the build.

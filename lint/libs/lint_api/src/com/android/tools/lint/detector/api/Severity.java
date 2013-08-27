@@ -16,38 +16,53 @@
 
 package com.android.tools.lint.detector.api;
 
+import com.android.annotations.NonNull;
+import com.google.common.annotations.Beta;
+
 /**
  * Severity of an issue found by lint
  * <p/>
  * <b>NOTE: This is not a public or final API; if you rely on this be prepared
  * to adjust your code for the next tools release.</b>
  */
+@Beta
 public enum Severity {
     /**
-     * Errors: Use sparingly because a warning marked as an error will be
-     * considered fatal and will abort Export APK etc in ADT
+     * Fatal: Use sparingly because a warning marked as fatal will be
+     * considered critical and will abort Export APK etc in ADT
      */
+    @NonNull
+    FATAL("Fatal"),
+
+    /**
+     * Errors: The issue is known to be a real error that must be addressed.
+     */
+    @NonNull
     ERROR("Error"),
 
     /**
      * Warning: Probably a problem.
      */
+    @NonNull
     WARNING("Warning"),
 
     /**
      * Information only: Might not be a problem, but the check has found
      * something interesting to say about the code.
      */
+    @NonNull
     INFORMATIONAL("Information"),
 
     /**
      * Ignore: The user doesn't want to see this issue
      */
+    @NonNull
     IGNORE("Ignore");
 
-    private String mDisplay;
+    @NonNull
+    private final String mDisplay;
 
-    private Severity(String display) {
+    private Severity(@NonNull String display) {
         mDisplay = display;
     }
 
@@ -56,7 +71,7 @@ public enum Severity {
      *
      * @return a description of the severity
      */
-    public String getDescription() {
+    public @NonNull String getDescription() {
         return mDisplay;
     }
 }

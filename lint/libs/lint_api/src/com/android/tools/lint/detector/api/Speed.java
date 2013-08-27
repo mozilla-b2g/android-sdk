@@ -16,7 +16,16 @@
 
 package com.android.tools.lint.detector.api;
 
-/** Enum which describes the different computation speeds of various detectors */
+import com.android.annotations.NonNull;
+import com.google.common.annotations.Beta;
+
+/**
+ * Enum which describes the different computation speeds of various detectors
+ * <p>
+ * <b>NOTE: This is not a public or final API; if you rely on this be prepared
+ * to adjust your code for the next tools release.</b>
+ */
+@Beta
 public enum Speed {
     /** The detector can run very quickly */
     FAST("Fast"),
@@ -29,7 +38,7 @@ public enum Speed {
 
     private String mDisplayName;
 
-    Speed(String displayName) {
+    Speed(@NonNull String displayName) {
         mDisplayName = displayName;
     }
 
@@ -39,6 +48,7 @@ public enum Speed {
      *
      * @return the description of the speed to display to the user
      */
+    @NonNull
     public String getDisplayName() {
         return mDisplayName;
     }

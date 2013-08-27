@@ -15,18 +15,20 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.formatting;
 
-import static com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor.XMLNS;
-import static com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors.COLOR_ELEMENT;
-import static com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors.DIMEN_ELEMENT;
-import static com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors.ITEM_TAG;
-import static com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors.STRING_ELEMENT;
-import static com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors.STYLE_ELEMENT;
+import static com.android.ide.eclipse.adt.internal.editors.values.descriptors.ValuesDescriptors.COLOR_ELEMENT;
+import static com.android.ide.eclipse.adt.internal.editors.values.descriptors.ValuesDescriptors.DIMEN_ELEMENT;
+import static com.android.ide.eclipse.adt.internal.editors.values.descriptors.ValuesDescriptors.ITEM_TAG;
+import static com.android.ide.eclipse.adt.internal.editors.values.descriptors.ValuesDescriptors.STRING_ELEMENT;
+import static com.android.ide.eclipse.adt.internal.editors.values.descriptors.ValuesDescriptors.STYLE_ELEMENT;
+import static com.android.util.XmlUtils.XMLNS;
 
 import com.android.ide.eclipse.adt.AdtUtils;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.DomUtilities;
+import com.android.util.XmlUtils;
 
 import org.eclipse.wst.xml.core.internal.document.DocumentTypeImpl;
 import org.eclipse.wst.xml.core.internal.document.ElementImpl;
+import org.eclipse.wst.xml.core.internal.provisional.document.IDOMNode;
 import org.w3c.dom.Attr;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -82,7 +84,7 @@ public class XmlPrettyPrinter {
         mPrefs = prefs;
         mStyle = style;
         if (lineSeparator == null) {
-            lineSeparator = System.getProperty("line.separator"); //$NON-NLS-1$
+            lineSeparator = AdtUtils.getLineSeparator();
         }
         mLineSeparator = lineSeparator;
     }
@@ -263,15 +265,32 @@ public class XmlPrettyPrinter {
     }
 
     private void printCharacterData(int depth, Node node) {
-        indent(depth);
+        String nodeValue = node.getNodeValue();
+        boolean separateLine = nodeValue.indexOf('\n') != -1;
+        if (separateLine && !endsWithLineSeparator()) {
+            mOut.append(mLineSeparator);
+        }
         mOut.append("<![CDATA["); //$NON-NLS-1$
-        mOut.append(node.getNodeValue());
-        mOut.append("]]>");     //$NON-NLS-1$
-        mOut.append(mLineSeparator);
+        mOut.append(nodeValue);
+        mOut.append("]]>");       //$NON-NLS-1$
+        if (separateLine) {
+            mOut.append(mLineSeparator);
+        }
     }
 
     private void printText(Node node) {
+        boolean escape = true;
         String text = node.getNodeValue();
+
+        if (node instanceof IDOMNode) {
+            // Get the original source string. This will contain the actual entities
+            // such as "&gt;" instead of ">" which it gets turned into for the DOM nodes.
+            // By operating on source we can preserve the user's entities rather than
+            // having &gt; for example always turned into >.
+            IDOMNode textImpl = (IDOMNode) node;
+            text = textImpl.getSource();
+            escape = false;
+        }
 
         // Most text nodes are just whitespace for formatting (which we're replacing)
         // so look for actual text content and extract that part out
@@ -305,16 +324,18 @@ public class XmlPrettyPrinter {
                 }
             }
             if (lastPrefixNewline != -1 || firstSuffixNewline != -1) {
-                if (lastPrefixNewline == -1) {
-                    lastPrefixNewline = 0;
-                }
                 if (firstSuffixNewline == -1) {
                     firstSuffixNewline = text.length();
                 }
                 text = text.substring(lastPrefixNewline + 1, firstSuffixNewline);
             }
 
-            DomUtilities.appendXmlTextValue(mOut, text);
+            if (escape) {
+                XmlUtils.appendXmlTextValue(mOut, text);
+            } else {
+                // Text is already escaped
+                mOut.append(text);
+            }
 
             if (mStyle != XmlFormatStyle.RESOURCE) {
                 mOut.append(mLineSeparator);
@@ -663,7 +684,7 @@ public class XmlPrettyPrinter {
                 }
                 mOut.append(attribute.getName());
                 mOut.append('=').append('"');
-                DomUtilities.appendXmlAttributeValue(mOut, attribute.getValue());
+                XmlUtils.appendXmlAttributeValue(mOut, attribute.getValue());
                 mOut.append('"');
 
                 // Don't add a newline at the last attribute line; the > should
@@ -731,6 +752,10 @@ public class XmlPrettyPrinter {
             return false;
         }
 
+        if (isMarkupElement(element)) {
+            return false;
+        }
+
         // See if this element should be separated from the previous element.
         // This is the case if we are not compressing whitespace (checked above),
         // or if we are not immediately following a comment (in which case the
@@ -793,6 +818,10 @@ public class XmlPrettyPrinter {
     }
 
     private boolean indentBeforeElementOpen(Element element, int depth) {
+        if (isMarkupElement(element)) {
+            return false;
+        }
+
         if (element.getParentNode().getNodeType() == Node.ELEMENT_NODE
                 && keepElementAsSingleLine(depth - 1, (Element) element.getParentNode())) {
             return false;
@@ -802,6 +831,10 @@ public class XmlPrettyPrinter {
     }
 
     private boolean indentBeforeElementClose(Element element, int depth) {
+        if (isMarkupElement(element)) {
+            return false;
+        }
+
         char lastOutChar = mOut.charAt(mOut.length() - 1);
         char lastDelimiterChar = mLineSeparator.charAt(mLineSeparator.length() - 1);
         return lastOutChar == lastDelimiterChar;
@@ -812,6 +845,10 @@ public class XmlPrettyPrinter {
             return false;
         }
 
+        if (isMarkupElement(element)) {
+            return false;
+        }
+
         // In resource files we keep the child content directly on the same
         // line as the element (unless it has children). in other files, separate them
         return isClosed || !keepElementAsSingleLine(depth, element);
@@ -819,6 +856,10 @@ public class XmlPrettyPrinter {
 
     private boolean newlineBeforeElementClose(Element element, int depth) {
         if (hasBlankLineAbove()) {
+            return false;
+        }
+
+        if (isMarkupElement(element)) {
             return false;
         }
 
@@ -839,8 +880,36 @@ public class XmlPrettyPrinter {
             return false;
         }
 
+        if (isMarkupElement(element)) {
+            return false;
+        }
+
         return element.getParentNode().getNodeType() == Node.ELEMENT_NODE
                 && !keepElementAsSingleLine(depth - 1, (Element) element.getParentNode());
+    }
+
+    private boolean isMarkupElement(Element element) {
+        // The documentation suggests that the allowed tags are <u>, <b> and <i>:
+        //   developer.android.com/guide/topics/resources/string-resource.html#FormattingAndStyling
+        // However, the full set of tags accepted by Html.fromHtml is much larger. Therefore,
+        // instead consider *any* element nested inside a <string> definition to be a markup
+        // element. See frameworks/base/core/java/android/text/Html.java and look for
+        // HtmlToSpannedConverter#handleStartTag.
+
+        if (mStyle != XmlFormatStyle.RESOURCE) {
+            return false;
+        }
+
+        Node curr = element.getParentNode();
+        while (curr != null) {
+            if (STRING_ELEMENT.equals(curr.getNodeName())) {
+                return true;
+            }
+
+            curr = curr.getParentNode();
+        }
+
+        return false;
     }
 
     /**

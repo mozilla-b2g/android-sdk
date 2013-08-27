@@ -419,7 +419,7 @@ public final class EmulatorConsole {
                         String value = m.group(1);
 
                         // get the index from the list
-                        status.voice = GsmMode.getEnum(value.toLowerCase());
+                        status.voice = GsmMode.getEnum(value.toLowerCase(Locale.US));
 
                         // move on to next line.
                         continue;
@@ -431,7 +431,7 @@ public final class EmulatorConsole {
                         String value = m.group(1);
 
                         // get the index from the list
-                        status.data = GsmMode.getEnum(value.toLowerCase());
+                        status.data = GsmMode.getEnum(value.toLowerCase(Locale.US));
 
                         // move on to next line.
                         continue;
@@ -532,9 +532,13 @@ public final class EmulatorConsole {
 
         // need to make sure the string format uses dot and not comma
         Formatter formatter = new Formatter(Locale.US);
-        formatter.format(COMMAND_GPS, longitude, latitude, elevation);
+        try {
+            formatter.format(COMMAND_GPS, longitude, latitude, elevation);
 
-        return processCommand(formatter.toString());
+            return processCommand(formatter.toString());
+        } finally {
+            formatter.close();
+        }
     }
 
     /**

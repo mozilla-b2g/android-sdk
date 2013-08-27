@@ -20,9 +20,10 @@ import static com.android.AndroidConstants.FD_RES_VALUES;
 import static com.android.sdklib.SdkConstants.FD_RES;
 
 import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.ide.eclipse.adt.internal.editors.common.CommonXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.AttributeDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.ViewElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.layout.uimodel.UiViewElementNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiDocumentNode;
@@ -60,7 +61,7 @@ import java.util.Calendar;
 import java.util.HashMap;
 import java.util.Map;
 
-@SuppressWarnings("restriction")
+@SuppressWarnings({"restriction", "javadoc"})
 public class AdtProjectTest extends SdkTestCase {
     private static final int TARGET_API_LEVEL = 12;
     public static final String TEST_PROJECT_PACKAGE = "com.android.eclipse.tests"; //$NON-NLS-1$
@@ -225,6 +226,7 @@ public class AdtProjectTest extends SdkTestCase {
 
 
         IRunnableContext context = new IRunnableContext() {
+            @Override
             public void run(boolean fork, boolean cancelable, IRunnableWithProgress runnable)
                     throws InvocationTargetException, InterruptedException {
                 runnable.run(new NullProgressMonitor());
@@ -409,7 +411,6 @@ public class AdtProjectTest extends SdkTestCase {
             }
         }
 
-
         boolean showBeforeWindow = firstDelta >= beforeLines.length - lastDelta;
         boolean showAfterWindow = firstDelta >= afterLines.length - lastDelta;
 
@@ -541,7 +542,7 @@ public class AdtProjectTest extends SdkTestCase {
             fail("Did not find golden file (" + expectedName + "): Wrote contents as "
                     + expectedPath);
         } else {
-            if (!expected.equals(actual)) {
+            if (!expected.replaceAll("\r\n", "\n").equals(actual.replaceAll("\r\n", "\n"))) {
                 File expectedPath = new File(getTempDir(), expectedName);
                 File actualPath = new File(getTempDir(),
                         expectedName.replace("expected", "actual"));
@@ -606,54 +607,67 @@ public class AdtProjectTest extends SdkTestCase {
     }
 
     /** Special editor context set on the model to be rendered */
-    protected static class TestLayoutEditor extends LayoutEditor {
-        private final IFile mFile;
-        private final IStructuredDocument mStructuredDocument;
-        private UiDocumentNode mUiRootNode;
+    protected static class TestLayoutEditorDelegate extends LayoutEditorDelegate {
 
-        public TestLayoutEditor(IFile file, IStructuredDocument structuredDocument,
+        public TestLayoutEditorDelegate(
+                IFile file,
+                IStructuredDocument structuredDocument,
                 UiDocumentNode uiRootNode) {
-            mFile = file;
-            mStructuredDocument = structuredDocument;
-            mUiRootNode = uiRootNode;
+            super(new TestAndroidXmlCommonEditor(file, structuredDocument, uiRootNode));
         }
 
-        @Override
-        public IFile getInputFile() {
-            return mFile;
-        }
+        static class TestAndroidXmlCommonEditor extends CommonXmlEditor {
 
-        @Override
-        public IProject getProject() {
-            return mFile.getProject();
-        }
+            private final IFile mFile;
+            private final IStructuredDocument mStructuredDocument;
+            private UiDocumentNode mUiRootNode;
 
-        @Override
-        public IStructuredDocument getStructuredDocument() {
-            return mStructuredDocument;
-        }
-
-        @Override
-        public UiDocumentNode getUiRootNode() {
-            return mUiRootNode;
-        }
-
-        @Override
-        public void editorDirtyStateChanged() {
-        }
-
-        @Override
-        public IStructuredModel getModelForRead() {
-            IModelManager mm = StructuredModelManager.getModelManager();
-            if (mm != null) {
-                try {
-                    return mm.getModelForRead(mFile);
-                } catch (Exception e) {
-                    fail(e.toString());
-                }
+            TestAndroidXmlCommonEditor(
+                    IFile file,
+                    IStructuredDocument structuredDocument,
+                    UiDocumentNode uiRootNode) {
+                mFile = file;
+                mStructuredDocument = structuredDocument;
+                mUiRootNode = uiRootNode;
             }
 
-            return null;
+            @Override
+            public IFile getInputFile() {
+                return mFile;
+            }
+
+            @Override
+            public IProject getProject() {
+                return mFile.getProject();
+            }
+
+            @Override
+            public IStructuredDocument getStructuredDocument() {
+                return mStructuredDocument;
+            }
+
+            @Override
+            public UiDocumentNode getUiRootNode() {
+                return mUiRootNode;
+            }
+
+            @Override
+            public void editorDirtyStateChanged() {
+            }
+
+            @Override
+            public IStructuredModel getModelForRead() {
+                IModelManager mm = StructuredModelManager.getModelManager();
+                if (mm != null) {
+                    try {
+                        return mm.getModelForRead(mFile);
+                    } catch (Exception e) {
+                        fail(e.toString());
+                    }
+                }
+
+                return null;
+            }
         }
     }
 

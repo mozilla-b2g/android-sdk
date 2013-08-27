@@ -32,10 +32,9 @@ import static com.android.tools.lint.detector.api.LintConstants.DRAWABLE_RESOURC
 import static com.android.tools.lint.detector.api.LintConstants.DRAWABLE_XHDPI;
 import static com.android.tools.lint.detector.api.LintConstants.RES_FOLDER;
 import static com.android.tools.lint.detector.api.LintConstants.TAG_APPLICATION;
-import static com.android.tools.lint.detector.api.LintUtils.difference;
 import static com.android.tools.lint.detector.api.LintUtils.endsWith;
-import static com.android.tools.lint.detector.api.LintUtils.intersection;
 
+import com.android.annotations.NonNull;
 import com.android.tools.lint.detector.api.Category;
 import com.android.tools.lint.detector.api.Context;
 import com.android.tools.lint.detector.api.Detector;
@@ -46,6 +45,7 @@ import com.android.tools.lint.detector.api.Scope;
 import com.android.tools.lint.detector.api.Severity;
 import com.android.tools.lint.detector.api.Speed;
 import com.android.tools.lint.detector.api.XmlContext;
+import com.google.common.io.Files;
 
 import org.w3c.dom.Element;
 
@@ -123,7 +123,7 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
             // Still some potential false positives:
             .setEnabledByDefault(false)
             .setMoreInfo(
-            "http://developer.android.com/guide/practices/ui_guidelines/icon_design_launcher.html#size"); //$NON-NLS-1$
+            "http://developer.android.com/design/style/iconography.html"); //$NON-NLS-1$
 
     /** Inconsistent dip size across densities */
     public static final Issue ICON_DIP_SIZE = Issue.create(
@@ -254,24 +254,32 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
 
     private String mApplicationIcon;
 
-    /** Constructs a new accessibility check */
+    /** Constructs a new {@link IconDetector} check */
     public IconDetector() {
     }
 
     @Override
-    public Speed getSpeed() {
+    public @NonNull Speed getSpeed() {
         return Speed.SLOW;
     }
 
     @Override
-    public void beforeCheckProject(Context context) {
+    public void beforeCheckProject(@NonNull Context context) {
         mApplicationIcon = null;
     }
 
     @Override
-    public void afterCheckProject(Context context) {
-        // Make sure no
-        File res = new File(context.getProject().getDir(), RES_FOLDER);
+    public void afterCheckLibraryProject(@NonNull Context context) {
+        checkResourceFolder(context, context.getProject().getDir());
+    }
+
+    @Override
+    public void afterCheckProject(@NonNull Context context) {
+        checkResourceFolder(context, context.getProject().getDir());
+    }
+
+    private void checkResourceFolder(Context context, File dir) {
+        File res = new File(dir, RES_FOLDER);
         if (res.isDirectory()) {
             File[] folders = res.listFiles();
             if (folders != null) {
@@ -300,7 +308,7 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
                                 Set<String> names = new HashSet<String>(files.length);
                                 for (File f : files) {
                                     String name = f.getName();
-                                    if (hasBitmapExtension(name)) {
+                                    if (isDrawableFile(name)) {
                                         names.add(f.getName());
                                     }
                                 }
@@ -325,9 +333,10 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
         }
     }
 
-    private static boolean hasBitmapExtension(String name) {
+    private static boolean isDrawableFile(String name) {
         // endsWith(name, DOT_PNG) is also true for endsWith(name, DOT_9PNG)
-        return endsWith(name, DOT_PNG)|| endsWith(name, DOT_JPG) || endsWith(name, DOT_GIF);
+        return endsWith(name, DOT_PNG)|| endsWith(name, DOT_JPG) || endsWith(name, DOT_GIF) ||
+                endsWith(name, DOT_XML);
     }
 
     // This method looks for duplicates in the assets. This uses two pieces of information
@@ -413,7 +422,7 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
                     byte[] bits = fileContents.get(file);
                     if (bits == null) {
                         try {
-                            bits = LintUtils.readBytes(file);
+                            bits = Files.toByteArray(file);
                             fileContents.put(file, bits);
                         } catch (IOException e) {
                             context.log(e, null);
@@ -495,6 +504,7 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
                     }
                     // Sort overall partitions by the first item in each list
                     Collections.sort(lists, new Comparator<List<File>>() {
+                        @Override
                         public int compare(List<File> list1, List<File> list2) {
                             return list1.get(0).compareTo(list2.get(0));
                         }
@@ -639,6 +649,9 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
                     float factor = getMdpiScalingFactor(file.getParentFile().getName());
                     if (factor > 0) {
                         Dimension size = pixelSizes.get(file);
+                        if (size == null) {
+                            continue;
+                        }
                         Dimension dip = new Dimension(
                                 Math.round(size.width / factor),
                                 Math.round(size.height / factor));
@@ -677,6 +690,7 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
                     }
                     Collections.sort(entries,
                             new Comparator<Map.Entry<File, Dimension>>() {
+                        @Override
                         public int compare(Entry<File, Dimension> e1,
                                 Entry<File, Dimension> e2) {
                             Dimension d1 = e1.getValue();
@@ -740,10 +754,10 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
             if (missing.size() > 0 ) {
                 context.report(
                     ICON_MISSING_FOLDER,
-                    null /* location */,
+                    Location.create(res),
                     String.format("Missing density variation folders in %1$s: %2$s",
                             context.getProject().getDisplayPath(res),
-                            LintUtils.formatList(missing, missing.size())),
+                            LintUtils.formatList(missing, -1)),
                     null);
             }
         }
@@ -764,7 +778,7 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
                     String folderName = folder.getName();
                     if (!isNoDpiFolder(folder)) {
                         assert DENSITY_PATTERN.matcher(folderName).matches();
-                        Set<String> overlap = intersection(noDpiNames, entry.getValue());
+                        Set<String> overlap = nameIntersection(noDpiNames, entry.getValue());
                         inBoth.addAll(overlap);
                         for (String name : overlap) {
                             files.add(new File(folder, name));
@@ -785,7 +799,7 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
                         location.setSecondary(linkedLocation);
                     }
 
-                    context.report(ICON_DENSITIES, location,
+                    context.report(ICON_NODPI, location,
                         String.format(
                             "The following images appear in both -nodpi and in a density folder: %1$s",
                             LintUtils.formatList(list, 10)),
@@ -811,8 +825,10 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
                 }
                 Set<String> names = entry.getValue();
                 if (names.size() != allNames.size()) {
-                    List<String> delta =
-                            new ArrayList<String>(difference(allNames, names));
+                    List<String> delta = new ArrayList<String>(nameDifferences(allNames,  names));
+                    if (delta.size() == 0) {
+                        continue;
+                    }
                     Collections.sort(delta);
                     String foundIn = "";
                     if (delta.size() == 1) {
@@ -842,6 +858,80 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
         }
     }
 
+    /**
+     * Compute the difference in names between a and b. This is not just
+     * Sets.difference(a, b) because we want to make the comparisons <b>without
+     * file extensions</b> and return the result <b>with</b>..
+     */
+    private Set<String> nameDifferences(Set<String> a, Set<String> b) {
+        Set<String> names1 = new HashSet<String>(a.size());
+        for (String s : a) {
+            names1.add(LintUtils.getBaseName(s));
+        }
+        Set<String> names2 = new HashSet<String>(b.size());
+        for (String s : b) {
+            names2.add(LintUtils.getBaseName(s));
+        }
+
+        names1.removeAll(names2);
+
+        if (names1.size() > 0) {
+            // Map filenames back to original filenames with extensions
+            Set<String> result = new HashSet<String>(names1.size());
+            for (String s : a) {
+                if (names1.contains(LintUtils.getBaseName(s))) {
+                    result.add(s);
+                }
+            }
+            for (String s : b) {
+                if (names1.contains(LintUtils.getBaseName(s))) {
+                    result.add(s);
+                }
+            }
+
+            return result;
+        }
+
+        return Collections.emptySet();
+    }
+
+    /**
+     * Compute the intersection in names between a and b. This is not just
+     * Sets.intersection(a, b) because we want to make the comparisons <b>without
+     * file extensions</b> and return the result <b>with</b>.
+     */
+    private Set<String> nameIntersection(Set<String> a, Set<String> b) {
+        Set<String> names1 = new HashSet<String>(a.size());
+        for (String s : a) {
+            names1.add(LintUtils.getBaseName(s));
+        }
+        Set<String> names2 = new HashSet<String>(b.size());
+        for (String s : b) {
+            names2.add(LintUtils.getBaseName(s));
+        }
+
+        names1.retainAll(names2);
+
+        if (names1.size() > 0) {
+            // Map filenames back to original filenames with extensions
+            Set<String> result = new HashSet<String>(names1.size());
+            for (String s : a) {
+                if (names1.contains(LintUtils.getBaseName(s))) {
+                    result.add(s);
+                }
+            }
+            for (String s : b) {
+                if (names1.contains(LintUtils.getBaseName(s))) {
+                    result.add(s);
+                }
+            }
+
+            return result;
+        }
+
+        return Collections.emptySet();
+    }
+
     private static boolean isNoDpiFolder(File file) {
         return file.getName().contains("-nodpi");
     }
@@ -849,7 +939,10 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
     private void checkDrawableDir(Context context, File folder, File[] files,
             Map<File, Dimension> pixelSizes, Map<File, Long> fileSizes) {
         if (folder.getName().equals(DRAWABLE_FOLDER)
-                && context.isEnabled(ICON_LOCATION)) {
+                && context.isEnabled(ICON_LOCATION) &&
+                // If supporting older versions than Android 1.6, it's not an error
+                // to include bitmaps in drawable/
+                context.getProject().getMinSdk() >= 4) {
             for (File file : files) {
                 String name = file.getName();
                 if (name.endsWith(DOT_XML)) {
@@ -937,9 +1030,9 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
                 checkSize(context, folderName, file, 48, 48, true /*exact*/);
             } else if (name.startsWith("ic_action_")) { //$NON-NLS-1$
                 // Action Bar
-                checkSize(context, folderName, file, 24, 24, true /*exact*/);
+                checkSize(context, folderName, file, 32, 32, true /*exact*/);
             } else if (name.startsWith("ic_dialog_")) { //$NON-NLS-1$
-                // Action Bar
+                // Dialog
                 checkSize(context, folderName, file, 32, 32, true /*exact*/);
             } else if (name.startsWith("ic_tab_")) { //$NON-NLS-1$
                 // Tab icons
@@ -979,7 +1072,7 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
      * manifest is at least 11.
      */
     private boolean isAndroid30(Context context, int folderVersion) {
-        return folderVersion >= 11 || context.getProject().getMinSdk() >= 11;
+        return folderVersion >= 11 || context.getMainProject().getMinSdk() >= 11;
     }
 
     /**
@@ -996,7 +1089,7 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
             return true;
         }
 
-        int minSdk = context.getProject().getMinSdk();
+        int minSdk = context.getMainProject().getMinSdk();
 
         return minSdk == 9 || minSdk == 10;
     }
@@ -1111,7 +1204,7 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
     // XML detector: Skim manifest
 
     @Override
-    public boolean appliesTo(Context context, File file) {
+    public boolean appliesTo(@NonNull Context context, @NonNull File file) {
         return file.getName().equals(ANDROID_MANIFEST_XML);
     }
 
@@ -1121,7 +1214,7 @@ public class IconDetector extends Detector implements Detector.XmlScanner {
     }
 
     @Override
-    public void visitElement(XmlContext context, Element element) {
+    public void visitElement(@NonNull XmlContext context, @NonNull Element element) {
         assert element.getTagName().equals(TAG_APPLICATION);
         mApplicationIcon = element.getAttributeNS(ANDROID_URI, ATTR_ICON);
         if (mApplicationIcon.startsWith(DRAWABLE_RESOURCE_PREFIX)) {

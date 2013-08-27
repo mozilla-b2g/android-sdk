@@ -16,13 +16,20 @@
 
 package com.android.tools.lint.detector.api;
 
+import com.android.annotations.NonNull;
+import com.google.common.annotations.Beta;
+
 import java.util.EnumSet;
 
 /**
  * The scope of a detector is the set of files a detector must consider when
  * performing its analysis. This can be used to determine when issues are
  * potentially obsolete, whether a detector should re-run on a file save, etc.
+ * <p>
+ * <b>NOTE: This is not a public or final API; if you rely on this be prepared
+ * to adjust your code for the next tools release.</b>
  */
+@Beta
 public enum Scope {
     /**
      * The analysis only considers a single XML resource file at a time.
@@ -67,12 +74,53 @@ public enum Scope {
     MANIFEST,
 
     /** The analysis considers the Proguard configuration file */
-    PROGUARD,
+    PROGUARD_FILE,
 
     /**
-     * The analysis considers classes in the libraries for this project.
+     * The analysis considers classes in the libraries for this project. These
+     * will be analyzed before the classes themselves.
      */
     JAVA_LIBRARIES;
+
+    /**
+     * Returns true if the given scope set corresponds to scanning a single file
+     * rather than a whole project
+     *
+     * @param scopes the scope set to check
+     * @return true if the scope set references a single file
+     */
+    public static boolean checkSingleFile(@NonNull EnumSet<Scope> scopes) {
+        int size = scopes.size();
+        if (size == 2) {
+            // When single checking a Java source file, we check both its Java source
+            // and the associated class files
+            return scopes.contains(JAVA_FILE) && scopes.contains(CLASS_FILE);
+        } else {
+            return size == 1 &&
+                (scopes.contains(JAVA_FILE)
+                        || scopes.contains(CLASS_FILE)
+                        || scopes.contains(RESOURCE_FILE)
+                        || scopes.contains(PROGUARD_FILE)
+                        || scopes.contains(MANIFEST));
+        }
+    }
+
+    /**
+     * Returns the intersection of two scope sets
+     *
+     * @param scope1 the first set to intersect
+     * @param scope2 the second set to intersect
+     * @return the intersection of the two sets
+     */
+    @NonNull
+    public static EnumSet<Scope> intersect(
+            @NonNull EnumSet<Scope> scope1,
+            @NonNull EnumSet<Scope> scope2) {
+        EnumSet<Scope> scope = EnumSet.copyOf(scope1);
+        scope.retainAll(scope2);
+
+        return scope;
+    }
 
     /** All scopes: running lint on a project will check these scopes */
     public static final EnumSet<Scope> ALL = EnumSet.allOf(Scope.class);
@@ -82,4 +130,8 @@ public enum Scope {
     public static final EnumSet<Scope> ALL_RESOURCES_SCOPE = EnumSet.of(ALL_RESOURCE_FILES);
     /** Scope-set used for detectors which are affected by a single Java source file */
     public static final EnumSet<Scope> JAVA_FILE_SCOPE = EnumSet.of(JAVA_FILE);
+    /** Scope-set used for detectors which are affected by a single Java class file */
+    public static final EnumSet<Scope> CLASS_FILE_SCOPE = EnumSet.of(CLASS_FILE);
+    /** Scope-set used for detectors which are affected by the manifest only */
+    public static final EnumSet<Scope> MANIFEST_SCOPE = EnumSet.of(MANIFEST);
 }

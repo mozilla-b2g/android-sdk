@@ -22,6 +22,8 @@ import static com.android.ide.eclipse.adt.AdtConstants.DOT_JPG;
 import static com.android.ide.eclipse.adt.AdtConstants.DOT_PNG;
 import static com.android.ide.eclipse.adt.AdtUtils.endsWithIgnoreCase;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.api.Rect;
 
 import org.eclipse.swt.graphics.RGB;
@@ -124,8 +126,29 @@ public class ImageUtils {
      * @return a cropped version of the source image, or null if the whole image was blank
      *         and cropping completely removed everything
      */
-    public static BufferedImage cropBlank(BufferedImage image, Rect initialCrop) {
+    @Nullable
+    public static BufferedImage cropBlank(
+            @NonNull BufferedImage image,
+            @Nullable Rect initialCrop) {
+        return cropBlank(image, initialCrop, image.getType());
+    }
+
+    /**
+     * Crops blank pixels from the edges of the image and returns the cropped result. We
+     * crop off pixels that are blank (meaning they have an alpha value = 0). Note that
+     * this is not the same as pixels that aren't opaque (an alpha value other than 255).
+     *
+     * @param image the image to be cropped
+     * @param initialCrop If not null, specifies a rectangle which contains an initial
+     *            crop to continue. This can be used to crop an image where you already
+     *            know about margins in the image
+     * @param imageType the type of {@link BufferedImage} to create
+     * @return a cropped version of the source image, or null if the whole image was blank
+     *         and cropping completely removed everything
+     */
+    public static BufferedImage cropBlank(BufferedImage image, Rect initialCrop, int imageType) {
         CropFilter filter = new CropFilter() {
+            @Override
             public boolean crop(BufferedImage bufferedImage, int x, int y) {
                 int rgb = bufferedImage.getRGB(x, y);
                 return (rgb & 0xFF000000) == 0x00000000;
@@ -133,7 +156,7 @@ public class ImageUtils {
                 // visual results -- e.g. check <= 0x80000000
             }
         };
-        return crop(image, filter, initialCrop);
+        return crop(image, filter, initialCrop, imageType);
     }
 
     /**
@@ -149,14 +172,37 @@ public class ImageUtils {
      * @return a cropped version of the source image, or null if the whole image was blank
      *         and cropping completely removed everything
      */
+    @Nullable
+    public static BufferedImage cropColor(
+            @NonNull BufferedImage image,
+            final int blankArgb,
+            @Nullable Rect initialCrop) {
+        return cropColor(image, blankArgb, initialCrop, image.getType());
+    }
+
+    /**
+     * Crops pixels of a given color from the edges of the image and returns the cropped
+     * result.
+     *
+     * @param image the image to be cropped
+     * @param blankArgb the color considered to be blank, as a 32 pixel integer with 8
+     *            bits of alpha, red, green and blue
+     * @param initialCrop If not null, specifies a rectangle which contains an initial
+     *            crop to continue. This can be used to crop an image where you already
+     *            know about margins in the image
+     * @param imageType the type of {@link BufferedImage} to create
+     * @return a cropped version of the source image, or null if the whole image was blank
+     *         and cropping completely removed everything
+     */
     public static BufferedImage cropColor(BufferedImage image,
-            final int blankArgb, Rect initialCrop) {
+            final int blankArgb, Rect initialCrop, int imageType) {
         CropFilter filter = new CropFilter() {
+            @Override
             public boolean crop(BufferedImage bufferedImage, int x, int y) {
                 return blankArgb == bufferedImage.getRGB(x, y);
             }
         };
-        return crop(image, filter, initialCrop);
+        return crop(image, filter, initialCrop, imageType);
     }
 
     /**
@@ -175,7 +221,8 @@ public class ImageUtils {
         boolean crop(BufferedImage image, int x, int y);
     }
 
-    private static BufferedImage crop(BufferedImage image, CropFilter filter, Rect initialCrop) {
+    private static BufferedImage crop(BufferedImage image, CropFilter filter, Rect initialCrop,
+            int imageType) {
         if (image == null) {
             return null;
         }
@@ -263,7 +310,13 @@ public class ImageUtils {
         int height = y2 - y1;
 
         // Now extract the sub-image
-        BufferedImage cropped = new BufferedImage(width, height, image.getType());
+        if (imageType == -1) {
+            imageType = image.getType();
+        }
+        if (imageType == BufferedImage.TYPE_CUSTOM) {
+            imageType = BufferedImage.TYPE_INT_ARGB;
+        }
+        BufferedImage cropped = new BufferedImage(width, height, imageType);
         Graphics g = cropped.getGraphics();
         g.drawImage(image, 0, 0, width, height, x1, y1, x2, y2, null);
 
@@ -419,7 +472,11 @@ public class ImageUtils {
     public static BufferedImage subImage(BufferedImage source, int x1, int y1, int x2, int y2) {
         int width = x2 - x1;
         int height = y2 - y1;
-        BufferedImage sub = new BufferedImage(width, height, source.getType());
+        int imageType = source.getType();
+        if (imageType == BufferedImage.TYPE_CUSTOM) {
+            imageType = BufferedImage.TYPE_INT_ARGB;
+        }
+        BufferedImage sub = new BufferedImage(width, height, imageType);
         Graphics g = sub.getGraphics();
         g.drawImage(source, 0, 0, width, height, x1, y1, x2, y2, null);
         g.dispose();
@@ -493,7 +550,11 @@ public class ImageUtils {
         int sourceHeight = source.getHeight();
         int destWidth = Math.max(1, (int) (xScale * sourceWidth));
         int destHeight = Math.max(1, (int) (yScale * sourceHeight));
-        BufferedImage scaled = new BufferedImage(destWidth, destHeight, source.getType());
+        int imageType = source.getType();
+        if (imageType == BufferedImage.TYPE_CUSTOM) {
+            imageType = BufferedImage.TYPE_INT_ARGB;
+        }
+        BufferedImage scaled = new BufferedImage(destWidth, destHeight, imageType);
         Graphics2D g2 = scaled.createGraphics();
         g2.setComposite(AlphaComposite.Src);
         g2.setColor(new Color(0, true));

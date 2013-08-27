@@ -38,9 +38,7 @@ import com.android.ide.eclipse.adt.internal.editors.descriptors.DocumentDescript
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.IDescriptorProvider;
 import com.android.ide.eclipse.adt.internal.editors.menu.descriptors.MenuDescriptors;
-import com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors;
-import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper;
-import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper.IProjectFilter;
+import com.android.ide.eclipse.adt.internal.editors.values.descriptors.ValuesDescriptors;
 import com.android.ide.eclipse.adt.internal.project.ProjectChooserHelper;
 import com.android.ide.eclipse.adt.internal.project.ProjectChooserHelper.ProjectCombo;
 import com.android.ide.eclipse.adt.internal.resources.ResourceNameValidator;
@@ -316,7 +314,7 @@ class NewXmlFileCreationPage extends WizardPage {
         new TypeInfo("Values",                                              // UI name
                 "An XML file with simple values: colors, strings, dimensions, etc.", // tooltip
                 ResourceFolderType.VALUES,                                  // folder type
-                ResourcesDescriptors.ROOT_ELEMENT,                          // root seed
+                ValuesDescriptors.ROOT_ELEMENT,                          // root seed
                 null,                                                       // default root
                 null,                                                       // xmlns
                 null,                                                       // default attributes
@@ -437,6 +435,7 @@ class NewXmlFileCreationPage extends WizardPage {
      *
      * @see org.eclipse.jface.dialogs.IDialogPage#createControl(org.eclipse.swt.widgets.Composite)
      */
+    @Override
     @SuppressWarnings("unused") // SWT constructors have side effects, they aren't unused
     public void createControl(Composite parent) {
         // This UI is maintained with WindowBuilder.
@@ -503,6 +502,7 @@ class NewXmlFileCreationPage extends WizardPage {
         mFileNameTextField.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
         mFileNameTextField.setToolTipText(tooltip);
         mFileNameTextField.addModifyListener(new ModifyListener() {
+            @Override
             public void modifyText(ModifyEvent e) {
                 mValues.name = mFileNameTextField.getText();
                 validatePage();
@@ -712,13 +712,7 @@ class NewXmlFileCreationPage extends WizardPage {
             // If we didn't find a default project based on the selection, check how many
             // open Android projects we can find in the current workspace. If there's only
             // one, we'll just select it by default.
-
-            IJavaProject[] projects = BaseProjectHelper.getAndroidProjects(new IProjectFilter() {
-                public boolean accept(IProject project) {
-                    return project.isAccessible();
-                }
-            });
-
+            IJavaProject[] projects = AdtUtils.getOpenAndroidProjects();
             if (projects != null && projects.length == 1) {
                 targetScore = 1;
                 targetProject = projects[0].getProject();

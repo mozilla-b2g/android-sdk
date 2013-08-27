@@ -26,7 +26,7 @@ import static com.android.ide.common.api.SegmentType.LEFT;
 import static com.android.ide.common.api.SegmentType.RIGHT;
 import static com.android.ide.common.api.SegmentType.TOP;
 import static com.android.ide.common.layout.BaseLayoutRule.getMaxMatchDistance;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
+import static com.android.util.XmlUtils.ANDROID_URI;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ABOVE;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ALIGN_BASELINE;
@@ -727,6 +727,7 @@ public class GuidelineHandler {
      * </ul>
      */
     private final class MatchComparator implements Comparator<Match> {
+        @Override
         public int compare(Match m1, Match m2) {
             // Always prefer matching parent bounds
             int parent1 = m1.edge.node == layout ? -1 : 1;

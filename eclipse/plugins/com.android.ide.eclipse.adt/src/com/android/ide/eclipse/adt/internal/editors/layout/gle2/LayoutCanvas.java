@@ -16,16 +16,15 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
+import com.android.annotations.NonNull;
 import com.android.ide.common.api.INode;
 import com.android.ide.common.api.Margins;
 import com.android.ide.common.api.Point;
-import com.android.ide.common.layout.LayoutConstants;
 import com.android.ide.common.rendering.api.Capability;
 import com.android.ide.common.rendering.api.RenderSession;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.DescriptorsUtils;
-import com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.configuration.ConfigurationComposite;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.ViewElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.IncludeFinder.Reference;
@@ -35,8 +34,10 @@ import com.android.ide.eclipse.adt.internal.editors.layout.gre.ViewMetadataRepos
 import com.android.ide.eclipse.adt.internal.editors.layout.uimodel.UiViewElementNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiDocumentNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
+import com.android.ide.eclipse.adt.internal.lint.LintEditAction;
 import com.android.resources.Density;
 import com.android.sdklib.SdkConstants;
+import com.android.util.XmlUtils;
 
 import org.eclipse.core.filesystem.EFS;
 import org.eclipse.core.filesystem.IFileStore;
@@ -91,7 +92,6 @@ import org.eclipse.ui.actions.ContributionItemFactory;
 import org.eclipse.ui.ide.IDE;
 import org.eclipse.ui.internal.ide.IDEWorkbenchMessages;
 import org.eclipse.ui.texteditor.ITextEditor;
-import org.eclipse.ui.views.contentoutline.IContentOutlinePage;
 import org.w3c.dom.Node;
 
 import java.util.HashSet;
@@ -121,7 +121,7 @@ public class LayoutCanvas extends Canvas {
     /* package */ static final String PREFIX_CANVAS_ACTION = "canvas_action_";
 
     /** The layout editor that uses this layout canvas. */
-    private final LayoutEditor mLayoutEditor;
+    private final LayoutEditorDelegate mEditorDelegate;
 
     /** The Rules Engine, associated with the current project. */
     private RulesEngine mRulesEngine;
@@ -181,6 +181,12 @@ public class LayoutCanvas extends Canvas {
     /** Copy action for the Edit or context menu. */
     private Action mCopyAction;
 
+    /** Undo action: delegates to the text editor */
+    private IAction mUndoAction;
+
+    /** Redo action: delegates to the text editor */
+    private IAction mRedoAction;
+
     /** Root of the context menu. */
     private MenuManager mMenuManager;
 
@@ -198,6 +204,9 @@ public class LayoutCanvas extends Canvas {
 
     /** The overlay which paints the mouse hover. */
     private HoverOverlay mHoverOverlay;
+
+    /** The overlay which paints the lint warnings */
+    private LintOverlay mLintOverlay;
 
     /** The overlay which paints the selection. */
     private SelectionOverlay mSelectionOverlay;
@@ -224,12 +233,15 @@ public class LayoutCanvas extends Canvas {
      */
     private ClipboardSupport mClipboardSupport;
 
-    public LayoutCanvas(LayoutEditor layoutEditor,
+    /** Tooltip manager for lint warnings */
+    private LintTooltipManager mLintTooltipManager;
+
+    public LayoutCanvas(LayoutEditorDelegate editorDelegate,
             RulesEngine rulesEngine,
             Composite parent,
             int style) {
         super(parent, style | SWT.DOUBLE_BUFFERED | SWT.V_SCROLL | SWT.H_SCROLL);
-        mLayoutEditor = layoutEditor;
+        mEditorDelegate = editorDelegate;
         mRulesEngine = rulesEngine;
 
         mClipboardSupport = new ClipboardSupport(this, parent);
@@ -237,7 +249,7 @@ public class LayoutCanvas extends Canvas {
         mVScale = new CanvasTransform(this, getVerticalBar());
 
         // Unit test suite passes a null here; TODO: Replace with mocking
-        IFile file = layoutEditor != null ? layoutEditor.getInputFile() : null;
+        IFile file = editorDelegate != null ? editorDelegate.getEditor().getInputFile() : null;
         if (file != null) {
             String zoom = AdtPlugin.getFileProperty(file, NAME_ZOOM);
             if (zoom != null) {
@@ -269,9 +281,12 @@ public class LayoutCanvas extends Canvas {
         mImageOverlay = new ImageOverlay(this, mHScale, mVScale);
         mIncludeOverlay = new IncludeOverlay(this);
         mImageOverlay.create(display);
+        mLintOverlay = new LintOverlay(this);
+        mLintOverlay.create(display);
 
         // --- Set up listeners
         addPaintListener(new PaintListener() {
+            @Override
             public void paintControl(PaintEvent e) {
                 onPaint(e);
             }
@@ -281,8 +296,26 @@ public class LayoutCanvas extends Canvas {
             @Override
             public void controlResized(ControlEvent e) {
                 super.controlResized(e);
-                mHScale.setClientSize(getClientArea().width);
-                mVScale.setClientSize(getClientArea().height);
+
+                // Check editor state:
+                LayoutWindowCoordinator coordinator = LayoutWindowCoordinator.get();
+                if (coordinator != null) {
+                    IEditorSite editorSite = getEditorDelegate().getEditor().getEditorSite();
+                    coordinator.syncMaximizedState(editorSite.getPage());
+                }
+
+                Rectangle clientArea = getClientArea();
+                mHScale.setClientSize(clientArea.width);
+                mVScale.setClientSize(clientArea.height);
+
+                // Update the zoom level in the canvas when you toggle the zoom
+                if (coordinator != null) {
+                    mZoomCheck.run();
+                } else {
+                    // During startup, delay updates which can trigger further layout
+                    getDisplay().asyncExec(mZoomCheck);
+
+                }
             }
         });
 
@@ -293,7 +326,7 @@ public class LayoutCanvas extends Canvas {
         mDragSource = createDragSource(this);
         mGestureManager.registerListeners(mDragSource, mDropTarget);
 
-        if (mLayoutEditor == null) {
+        if (mEditorDelegate == null) {
             // TODO: In another CL we should use EasyMock/objgen to provide an editor.
             return; // Unit test
         }
@@ -304,13 +337,41 @@ public class LayoutCanvas extends Canvas {
 
         // --- setup outline ---
         // Get the outline associated with this editor, if any and of the right type.
-        Object outline = layoutEditor.getAdapter(IContentOutlinePage.class);
-        if (outline instanceof OutlinePage) {
-            mOutlinePage = (OutlinePage) outline;
+        if (editorDelegate != null) {
+            mOutlinePage = editorDelegate.getGraphicalOutline();
         }
+
+        mLintTooltipManager = new LintTooltipManager(this);
+        mLintTooltipManager.register();
     }
 
-    public void handleKeyPressed(KeyEvent e) {
+    private Runnable mZoomCheck = new Runnable() {
+        private Boolean mWasZoomed;
+
+        @Override
+        public void run() {
+            if (isDisposed()) {
+                return;
+            }
+
+            LayoutWindowCoordinator coordinator = LayoutWindowCoordinator.get();
+            if (coordinator != null) {
+                Boolean zoomed = coordinator.isEditorMaximized();
+                if (mWasZoomed != zoomed) {
+                    if (mWasZoomed != null) {
+                        LayoutActionBar actionBar = mEditorDelegate.getGraphicalEditor()
+                                .getLayoutActionBar();
+                        if (actionBar.isZoomingAllowed()) {
+                            setFitScale(true /*onlyZoomOut*/);
+                        }
+                    }
+                    mWasZoomed = zoomed;
+                }
+            }
+        }
+    };
+
+    void handleKeyPressed(KeyEvent e) {
         // Set up backspace as an alias for the delete action within the canvas.
         // On most Macs there is no delete key - though there IS a key labeled
         // "Delete" and it sends a backspace key code! In short, for Macs we should
@@ -323,8 +384,7 @@ public class LayoutCanvas extends Canvas {
         } else {
             // Zooming actions
             char c = e.character;
-            LayoutActionBar actionBar = mLayoutEditor.getGraphicalEditor()
-                    .getLayoutActionBar();
+            LayoutActionBar actionBar = mEditorDelegate.getGraphicalEditor().getLayoutActionBar();
             if (c == '1' && actionBar.isZoomingAllowed()) {
                 setScale(1, true);
             } else if (c == '0' && actionBar.isZoomingAllowed()) {
@@ -345,6 +405,11 @@ public class LayoutCanvas extends Canvas {
         super.dispose();
 
         mGestureManager.unregisterListeners(mDragSource, mDropTarget);
+
+        if (mLintTooltipManager != null) {
+            mLintTooltipManager.unregister();
+            mLintTooltipManager = null;
+        }
 
         if (mDropTarget != null) {
             mDropTarget.dispose();
@@ -401,6 +466,11 @@ public class LayoutCanvas extends Canvas {
             mIncludeOverlay = null;
         }
 
+        if (mLintOverlay != null) {
+            mLintOverlay.dispose();
+            mLintOverlay = null;
+        }
+
         mViewHierarchy.dispose();
     }
 
@@ -432,10 +502,10 @@ public class LayoutCanvas extends Canvas {
     }
 
     /**
-     * Returns the {@link LayoutEditor} associated with this canvas.
+     * Returns the {@link LayoutEditorDelegate} associated with this canvas.
      */
-    public LayoutEditor getLayoutEditor() {
-        return mLayoutEditor;
+    public LayoutEditorDelegate getEditorDelegate() {
+        return mEditorDelegate;
     }
 
     /**
@@ -567,17 +637,19 @@ public class LayoutCanvas extends Canvas {
             Image image = mImageOverlay.setImage(session.getImage(), session.isAlphaChannelImage());
 
             mOutlinePage.setModel(mViewHierarchy.getRoot());
+            mEditorDelegate.getGraphicalEditor().setModel(mViewHierarchy.getRoot());
 
             if (image != null) {
-                mHScale.setSize(image.getImageData().width, getClientArea().width);
-                mVScale.setSize(image.getImageData().height, getClientArea().height);
+                Rectangle clientArea = getClientArea();
+                mHScale.setSize(image.getImageData().width, clientArea.width);
+                mVScale.setSize(image.getImageData().height, clientArea.height);
                 if (mZoomFitNextImage) {
-                    mZoomFitNextImage = false;
                     // Must be run asynchronously because getClientArea() returns 0 bounds
                     // when the editor is being initialized
                     getDisplay().asyncExec(new Runnable() {
+                        @Override
                         public void run() {
-                            setFitScale(true);
+                            ensureZoomed();
                         }
                     });
                 }
@@ -587,7 +659,18 @@ public class LayoutCanvas extends Canvas {
         redraw();
     }
 
-    /* package */ void setShowOutline(boolean newState) {
+    void ensureZoomed() {
+        if (mZoomFitNextImage && getClientArea().height > 0) {
+            mZoomFitNextImage = false;
+            LayoutActionBar actionBar = mEditorDelegate.getGraphicalEditor()
+                    .getLayoutActionBar();
+            if (actionBar.isZoomingAllowed()) {
+                setFitScale(true);
+            }
+        }
+    }
+
+    void setShowOutline(boolean newState) {
         mShowOutline = newState;
         redraw();
     }
@@ -613,7 +696,10 @@ public class LayoutCanvas extends Canvas {
 
         // Clear the zoom setting if it is almost identical to 1.0
         String zoomValue = (Math.abs(scale - 1.0) < 0.0001) ? null : Double.toString(scale);
-        AdtPlugin.setFileProperty(mLayoutEditor.getInputFile(), NAME_ZOOM, zoomValue);
+        IFile file = mEditorDelegate.getEditor().getInputFile();
+        if (file != null) {
+            AdtPlugin.setFileProperty(file, NAME_ZOOM, zoomValue);
+        }
     }
 
     /**
@@ -624,7 +710,11 @@ public class LayoutCanvas extends Canvas {
      *            rendered image, but it will never zoom in.
      */
     void setFitScale(boolean onlyZoomOut) {
-        Image image = getImageOverlay().getImage();
+        ImageOverlay imageOverlay = getImageOverlay();
+        if (imageOverlay == null) {
+            return;
+        }
+        Image image = imageOverlay.getImage();
         if (image != null) {
             Rectangle canvasSize = getClientArea();
             int canvasWidth = canvasSize.width;
@@ -747,6 +837,11 @@ public class LayoutCanvas extends Canvas {
             if (!mHoverOverlay.isHiding()) {
                 mHoverOverlay.paint(gc);
             }
+
+            if (!mLintOverlay.isHiding()) {
+                mLintOverlay.paint(gc);
+            }
+
             if (!mIncludeOverlay.isHiding()) {
                 mIncludeOverlay.paint(gc);
             }
@@ -783,7 +878,7 @@ public class LayoutCanvas extends Canvas {
             return;
         }
 
-        mLayoutEditor.recomputeLayout();
+        mEditorDelegate.recomputeLayout();
     }
 
     /**
@@ -889,7 +984,7 @@ public class LayoutCanvas extends Canvas {
      * @param url The layout attribute url of the form @layout/foo
      */
     private void showInclude(String url) {
-        GraphicalEditorPart graphicalEditor = mLayoutEditor.getGraphicalEditor();
+        GraphicalEditorPart graphicalEditor = mEditorDelegate.getGraphicalEditor();
         IPath filePath = graphicalEditor.findResourceFile(url);
         if (filePath == null) {
             // Should not be possible - if the URL had been bad, then we wouldn't
@@ -904,7 +999,7 @@ public class LayoutCanvas extends Canvas {
         // disk rather than from memory.
         IEditorSite editorSite = graphicalEditor.getEditorSite();
         IWorkbenchPage page = editorSite.getPage();
-        page.saveEditor(mLayoutEditor, false);
+        page.saveEditor(mEditorDelegate.getEditor(), false);
 
         IWorkspaceRoot workspace = ResourcesPlugin.getWorkspace().getRoot();
         IFile xmlFile = null;
@@ -924,10 +1019,11 @@ public class LayoutCanvas extends Canvas {
 
                 // Show the included file as included within this click source?
                 if (openAlready != null) {
-                    if (openAlready instanceof LayoutEditor) {
-                        LayoutEditor editor = (LayoutEditor)openAlready;
-                        GraphicalEditorPart gEditor = editor.getGraphicalEditor();
-                        if (gEditor.renderingSupports(Capability.EMBEDDED_LAYOUT)) {
+                    LayoutEditorDelegate delegate = LayoutEditorDelegate.fromEditor(openAlready);
+                    if (delegate != null) {
+                        GraphicalEditorPart gEditor = delegate.getGraphicalEditor();
+                        if (gEditor != null &&
+                                gEditor.renderingSupports(Capability.EMBEDDED_LAYOUT)) {
                             gEditor.showIn(next);
                         }
                     }
@@ -988,7 +1084,7 @@ public class LayoutCanvas extends Canvas {
      * @return the layout resource name of this layout
      */
     public String getLayoutResourceName() {
-        GraphicalEditorPart graphicalEditor = mLayoutEditor.getGraphicalEditor();
+        GraphicalEditorPart graphicalEditor = mEditorDelegate.getGraphicalEditor();
         return graphicalEditor.getLayoutResourceName();
     }
 
@@ -999,7 +1095,7 @@ public class LayoutCanvas extends Canvas {
      */
     /*
     public String getMe() {
-        GraphicalEditorPart graphicalEditor = mLayoutEditor.getGraphicalEditor();
+        GraphicalEditorPart graphicalEditor = mEditorDelegate.getGraphicalEditor();
         IFile editedFile = graphicalEditor.getEditedFile();
         return editedFile.getProjectRelativePath().toOSString();
     }
@@ -1021,7 +1117,7 @@ public class LayoutCanvas extends Canvas {
 
         Node xmlNode = vi.getXmlNode();
         if (xmlNode != null) {
-            boolean found = mLayoutEditor.show(xmlNode);
+            boolean found = mEditorDelegate.getEditor().show(xmlNode);
             if (!found) {
                 getDisplay().beep();
             }
@@ -1112,7 +1208,7 @@ public class LayoutCanvas extends Canvas {
         mSelectAllAction = new Action() {
             @Override
             public void run() {
-                GraphicalEditorPart graphicalEditor = getLayoutEditor().getGraphicalEditor();
+                GraphicalEditorPart graphicalEditor = getEditorDelegate().getGraphicalEditor();
                 StyledText errorLabel = graphicalEditor.getErrorLabel();
                 if (errorLabel.isFocusControl()) {
                     errorLabel.selectAll();
@@ -1145,7 +1241,7 @@ public class LayoutCanvas extends Canvas {
             hasSelection = false;
         }
 
-        StyledText errorLabel = mLayoutEditor.getGraphicalEditor().getErrorLabel();
+        StyledText errorLabel = mEditorDelegate.getGraphicalEditor().getErrorLabel();
         mCutAction.setEnabled(hasSelection);
         mCopyAction.setEnabled(hasSelection || errorLabel.getSelectionCount() > 0);
         mDeleteAction.setEnabled(hasSelection);
@@ -1164,20 +1260,48 @@ public class LayoutCanvas extends Canvas {
      *
      * @param bars the action bar for this canvas
      */
-    public void updateGlobalActions(IActionBars bars) {
+    public void updateGlobalActions(@NonNull IActionBars bars) {
         updateMenuActionState();
 
-        bars.setGlobalActionHandler(ActionFactory.CUT.getId(), mCutAction);
-        bars.setGlobalActionHandler(ActionFactory.COPY.getId(), mCopyAction);
-        bars.setGlobalActionHandler(ActionFactory.PASTE.getId(), mPasteAction);
-        bars.setGlobalActionHandler(ActionFactory.DELETE.getId(), mDeleteAction);
-        bars.setGlobalActionHandler(ActionFactory.SELECT_ALL.getId(), mSelectAllAction);
+        ITextEditor editor = mEditorDelegate.getEditor().getStructuredTextEditor();
+        boolean graphical = getEditorDelegate().getEditor().getActivePage() == 0;
+        if (graphical) {
+            bars.setGlobalActionHandler(ActionFactory.CUT.getId(), mCutAction);
+            bars.setGlobalActionHandler(ActionFactory.COPY.getId(), mCopyAction);
+            bars.setGlobalActionHandler(ActionFactory.PASTE.getId(), mPasteAction);
+            bars.setGlobalActionHandler(ActionFactory.DELETE.getId(), mDeleteAction);
+            bars.setGlobalActionHandler(ActionFactory.SELECT_ALL.getId(), mSelectAllAction);
 
-        ITextEditor editor = mLayoutEditor.getStructuredTextEditor();
-        IAction undoAction = editor.getAction(ActionFactory.UNDO.getId());
-        bars.setGlobalActionHandler(ActionFactory.UNDO.getId(), undoAction);
-        IAction redoAction = editor.getAction(ActionFactory.REDO.getId());
-        bars.setGlobalActionHandler(ActionFactory.REDO.getId(), redoAction);
+            // Delegate the Undo and Redo actions to the text editor ones, but wrap them
+            // such that we run lint to update the results on the current page (this is
+            // normally done on each editor operation that goes through
+            // {@link AndroidXmlEditor#wrapUndoEditXmlModel}, but not undo/redo)
+            if (mUndoAction == null) {
+                IAction undoAction = editor.getAction(ActionFactory.UNDO.getId());
+                mUndoAction = new LintEditAction(undoAction, getEditorDelegate().getEditor());
+            }
+            bars.setGlobalActionHandler(ActionFactory.UNDO.getId(), mUndoAction);
+            if (mRedoAction == null) {
+                IAction redoAction = editor.getAction(ActionFactory.REDO.getId());
+                mRedoAction = new LintEditAction(redoAction, getEditorDelegate().getEditor());
+            }
+            bars.setGlobalActionHandler(ActionFactory.REDO.getId(), mRedoAction);
+        } else {
+            bars.setGlobalActionHandler(ActionFactory.CUT.getId(),
+                    editor.getAction(ActionFactory.CUT.getId()));
+            bars.setGlobalActionHandler(ActionFactory.COPY.getId(),
+                    editor.getAction(ActionFactory.COPY.getId()));
+            bars.setGlobalActionHandler(ActionFactory.PASTE.getId(),
+                    editor.getAction(ActionFactory.PASTE.getId()));
+            bars.setGlobalActionHandler(ActionFactory.DELETE.getId(),
+                    editor.getAction(ActionFactory.DELETE.getId()));
+            bars.setGlobalActionHandler(ActionFactory.SELECT_ALL.getId(),
+                    editor.getAction(ActionFactory.SELECT_ALL.getId()));
+            bars.setGlobalActionHandler(ActionFactory.UNDO.getId(),
+                    editor.getAction(ActionFactory.UNDO.getId()));
+            bars.setGlobalActionHandler(ActionFactory.REDO.getId(),
+                    editor.getAction(ActionFactory.REDO.getId()));
+        }
 
         bars.updateActionBars();
     }
@@ -1193,7 +1317,8 @@ public class LayoutCanvas extends Canvas {
      * global actions such as copy, cut, paste, delete and select-all.
      */
     private void copyActionAttributes(Action action, ActionFactory factory) {
-        IWorkbenchAction wa = factory.create(mLayoutEditor.getEditorSite().getWorkbenchWindow());
+        IWorkbenchAction wa = factory.create(
+                mEditorDelegate.getEditor().getEditorSite().getWorkbenchWindow());
         action.setId(wa.getId());
         action.setText(wa.getText());
         action.setEnabled(wa.isEnabled());
@@ -1217,6 +1342,7 @@ public class LayoutCanvas extends Canvas {
      * There's also a dynamic part that is populated by the rules of the
      * selected elements, created by {@link DynamicContextMenu}.
      */
+    @SuppressWarnings("unused")
     private void createContextMenu() {
 
         // This manager is the root of the context menu.
@@ -1229,7 +1355,7 @@ public class LayoutCanvas extends Canvas {
 
         // Fill the menu manager with the static & dynamic actions
         setupStaticMenuActions(mMenuManager);
-        new DynamicContextMenu(mLayoutEditor, this, mMenuManager);
+        new DynamicContextMenu(mEditorDelegate, this, mMenuManager);
         Menu menu = mMenuManager.createContextMenu(this);
         setMenu(menu);
 
@@ -1238,6 +1364,7 @@ public class LayoutCanvas extends Canvas {
         // in the canvas which is NOT selected, and the context menu will show items related
         // to the selection, NOT the item you clicked on!!
         addMenuDetectListener(new MenuDetectListener() {
+            @Override
             public void menuDetected(MenuDetectEvent e) {
                 mSelectionManager.menuClick(e);
             }
@@ -1257,7 +1384,7 @@ public class LayoutCanvas extends Canvas {
     private void setupStaticMenuActions(IMenuManager manager) {
         manager.removeAll();
 
-        manager.add(new SelectionManager.SelectionMenu(mLayoutEditor.getGraphicalEditor()));
+        manager.add(new SelectionManager.SelectionMenu(mEditorDelegate.getGraphicalEditor()));
         manager.add(new Separator());
         manager.add(mCutAction);
         manager.add(mCopyAction);
@@ -1266,10 +1393,11 @@ public class LayoutCanvas extends Canvas {
         manager.add(mDeleteAction);
         manager.add(new Separator());
         manager.add(new PlayAnimationMenu(this));
+        manager.add(new ExportScreenshotAction(this));
         manager.add(new Separator());
 
         // Group "Show Included In" and "Show In" together
-        manager.add(new ShowWithinMenu(mLayoutEditor));
+        manager.add(new ShowWithinMenu(mEditorDelegate));
 
         // Create a "Show In" sub-menu and automatically populate it using standard
         // actions contributed by the workbench.
@@ -1277,7 +1405,7 @@ public class LayoutCanvas extends Canvas {
         MenuManager showInSubMenu = new MenuManager(showInLabel);
         showInSubMenu.add(
                 ContributionItemFactory.VIEWS_SHOW_IN.create(
-                        mLayoutEditor.getSite().getWorkbenchWindow()));
+                        mEditorDelegate.getEditor().getSite().getWorkbenchWindow()));
         manager.add(showInSubMenu);
     }
 
@@ -1306,14 +1434,14 @@ public class LayoutCanvas extends Canvas {
     /* package */ void createDocumentRoot(String rootFqcn) {
 
         // Need a valid empty document to create the new root
-        final UiDocumentNode uiDoc = mLayoutEditor.getUiRootNode();
+        final UiDocumentNode uiDoc = mEditorDelegate.getUiRootNode();
         if (uiDoc == null || uiDoc.getUiChildren().size() > 0) {
             debugPrintf("Failed to create document root for %1$s: document is not empty", rootFqcn);
             return;
         }
 
         // Find the view descriptor matching our FQCN
-        final ViewElementDescriptor viewDesc = mLayoutEditor.getFqcnViewDescriptor(rootFqcn);
+        final ViewElementDescriptor viewDesc = mEditorDelegate.getFqcnViewDescriptor(rootFqcn);
         if (viewDesc == null) {
             // TODO this could happen if dropping a custom view not known in this project
             debugPrintf("Failed to add document root, unknown FQCN %1$s", rootFqcn);
@@ -1328,14 +1456,15 @@ public class LayoutCanvas extends Canvas {
         }
         title = String.format("Create root %1$s in document", title);
 
-        mLayoutEditor.wrapUndoEditXmlModel(title, new Runnable() {
+        mEditorDelegate.getEditor().wrapUndoEditXmlModel(title, new Runnable() {
+            @Override
             public void run() {
                 UiElementNode uiNew = uiDoc.appendNewUiChild(viewDesc);
 
                 // A root node requires the Android XMLNS
                 uiNew.setAttributeValue(
-                        LayoutConstants.ANDROID_NS_NAME,
-                        XmlnsAttributeDescriptor.XMLNS_URI,
+                        XmlUtils.ANDROID_NS_NAME,
+                        XmlUtils.XMLNS_URI,
                         SdkConstants.NS_RESOURCES,
                         true /*override*/);
 
@@ -1357,8 +1486,8 @@ public class LayoutCanvas extends Canvas {
     public Margins getInsets(String fqcn) {
         if (ViewMetadataRepository.INSETS_SUPPORTED) {
             ConfigurationComposite configComposite =
-                    mLayoutEditor.getGraphicalEditor().getConfigurationComposite();
-            String theme = configComposite.getTheme();
+                    mEditorDelegate.getGraphicalEditor().getConfigurationComposite();
+            String theme = configComposite.getThemeName();
             Density density = configComposite.getDensity();
             return ViewMetadataRepository.getInsets(fqcn, density, theme);
         } else {
@@ -1369,6 +1498,15 @@ public class LayoutCanvas extends Canvas {
     private void debugPrintf(String message, Object... params) {
         if (DEBUG) {
             AdtPlugin.printToConsole("Canvas", String.format(message, params));
+        }
+    }
+
+    /** The associated editor has been deactivated */
+    public void deactivated() {
+        // Force the tooltip to be hidden. If you switch from the layout editor
+        // to a Java editor with the keyboard, the tooltip can stay open.
+        if (mLintTooltipManager != null) {
+            mLintTooltipManager.hide();
         }
     }
 }

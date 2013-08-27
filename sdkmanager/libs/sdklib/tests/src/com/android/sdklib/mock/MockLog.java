@@ -16,10 +16,12 @@
 
 package com.android.sdklib.mock;
 
+import com.android.annotations.NonNull;
 import com.android.sdklib.ISdkLog;
 
 import java.util.ArrayList;
 import java.util.Formatter;
+import java.util.List;
 
 /**
  * An instance of {@link ISdkLog} that captures all messages to an internal list.
@@ -30,17 +32,22 @@ public class MockLog implements ISdkLog {
     private ArrayList<String> mMessages = new ArrayList<String>();
 
     private void add(String code, String format, Object... args) {
-        mMessages.add(new Formatter().format(code + format, args).toString());
+        Formatter formatter = new Formatter();
+        mMessages.add(formatter.format(code + format, args).toString());
+        formatter.close();
     }
 
+    @Override
     public void warning(String format, Object... args) {
         add("W ", format, args);
     }
 
+    @Override
     public void printf(String format, Object... args) {
         add("P ", format, args);
     }
 
+    @Override
     public void error(Throwable t, String format, Object... args) {
         if (t != null) {
             add("T", "%s", t.toString());
@@ -51,6 +58,11 @@ public class MockLog implements ISdkLog {
     @Override
     public String toString() {
         return mMessages.toString();
+    }
+
+    @NonNull
+    public List<String> getMessages() {
+        return mMessages;
     }
 
     public void clear() {

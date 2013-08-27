@@ -16,12 +16,16 @@
 
 package com.android.ide.eclipse.adt.internal.wizards.export;
 
+import com.android.annotations.Nullable;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs.BuildVerbosity;
 import com.android.ide.eclipse.adt.internal.project.ExportHelper;
 import com.android.ide.eclipse.adt.internal.project.ProjectHelper;
-import com.android.sdklib.internal.build.KeystoreHelper;
 import com.android.sdklib.internal.build.DebugKeyProvider.IKeyGenOutput;
+import com.android.sdklib.internal.build.KeystoreHelper;
+import com.android.sdklib.util.GrabProcessOutput;
+import com.android.sdklib.util.GrabProcessOutput.IProcessOutput;
+import com.android.sdklib.util.GrabProcessOutput.Wait;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
@@ -39,17 +43,15 @@ import org.eclipse.ui.IExportWizard;
 import org.eclipse.ui.IWorkbench;
 import org.eclipse.ui.PlatformUI;
 
-import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.lang.reflect.InvocationTargetException;
 import java.security.KeyStore;
-import java.security.PrivateKey;
 import java.security.KeyStore.PrivateKeyEntry;
+import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.List;
@@ -88,6 +90,7 @@ public final class ExportWizard extends Wizard implements IExportWizard {
         protected static final int DATA_KEY = 0x004;
 
         protected static final VerifyListener sPasswordVerifier = new VerifyListener() {
+            @Override
             public void verifyText(VerifyEvent e) {
                 // verify the characters are valid for password.
                 int len = e.text.length();
@@ -208,6 +211,7 @@ public final class ExportWizard extends Wizard implements IExportWizard {
                  * @throws InvocationTargetException
                  * @throws InterruptedException
                  */
+                @Override
                 public void run(IProgressMonitor monitor) throws InvocationTargetException,
                         InterruptedException {
                     try {
@@ -240,9 +244,11 @@ public final class ExportWizard extends Wizard implements IExportWizard {
                         mDName,
                         mValidity,
                         new IKeyGenOutput() {
+                            @Override
                             public void err(String message) {
                                 output.add(message);
                             }
+                            @Override
                             public void out(String message) {
                                 output.add(message);
                             }
@@ -330,6 +336,7 @@ public final class ExportWizard extends Wizard implements IExportWizard {
      * (non-Javadoc)
      * @see org.eclipse.ui.IWorkbenchWizard#init(org.eclipse.ui.IWorkbench, org.eclipse.jface.viewers.IStructuredSelection)
      */
+    @Override
     public void init(IWorkbench workbench, IStructuredSelection selection) {
         // get the project from the selection
         Object selected = selection.getFirstElement();
@@ -532,9 +539,31 @@ public final class ExportWizard extends Wizard implements IExportWizard {
         command[4] = destination.getAbsolutePath();
 
         Process process = Runtime.getRuntime().exec(command);
-        ArrayList<String> output = new ArrayList<String>();
+        final ArrayList<String> output = new ArrayList<String>();
         try {
-            if (grabProcessOutput(process, output) != 0) {
+            final IProject project = getProject();
+
+            int status = GrabProcessOutput.grabProcessOutput(
+                    process,
+                    Wait.WAIT_FOR_READERS,
+                    new IProcessOutput() {
+                        @Override
+                        public void out(@Nullable String line) {
+                            if (line != null) {
+                                AdtPlugin.printBuildToConsole(BuildVerbosity.VERBOSE,
+                                        project, line);
+                            }
+                        }
+
+                        @Override
+                        public void err(@Nullable String line) {
+                            if (line != null) {
+                                output.add(line);
+                            }
+                        }
+                    });
+
+            if (status != 0) {
                 // build a single message from the array list
                 StringBuilder sb = new StringBuilder("Error while running zipalign:");
                 for (String msg : output) {
@@ -549,75 +578,6 @@ public final class ExportWizard extends Wizard implements IExportWizard {
         }
         return null;
     }
-
-    /**
-     * Get the stderr output of a process and return when the process is done.
-     * @param process The process to get the ouput from
-     * @param results The array to store the stderr output
-     * @return the process return code.
-     * @throws InterruptedException
-     */
-    private final int grabProcessOutput(final Process process,
-            final ArrayList<String> results)
-            throws InterruptedException {
-        // Due to the limited buffer size on windows for the standard io (stderr, stdout), we
-        // *need* to read both stdout and stderr all the time. If we don't and a process output
-        // a large amount, this could deadlock the process.
-
-        // read the lines as they come. if null is returned, it's
-        // because the process finished
-        new Thread("") { //$NON-NLS-1$
-            @Override
-            public void run() {
-                // create a buffer to read the stderr output
-                InputStreamReader is = new InputStreamReader(process.getErrorStream());
-                BufferedReader errReader = new BufferedReader(is);
-
-                try {
-                    while (true) {
-                        String line = errReader.readLine();
-                        if (line != null) {
-                            results.add(line);
-                        } else {
-                            break;
-                        }
-                    }
-                } catch (IOException e) {
-                    // do nothing.
-                }
-            }
-        }.start();
-
-        new Thread("") { //$NON-NLS-1$
-            @Override
-            public void run() {
-                InputStreamReader is = new InputStreamReader(process.getInputStream());
-                BufferedReader outReader = new BufferedReader(is);
-
-                IProject project = getProject();
-
-                try {
-                    while (true) {
-                        String line = outReader.readLine();
-                        if (line != null) {
-                            AdtPlugin.printBuildToConsole(BuildVerbosity.VERBOSE,
-                                    project, line);
-                        } else {
-                            break;
-                        }
-                    }
-                } catch (IOException e) {
-                    // do nothing.
-                }
-            }
-
-        }.start();
-
-        // get the return code from the process
-        return process.waitFor();
-    }
-
-
 
     /**
      * Returns the {@link Throwable#getMessage()}. If the {@link Throwable#getMessage()} returns

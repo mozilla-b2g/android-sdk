@@ -14,10 +14,10 @@ import org.eclipse.swt.widgets.MenuItem;
 /**
  * Action which creates a submenu that is dynamically populated by subclasses
  */
-abstract class SubmenuAction extends Action implements MenuListener, IMenuCreator {
+public abstract class SubmenuAction extends Action implements MenuListener, IMenuCreator {
     private Menu mMenu;
 
-    SubmenuAction(String title) {
+    public SubmenuAction(String title) {
         super(title, IAction.AS_DROP_DOWN_MENU);
     }
 
@@ -26,6 +26,7 @@ abstract class SubmenuAction extends Action implements MenuListener, IMenuCreato
         return this;
     }
 
+    @Override
     public void dispose() {
         if (mMenu != null) {
             mMenu.dispose();
@@ -33,21 +34,25 @@ abstract class SubmenuAction extends Action implements MenuListener, IMenuCreato
         }
     }
 
+    @Override
     public Menu getMenu(Control parent) {
         return null;
     }
 
+    @Override
     public Menu getMenu(Menu parent) {
         mMenu = new Menu(parent);
         mMenu.addMenuListener(this);
         return mMenu;
     }
 
+    @Override
     public void menuHidden(MenuEvent e) {
     }
 
     protected abstract void addMenuItems(Menu menu);
 
+    @Override
     public void menuShown(MenuEvent e) {
         // TODO: Replace this stuff with manager.setRemoveAllWhenShown(true);
         MenuItem[] menuItems = mMenu.getItems();

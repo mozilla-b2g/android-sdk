@@ -16,12 +16,14 @@
 
 package com.android.tools.lint.checks;
 
-import com.android.tools.lint.PositionXmlParser;
+import com.android.tools.lint.LintCliXmlParser;
+import com.android.tools.lint.LombokParser;
+import com.android.tools.lint.Main;
 import com.android.tools.lint.client.api.Configuration;
 import com.android.tools.lint.client.api.IDomParser;
+import com.android.tools.lint.client.api.IJavaParser;
 import com.android.tools.lint.client.api.IssueRegistry;
-import com.android.tools.lint.client.api.Lint;
-import com.android.tools.lint.client.api.LintClient;
+import com.android.tools.lint.client.api.LintDriver;
 import com.android.tools.lint.detector.api.Context;
 import com.android.tools.lint.detector.api.Detector;
 import com.android.tools.lint.detector.api.Issue;
@@ -29,17 +31,16 @@ import com.android.tools.lint.detector.api.Location;
 import com.android.tools.lint.detector.api.Position;
 import com.android.tools.lint.detector.api.Project;
 import com.android.tools.lint.detector.api.Severity;
+import com.google.common.io.Files;
+import com.google.common.io.InputSupplier;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
 import java.io.File;
-import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.Reader;
-import java.io.Writer;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.security.CodeSource;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collections;
@@ -48,7 +49,8 @@ import java.util.List;
 import junit.framework.TestCase;
 
 /** Common utility methods for the various lint check tests */
-abstract class AbstractCheckTest extends TestCase {
+@SuppressWarnings("javadoc")
+public abstract class AbstractCheckTest extends TestCase {
     protected abstract Detector getDetector();
 
     protected List<Issue> getIssues() {
@@ -89,8 +91,8 @@ abstract class AbstractCheckTest extends TestCase {
     protected String checkLint(List<File> files) throws Exception {
         mOutput = new StringBuilder();
         TestLintClient lintClient = new TestLintClient();
-        Lint analyzer = new Lint(new CustomIssueRegistry(), lintClient);
-        analyzer.analyze(files, null /* scope */);
+        LintDriver driver = new LintDriver(new CustomIssueRegistry(), lintClient);
+        driver.analyze(files, null /* scope */);
 
         List<String> errors = lintClient.getErrors();
         Collections.sort(errors);
@@ -108,7 +110,11 @@ abstract class AbstractCheckTest extends TestCase {
         return mOutput.toString();
     }
 
-    /** Run lint on the given files when constructed as a separate project */
+    /**
+     * Run lint on the given files when constructed as a separate project
+     * @return The output of the lint check. On Windows, this transforms all directory
+     *   separators to the unix-style forward slash.
+     */
     protected String lintProject(String... relativePaths) throws Exception {
         assertFalse("getTargetDir must be overridden to make a unique directory",
                 getTargetDir().equals(getTempDir()));
@@ -124,7 +130,14 @@ abstract class AbstractCheckTest extends TestCase {
 
         addManifestFile(projectDir);
 
-        return checkLint(Collections.singletonList(projectDir));
+        String result = checkLint(Collections.singletonList(projectDir));
+        // The output typically contains a few directory/filenames.
+        // On Windows we need to change the separators to the unix-style
+        // forward slash to make the test as OS-agnostic as possible.
+        if (File.separatorChar != '/') {
+            result = result.replace(File.separatorChar, '/');
+        }
+        return result;
     }
 
     private void addManifestFile(File projectDir) throws IOException {
@@ -171,7 +184,7 @@ abstract class AbstractCheckTest extends TestCase {
     }
 
     private File makeTestFile(String name, String relative,
-            String contents) throws IOException {
+            final InputStream contents) throws IOException {
         File dir = getTargetDir();
         if (relative != null) {
             dir = new File(dir, relative);
@@ -188,9 +201,11 @@ abstract class AbstractCheckTest extends TestCase {
             tempFile.delete();
         }
 
-        Writer writer = new BufferedWriter(new FileWriter(tempFile));
-        writer.write(contents);
-        writer.close();
+        Files.copy(new InputSupplier<InputStream>() {
+            public InputStream getInput() throws IOException {
+                return contents;
+            }
+        }, tempFile);
 
         return tempFile;
     }
@@ -213,10 +228,6 @@ abstract class AbstractCheckTest extends TestCase {
         InputStream stream =
             AbstractCheckTest.class.getResourceAsStream(path);
         assertNotNull(relativePath + " does not exist", stream);
-        BufferedReader reader = new BufferedReader(new InputStreamReader(stream));
-        String xml = readFile(reader);
-        assertNotNull(xml);
-        assertTrue(xml.length() > 0);
         int index = targetPath.lastIndexOf('/');
         String relative = null;
         String name = targetPath;
@@ -225,23 +236,7 @@ abstract class AbstractCheckTest extends TestCase {
             relative = targetPath.substring(0, index);
         }
 
-        return makeTestFile(name, relative, xml);
-    }
-
-    private static String readFile(Reader reader) throws IOException {
-        try {
-            StringBuilder sb = new StringBuilder();
-            while (true) {
-                int c = reader.read();
-                if (c == -1) {
-                    return sb.toString();
-                } else {
-                    sb.append((char)c);
-                }
-            }
-        } finally {
-            reader.close();
-        }
+        return makeTestFile(name, relative, stream);
     }
 
     protected boolean isEnabled(Issue issue) {
@@ -253,7 +248,11 @@ abstract class AbstractCheckTest extends TestCase {
         return false;
     }
 
-    private class TestLintClient extends LintClient {
+    protected boolean includeParentPath() {
+        return false;
+    }
+
+    public class TestLintClient extends Main {
         private List<String> mErrors = new ArrayList<String>();
 
         public List<String> getErrors() {
@@ -261,16 +260,20 @@ abstract class AbstractCheckTest extends TestCase {
         }
 
         @Override
-        public void report(Context context, Issue issue, Location location, String message,
-                Object data) {
+        public void report(Context context, Issue issue, Severity severity, Location location,
+                String message, Object data) {
             StringBuilder sb = new StringBuilder();
+
+            if (issue == IssueRegistry.LINT_ERROR) {
+                return;
+            }
 
             if (location != null && location.getFile() != null) {
                 // Include parent directory for locations that have alternates, since
                 // frequently the file name is the same across different resource folders
                 // and we want to make sure in the tests that we're indeed passing the
                 // right files in as secondary locations
-                if (location.getSecondary() != null) {
+                if (location.getSecondary() != null || includeParentPath()) {
                     sb.append(location.getFile().getParentFile().getName() + "/"
                             + location.getFile().getName());
                 } else {
@@ -292,7 +295,10 @@ abstract class AbstractCheckTest extends TestCase {
                 sb.append(' ');
             }
 
-            Severity severity = context.getConfiguration().getSeverity(issue);
+            if (severity == Severity.FATAL) {
+                // Treat fatal errors like errors in the golden files.
+                severity = Severity.ERROR;
+            }
             sb.append(severity.getDescription());
             sb.append(": ");
 
@@ -339,27 +345,63 @@ abstract class AbstractCheckTest extends TestCase {
             if (exception != null) {
                 sb.append(exception.toString());
             }
-            fail(sb.toString());
+            System.err.println(sb);
         }
 
         @Override
         public IDomParser getDomParser() {
-            return new PositionXmlParser();
+            return new LintCliXmlParser();
         }
 
         @Override
-        public String readFile(File file) {
-            try {
-                return AbstractCheckTest.readFile(new FileReader(file));
-            } catch (Throwable e) {
-                fail(e.toString());
-            }
-            return null;
+        public IJavaParser getJavaParser() {
+            return new LombokParser();
         }
 
         @Override
         public Configuration getConfiguration(Project project) {
             return new TestConfiguration();
+        }
+
+        @Override
+        public File findResource(String relativePath) {
+            if (relativePath.equals("platform-tools/api/api-versions.xml")) {
+                CodeSource source = getClass().getProtectionDomain().getCodeSource();
+                if (source != null) {
+                    URL location = source.getLocation();
+                    try {
+                        File dir = new File(location.toURI());
+                        assertTrue(dir.getPath(), dir.exists());
+                        File sdkDir = dir.getParentFile().getParentFile().getParentFile()
+                                .getParentFile().getParentFile().getParentFile();
+                        File file = new File(sdkDir, "development" + File.separator + "sdk"
+                                + File.separator + "api-versions.xml");
+                        return file;
+                    } catch (URISyntaxException e) {
+                        fail(e.getLocalizedMessage());
+                    }
+                }
+            } else if (relativePath.equals("tools/support/typos-en.txt")) {
+                CodeSource source = getClass().getProtectionDomain().getCodeSource();
+                if (source != null) {
+                    URL location = source.getLocation();
+                    try {
+                        File dir = new File(location.toURI());
+                        assertTrue(dir.getPath(), dir.exists());
+                        File sdkDir = dir.getParentFile().getParentFile().getParentFile()
+                                .getParentFile().getParentFile().getParentFile();
+                        File file = new File(sdkDir, "sdk" + File.separator + "files"
+                                + File.separator + "typos-en.txt");
+                        return file;
+                    } catch (URISyntaxException e) {
+                        fail(e.getLocalizedMessage());
+                    }
+                }
+            } else {
+                fail("Unit tests don't support arbitrary resource lookup yet.");
+            }
+
+            return super.findResource(relativePath);
         }
     }
 

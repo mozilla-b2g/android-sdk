@@ -16,12 +16,15 @@
 
 package com.android.tools.lint.checks;
 
+import static com.android.tools.lint.detector.api.LintUtils.assertionsEnabled;
 import static com.android.tools.lint.detector.api.LintUtils.endsWith;
 
+import com.android.annotations.NonNull;
 import com.android.prefs.AndroidLocation;
 import com.android.prefs.AndroidLocation.AndroidLocationException;
 import com.android.tools.lint.client.api.IssueRegistry;
 import com.android.tools.lint.detector.api.Issue;
+import com.google.common.annotations.Beta;
 
 import java.io.File;
 import java.io.IOException;
@@ -44,19 +47,27 @@ public class BuiltinIssueRegistry extends IssueRegistry {
 
     /**
      * Manifest constant for declaring an issue provider. Example:
-     * Lint-Issues: foo.bar.CustomIssueRegistry
+     * Lint-Registry: foo.bar.CustomIssueRegistry
      */
     private static final String MF_LINT_REGISTRY = "Lint-Registry"; //$NON-NLS-1$
 
     private static final List<Issue> sIssues;
 
     static {
-        List<Issue> issues = new ArrayList<Issue>();
+        final int initialCapacity = 97;
+        List<Issue> issues = new ArrayList<Issue>(initialCapacity);
 
         issues.add(AccessibilityDetector.ISSUE);
+        issues.add(MathDetector.ISSUE);
+        issues.add(FieldGetterDetector.ISSUE);
+        issues.add(SdCardDetector.ISSUE);
+        issues.add(ApiDetector.UNSUPPORTED);
         issues.add(DuplicateIdDetector.CROSS_LAYOUT);
         issues.add(DuplicateIdDetector.WITHIN_LAYOUT);
+        issues.add(WrongIdDetector.UNKNOWN_ID);
+        issues.add(WrongIdDetector.UNKNOWN_ID_LAYOUT);
         issues.add(StateListDetector.ISSUE);
+        issues.add(StyleCycleDetector.ISSUE);
         issues.add(InefficientWeightDetector.INEFFICIENT_WEIGHT);
         issues.add(InefficientWeightDetector.NESTED_WEIGHTS);
         issues.add(InefficientWeightDetector.BASELINE_WEIGHTS);
@@ -73,18 +84,38 @@ public class BuiltinIssueRegistry extends IssueRegistry {
         issues.add(TooManyViewsDetector.TOO_MANY);
         issues.add(TooManyViewsDetector.TOO_DEEP);
         issues.add(GridLayoutDetector.ISSUE);
+        issues.add(OnClickDetector.ISSUE);
+        issues.add(RegistrationDetector.ISSUE);
+        issues.add(HandlerDetector.ISSUE);
+        issues.add(FragmentDetector.ISSUE);
         issues.add(TranslationDetector.EXTRA);
         issues.add(TranslationDetector.MISSING);
         issues.add(HardcodedValuesDetector.ISSUE);
-        issues.add(ProguardDetector.ISSUE);
-        issues.add(PxUsageDetector.ISSUE);
+        issues.add(Utf8Detector.ISSUE);
+        issues.add(ProguardDetector.WRONGKEEP);
+        issues.add(ProguardDetector.SPLITCONFIG);
+        issues.add(PxUsageDetector.PX_ISSUE);
+        issues.add(PxUsageDetector.DP_ISSUE);
         issues.add(TextFieldDetector.ISSUE);
+        issues.add(TextViewDetector.ISSUE);
         issues.add(UnusedResourceDetector.ISSUE);
         issues.add(UnusedResourceDetector.ISSUE_IDS);
+        issues.add(ExtraTextDetector.ISSUE);
+        issues.add(PrivateResourceDetector.ISSUE);
         issues.add(ArraySizeDetector.INCONSISTENT);
-        issues.add(ManifestOrderDetector.ISSUE);
+        issues.add(HardcodedDebugModeDetector.ISSUE);
+        issues.add(ManifestOrderDetector.ORDER);
+        issues.add(ManifestOrderDetector.USES_SDK);
+        issues.add(ManifestOrderDetector.MULTIPLE_USES_SDK);
+        issues.add(ManifestOrderDetector.WRONG_PARENT);
+        issues.add(ManifestOrderDetector.DUPLICATE_ACTIVITY);
+        issues.add(SecurityDetector.EXPORTED_PROVIDER);
         issues.add(SecurityDetector.EXPORTED_SERVICE);
+        issues.add(SecurityDetector.EXPORTED_ACTIVITY);
+        issues.add(SecurityDetector.EXPORTED_RECEIVER);
         issues.add(SecurityDetector.OPEN_PROVIDER);
+        issues.add(SecurityDetector.WORLD_READABLE);
+        issues.add(SecurityDetector.WORLD_WRITEABLE);
         issues.add(IconDetector.GIF_USAGE);
         issues.add(IconDetector.ICON_DENSITIES);
         issues.add(IconDetector.ICON_MISSING_FOLDER);
@@ -99,17 +130,39 @@ public class BuiltinIssueRegistry extends IssueRegistry {
         issues.add(TypographyDetector.FRACTIONS);
         issues.add(TypographyDetector.ELLIPSIS);
         issues.add(TypographyDetector.OTHER);
+        issues.add(ButtonDetector.ORDER);
+        issues.add(ButtonDetector.CASE);
+        issues.add(ButtonDetector.BACKBUTTON);
         issues.add(DetectMissingPrefix.MISSING_NAMESPACE);
         issues.add(OverdrawDetector.ISSUE);
+        issues.add(StringFormatDetector.INVALID);
+        issues.add(StringFormatDetector.ARG_COUNT);
+        issues.add(StringFormatDetector.ARG_TYPES);
+        issues.add(TypoDetector.ISSUE);
+        issues.add(ViewTypeDetector.ISSUE);
+        issues.add(WrongImportDetector.ISSUE);
+        issues.add(ViewConstructorDetector.ISSUE);
+        issues.add(NamespaceDetector.CUSTOMVIEW);
+        issues.add(NamespaceDetector.UNUSED);
+        issues.add(NamespaceDetector.TYPO);
+        issues.add(AlwaysShowActionDetector.ISSUE);
+        issues.add(ColorUsageDetector.ISSUE);
+        issues.add(JavaPerformanceDetector.PAINT_ALLOC);
+        issues.add(JavaPerformanceDetector.USE_VALUEOF);
+        issues.add(JavaPerformanceDetector.USE_SPARSEARRAY);
+        issues.add(SetJavaScriptEnabledDetector.ISSUE);
+        issues.add(ToastDetector.ISSUE);
+        issues.add(SharedPrefsDetector.ISSUE);
+        issues.add(NonInternationalizedSmsDetector.ISSUE);
+
+        assert initialCapacity >= issues.size() : issues.size();
 
         addCustomIssues(issues);
 
         sIssues = Collections.unmodifiableList(issues);
 
         // Check that ids are unique
-        boolean assertionsEnabled = false;
-        assert assertionsEnabled = true; // Intentional side-effect
-        if (assertionsEnabled) {
+        if (assertionsEnabled()) {
             Set<String> ids = new HashSet<String>();
             for (Issue issue : sIssues) {
                 String id = issue.getId();
@@ -126,7 +179,7 @@ public class BuiltinIssueRegistry extends IssueRegistry {
     }
 
     @Override
-    public List<Issue> getIssues() {
+    public @NonNull List<Issue> getIssues() {
         return sIssues;
     }
 
@@ -210,5 +263,48 @@ public class BuiltinIssueRegistry extends IssueRegistry {
         // just dump to the console so detector developers get some feedback on what went
         // wrong.
         e.printStackTrace();
+    }
+
+    private static Set<Issue> sAdtFixes;
+
+    /**
+     * Returns true if the given issue has an automatic IDE fix.
+     *
+     * @param tool the name of the tool to be checked
+     * @param issue the issue to be checked
+     * @return true if the given tool is known to have an automatic fix for the
+     *         given issue
+     */
+    @Beta
+    public boolean hasAutoFix(String tool, Issue issue) {
+        assert tool.equals("adt"); // This is not yet a generic facility;
+        // the primary purpose right now is to allow for example the HTML report
+        // to give a hint to the user that some fixes don't require manual work
+
+        if (sAdtFixes == null) {
+            sAdtFixes = new HashSet<Issue>(20);
+            sAdtFixes.add(InefficientWeightDetector.INEFFICIENT_WEIGHT);
+            sAdtFixes.add(AccessibilityDetector.ISSUE);
+            sAdtFixes.add(InefficientWeightDetector.BASELINE_WEIGHTS);
+            sAdtFixes.add(HardcodedValuesDetector.ISSUE);
+            sAdtFixes.add(UselessViewDetector.USELESS_LEAF);
+            sAdtFixes.add(UselessViewDetector.USELESS_PARENT);
+            sAdtFixes.add(PxUsageDetector.PX_ISSUE);
+            sAdtFixes.add(TextFieldDetector.ISSUE);
+            sAdtFixes.add(SecurityDetector.EXPORTED_SERVICE);
+            sAdtFixes.add(DetectMissingPrefix.MISSING_NAMESPACE);
+            sAdtFixes.add(ScrollViewChildDetector.ISSUE);
+            sAdtFixes.add(ObsoleteLayoutParamsDetector.ISSUE);
+            sAdtFixes.add(TypographyDetector.DASHES);
+            sAdtFixes.add(TypographyDetector.ELLIPSIS);
+            sAdtFixes.add(TypographyDetector.FRACTIONS);
+            sAdtFixes.add(TypographyDetector.OTHER);
+            sAdtFixes.add(TypographyDetector.QUOTES);
+            sAdtFixes.add(UseCompoundDrawableDetector.ISSUE);
+            sAdtFixes.add(ApiDetector.UNSUPPORTED);
+            sAdtFixes.add(TypoDetector.ISSUE);
+        }
+
+        return sAdtFixes.contains(issue);
     }
 }

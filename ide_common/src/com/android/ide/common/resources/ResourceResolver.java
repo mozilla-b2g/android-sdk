@@ -166,14 +166,29 @@ public class ResourceResolver extends RenderResources {
     }
 
     @Override
-    public ResourceValue findItemInStyle(StyleResourceValue style, String itemName) {
-        ResourceValue item = style.findValue(itemName);
+    @Deprecated
+    public ResourceValue findItemInStyle(StyleResourceValue style, String attrName) {
+        // this method is deprecated because it doesn't know about the namespace of the
+        // attribute so we search for the project namespace first and then in the
+        // android namespace if needed.
+        ResourceValue item = findItemInStyle(style, attrName, false /*isFrameworkAttr*/);
+        if (item == null) {
+            item = findItemInStyle(style, attrName, true /*isFrameworkAttr*/);
+        }
+
+        return item;
+    }
+
+    @Override
+    public ResourceValue findItemInStyle(StyleResourceValue style, String itemName,
+            boolean isFrameworkAttr) {
+        ResourceValue item = style.findValue(itemName, isFrameworkAttr);
 
         // if we didn't find it, we look in the parent style (if applicable)
         if (item == null && mStyleInheritanceMap != null) {
             StyleResourceValue parentStyle = mStyleInheritanceMap.get(style);
             if (parentStyle != null) {
-                return findItemInStyle(parentStyle, itemName);
+                return findItemInStyle(parentStyle, itemName, isFrameworkAttr);
             }
         }
 
@@ -230,13 +245,8 @@ public class ResourceResolver extends RenderResources {
             }
 
             // Now look for the item in the theme, starting with the current one.
-            ResourceValue item;
-            if (frameworkOnly) {
-                // FIXME for now we do the same as if it didn't specify android:
-                item = findItemInStyle(mTheme, referenceName);
-            } else {
-                item = findItemInStyle(mTheme, referenceName);
-            }
+            ResourceValue item = findItemInStyle(mTheme, referenceName,
+                    forceFrameworkOnly || frameworkOnly);
 
             if (item == null && mLogger != null) {
                 mLogger.warning(LayoutLog.TAG_RESOURCES_RESOLVE_THEME_ATTR,
@@ -326,6 +336,16 @@ public class ResourceResolver extends RenderResources {
 
         // if the value did not reference anything, then we simply return the input value
         if (resolvedResValue == null) {
+            return resValue;
+        }
+
+        // detect potential loop due to mishandled namespace in attributes
+        if (resValue == resolvedResValue) {
+            if (mLogger != null) {
+                mLogger.error(LayoutLog.TAG_BROKEN,
+                        String.format("Potential stackoverflow trying to resolve '%s'. Render may not be accurate.", value),
+                        null);
+            }
             return resValue;
         }
 

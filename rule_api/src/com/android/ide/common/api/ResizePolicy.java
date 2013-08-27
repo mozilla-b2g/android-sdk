@@ -15,10 +15,17 @@
  */
 package com.android.ide.common.api;
 
+import com.android.annotations.NonNull;
+import com.google.common.annotations.Beta;
+
 /**
  * A {@link ResizePolicy} records state for whether a widget is resizable, and if so, in
  * which directions
+ * <p>
+ * <b>NOTE: This is not a public or final API; if you rely on this be prepared
+ * to adjust your code for the next tools release.</b>
  */
+@Beta
 public class ResizePolicy {
     private static final int NONE = 0;
     private static final int LEFT_EDGE = 1;
@@ -34,7 +41,7 @@ public class ResizePolicy {
 
     // Shared objects for common policies
 
-    public static final ResizePolicy sAny = new ResizePolicy(ANY);
+    private static final ResizePolicy sAny = new ResizePolicy(ANY);
     private static final ResizePolicy sNone = new ResizePolicy(NONE);
     private static final ResizePolicy sHorizontal = new ResizePolicy(HORIZONTAL);
     private static final ResizePolicy sVertical = new ResizePolicy(VERTICAL);
@@ -107,6 +114,7 @@ public class ResizePolicy {
      *
      * @return a resize policy allowing resizing in any direction
      */
+    @NonNull
     public static ResizePolicy full() {
         return sAny;
     }
@@ -116,6 +124,7 @@ public class ResizePolicy {
      *
      * @return a policy which does not allow any resizing
      */
+    @NonNull
     public static ResizePolicy none() {
         return sNone;
     }
@@ -125,6 +134,7 @@ public class ResizePolicy {
      *
      * @return a policy which allows horizontal resizing only
      */
+    @NonNull
     public static ResizePolicy horizontal() {
         return sHorizontal;
     }
@@ -134,6 +144,7 @@ public class ResizePolicy {
      *
      * @return a policy which allows vertical resizing only
      */
+    @NonNull
     public static ResizePolicy vertical() {
         return sVertical;
     }
@@ -143,6 +154,7 @@ public class ResizePolicy {
      *
      * @return a resize policy allowing scaled / aspect-ratio preserving resizing only
      */
+    @NonNull
     public static ResizePolicy scaled() {
         return sScaled;
     }
@@ -157,6 +169,7 @@ public class ResizePolicy {
      * @param preserve whether the policy requires the aspect ratio to be preserved
      * @return a resize policy recording the constraints required by the parameters
      */
+    @NonNull
     public static ResizePolicy create(boolean top, boolean right, boolean bottom, boolean left,
             boolean preserve) {
         int mask = NONE;

@@ -16,10 +16,12 @@
 
 package com.android.tools.lint.client.api;
 
+import com.android.annotations.NonNull;
 import com.android.tools.lint.detector.api.Detector;
 import com.android.tools.lint.detector.api.Detector.XmlScanner;
 import com.android.tools.lint.detector.api.LintUtils;
 import com.android.tools.lint.detector.api.XmlContext;
+import com.google.common.annotations.Beta;
 
 import org.w3c.dom.Attr;
 import org.w3c.dom.Element;
@@ -49,7 +51,11 @@ import java.util.RandomAccess;
  * </ol>
  * It also notifies all the detectors before and after the document is processed
  * such that they can do pre- and post-processing.
+ * <p>
+ * <b>NOTE: This is not a public or final API; if you rely on this be prepared
+ * to adjust your code for the next tools release.</b>
  */
+@Beta
 class XmlVisitor {
     private final Map<String, List<Detector.XmlScanner>> mElementToCheck =
             new HashMap<String, List<Detector.XmlScanner>>();
@@ -68,7 +74,7 @@ class XmlVisitor {
     //<T extends List<Detector> & Detector.XmlScanner> XmlVisitor(IDomParser parser,
     //    T xmlDetectors) {
     // but it makes client code tricky and ugly.
-    XmlVisitor(IDomParser parser, List<? extends Detector> xmlDetectors) {
+    XmlVisitor(@NonNull IDomParser parser, @NonNull List<? extends Detector> xmlDetectors) {
         mParser = parser;
         mAllDetectors = xmlDetectors;
 
@@ -112,7 +118,7 @@ class XmlVisitor {
         }
     }
 
-    void visitFile(XmlContext context, File file) {
+    void visitFile(@NonNull XmlContext context,@NonNull  File file) {
         assert LintUtils.isXmlFile(file);
         context.parser = mParser;
 
@@ -155,7 +161,7 @@ class XmlVisitor {
         }
     }
 
-    private void visitElement(XmlContext context, Element element) {
+    private void visitElement(@NonNull XmlContext context, @NonNull Element element) {
         List<Detector.XmlScanner> elementChecks = mElementToCheck.get(element.getTagName());
         if (elementChecks != null) {
             assert elementChecks instanceof RandomAccess;
@@ -175,7 +181,11 @@ class XmlVisitor {
             NamedNodeMap attributes = element.getAttributes();
             for (int i = 0, n = attributes.getLength(); i < n; i++) {
                 Attr attribute = (Attr) attributes.item(i);
-                List<Detector.XmlScanner> list = mAttributeToCheck.get(attribute.getLocalName());
+                String name = attribute.getLocalName();
+                if (name == null) {
+                    name = attribute.getName();
+                }
+                List<Detector.XmlScanner> list = mAttributeToCheck.get(name);
                 if (list != null) {
                     for (int j = 0, max = list.size(); j < max; j++) {
                         Detector.XmlScanner check = list.get(j);

@@ -15,6 +15,7 @@
  */
 package com.android.ide.common.layout;
 
+import com.android.annotations.NonNull;
 import com.android.ide.common.api.INode;
 import com.android.ide.common.api.INodeHandler;
 
@@ -34,7 +35,8 @@ class PropertySettingNodeHandler implements INodeHandler {
         mValue = value;
     }
 
-    public void handle(INode node) {
+    @Override
+    public void handle(@NonNull INode node) {
         node.setAttribute(mNamespaceUri, mAttribute, mValue);
     }
 }

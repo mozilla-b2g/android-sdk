@@ -16,6 +16,8 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.gre;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.api.IAttributeInfo;
 import com.android.ide.common.api.INode;
 import com.android.ide.common.api.INodeHandler;
@@ -27,7 +29,7 @@ import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.AttributeDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.DescriptorsUtils;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.ViewElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.CanvasViewInfo;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.SimpleAttribute;
@@ -37,6 +39,7 @@ import com.android.ide.eclipse.adt.internal.editors.layout.uimodel.UiViewElement
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiAttributeNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiDocumentNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
+import com.android.ide.eclipse.adt.internal.project.SupportLibraryHelper;
 
 import org.eclipse.swt.graphics.Rectangle;
 import org.w3c.dom.NamedNodeMap;
@@ -84,21 +87,27 @@ public class NodeProxy implements INode {
         }
     }
 
-    public Rect getBounds() {
+    @Override
+    public @NonNull Rect getBounds() {
         return mBounds;
     }
 
-    public Margins getMargins() {
+    @Override
+    public @NonNull Margins getMargins() {
         ViewHierarchy viewHierarchy = mFactory.getCanvas().getViewHierarchy();
         CanvasViewInfo view = viewHierarchy.findViewInfoFor(this);
         if (view != null) {
-            return view.getMargins();
+            Margins margins = view.getMargins();
+            if (margins != null) {
+                return margins;
+            }
         }
 
         return NO_MARGINS;
     }
 
 
+    @Override
     public int getBaseline() {
         ViewHierarchy viewHierarchy = mFactory.getCanvas().getViewHierarchy();
         CanvasViewInfo view = viewHierarchy.findViewInfoFor(this);
@@ -128,20 +137,23 @@ public class NodeProxy implements INode {
         return mNode;
     }
 
-    public String getFqcn() {
+    @Override
+    public @NonNull String getFqcn() {
         if (mNode != null) {
             ElementDescriptor desc = mNode.getDescriptor();
             if (desc instanceof ViewElementDescriptor) {
                 return ((ViewElementDescriptor) desc).getFullClassName();
             }
         }
-        return null;
+
+        return "";
     }
 
 
     // ---- Hierarchy handling ----
 
 
+    @Override
     public INode getRoot() {
         if (mNode != null) {
             UiElementNode p = mNode.getUiRoot();
@@ -170,6 +182,7 @@ public class NodeProxy implements INode {
         return null;
     }
 
+    @Override
     public INode getParent() {
         if (mNode != null) {
             UiElementNode p = mNode.getUiParent();
@@ -181,10 +194,12 @@ public class NodeProxy implements INode {
         return null;
     }
 
-    public INode[] getChildren() {
+    @Override
+    public @NonNull INode[] getChildren() {
         if (mNode != null) {
-            ArrayList<INode> nodes = new ArrayList<INode>();
-            for (UiElementNode uiChild : mNode.getUiChildren()) {
+            List<UiElementNode> uiChildren = mNode.getUiChildren();
+            List<INode> nodes = new ArrayList<INode>(uiChildren.size());
+            for (UiElementNode uiChild : uiChildren) {
                 if (uiChild instanceof UiViewElementNode) {
                     nodes.add(mFactory.create((UiViewElementNode) uiChild));
                 }
@@ -199,14 +214,16 @@ public class NodeProxy implements INode {
 
     // ---- XML Editing ---
 
-    public void editXml(String undoName, final INodeHandler c) {
+    @Override
+    public void editXml(@NonNull String undoName, final @NonNull INodeHandler c) {
         final AndroidXmlEditor editor = mNode.getEditor();
 
-        if (editor instanceof LayoutEditor) {
+        if (editor != null) {
             // Create an undo edit XML wrapper, which takes a runnable
-            ((LayoutEditor) editor).wrapUndoEditXmlModel(
+            editor.wrapUndoEditXmlModel(
                     undoName,
                     new Runnable() {
+                        @Override
                         public void run() {
                             // Here editor.isEditXmlModelPending returns true and it
                             // is safe to edit the model using any method from INode.
@@ -226,15 +243,18 @@ public class NodeProxy implements INode {
         }
     }
 
-    public INode appendChild(String viewFqcn) {
+    @Override
+    public @NonNull INode appendChild(@NonNull String viewFqcn) {
         return insertOrAppend(viewFqcn, -1);
     }
 
-    public INode insertChildAt(String viewFqcn, int index) {
+    @Override
+    public @NonNull INode insertChildAt(@NonNull String viewFqcn, int index) {
         return insertOrAppend(viewFqcn, index);
     }
 
-    public void removeChild(INode node) {
+    @Override
+    public void removeChild(@NonNull INode node) {
         checkEditOK();
 
         ((NodeProxy) node).mNode.deleteXmlNode();
@@ -242,6 +262,13 @@ public class NodeProxy implements INode {
 
     private INode insertOrAppend(String viewFqcn, int index) {
         checkEditOK();
+
+        AndroidXmlEditor editor = mNode.getEditor();
+        if (editor != null) {
+            // Possibly replace the tag with a compatibility version if the
+            // minimum SDK requires it
+            viewFqcn = SupportLibraryHelper.getTagFor(editor.getProject(), viewFqcn);
+        }
 
         // Find the descriptor for this FQCN
         ViewElementDescriptor vd = getFqcnViewDescriptor(viewFqcn);
@@ -264,13 +291,12 @@ public class NodeProxy implements INode {
             }
         }
 
-        RulesEngine engine = null;
-        AndroidXmlEditor editor = mNode.getEditor();
-        if (editor instanceof LayoutEditor) {
-            engine = ((LayoutEditor)editor).getRulesEngine();
-        }
-
         // Set default attributes -- but only for new widgets (not when moving or copying)
+        RulesEngine engine = null;
+        LayoutEditorDelegate delegate = LayoutEditorDelegate.fromEditor(editor);
+        if (delegate != null) {
+            engine = delegate.getRulesEngine();
+        }
         if (engine == null || engine.getInsertType().isCreate()) {
             // TODO: This should probably use IViewRule#getDefaultAttributes() at some point
             DescriptorsUtils.setDefaultLayoutAttributes(uiNew, false /*updateLayout*/);
@@ -299,7 +325,11 @@ public class NodeProxy implements INode {
         return newNode;
     }
 
-    public boolean setAttribute(String uri, String name, String value) {
+    @Override
+    public boolean setAttribute(
+            @Nullable String uri,
+            @NonNull String name,
+            @Nullable String value) {
         checkEditOK();
         UiAttributeNode attr = mNode.setAttributeValue(name, uri, value, true /* override */);
 
@@ -323,7 +353,8 @@ public class NodeProxy implements INode {
         return attr != null;
     }
 
-    public String getStringAttr(String uri, String attrName) {
+    @Override
+    public String getStringAttr(@Nullable String uri, @NonNull String attrName) {
         UiElementNode uiNode = mNode;
 
         if (attrName == null) {
@@ -355,7 +386,8 @@ public class NodeProxy implements INode {
         return null;
     }
 
-    public IAttributeInfo getAttributeInfo(String uri, String attrName) {
+    @Override
+    public IAttributeInfo getAttributeInfo(@Nullable String uri, @NonNull String attrName) {
         UiElementNode uiNode = mNode;
 
         if (attrName == null) {
@@ -375,7 +407,8 @@ public class NodeProxy implements INode {
         return null;
     }
 
-    public IAttributeInfo[] getDeclaredAttributes() {
+    @Override
+    public @NonNull IAttributeInfo[] getDeclaredAttributes() {
 
         AttributeDescriptor[] descs = mNode.getAttributeDescriptors();
         int n = descs.length;
@@ -388,7 +421,8 @@ public class NodeProxy implements INode {
         return infos;
     }
 
-    public List<String> getAttributeSources() {
+    @Override
+    public @NonNull List<String> getAttributeSources() {
         ElementDescriptor descriptor = mNode.getDescriptor();
         if (descriptor instanceof ViewElementDescriptor) {
             return ((ViewElementDescriptor) descriptor).getAttributeSources();
@@ -397,7 +431,8 @@ public class NodeProxy implements INode {
         }
     }
 
-    public IAttribute[] getLiveAttributes() {
+    @Override
+    public @NonNull IAttribute[] getLiveAttributes() {
         UiElementNode uiNode = mNode;
 
         if (uiNode.getXmlNode() != null) {
@@ -420,7 +455,8 @@ public class NodeProxy implements INode {
                 }
             }
         }
-        return null;
+
+        return new IAttribute[0];
 
     }
 
@@ -438,9 +474,9 @@ public class NodeProxy implements INode {
      * isn't reloading, or we wouldn't be here editing XML for a layout rule.)
      */
     private ViewElementDescriptor getFqcnViewDescriptor(String fqcn) {
-        AndroidXmlEditor editor = mNode.getEditor();
-        if (editor instanceof LayoutEditor) {
-            return ((LayoutEditor) editor).getFqcnViewDescriptor(fqcn);
+        LayoutEditorDelegate delegate = LayoutEditorDelegate.fromEditor(mNode.getEditor());
+        if (delegate != null) {
+            return delegate.getFqcnViewDescriptor(fqcn);
         }
 
         return null;

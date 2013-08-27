@@ -16,14 +16,25 @@
 
 package com.android.sdklib.internal.repository;
 
+import com.android.annotations.NonNull;
 import com.android.sdklib.IAndroidTarget;
 import com.android.sdklib.ISdkLog;
 import com.android.sdklib.ISystemImage;
 import com.android.sdklib.SdkConstants;
 import com.android.sdklib.SdkManager;
 import com.android.sdklib.ISystemImage.LocationType;
-import com.android.sdklib.internal.repository.Archive.Arch;
-import com.android.sdklib.internal.repository.Archive.Os;
+import com.android.sdklib.internal.repository.archives.Archive.Arch;
+import com.android.sdklib.internal.repository.archives.Archive.Os;
+import com.android.sdklib.internal.repository.packages.AddonPackage;
+import com.android.sdklib.internal.repository.packages.DocPackage;
+import com.android.sdklib.internal.repository.packages.ExtraPackage;
+import com.android.sdklib.internal.repository.packages.Package;
+import com.android.sdklib.internal.repository.packages.PlatformPackage;
+import com.android.sdklib.internal.repository.packages.PlatformToolPackage;
+import com.android.sdklib.internal.repository.packages.SamplePackage;
+import com.android.sdklib.internal.repository.packages.SourcePackage;
+import com.android.sdklib.internal.repository.packages.SystemImagePackage;
+import com.android.sdklib.internal.repository.packages.ToolPackage;
 import com.android.util.Pair;
 
 import java.io.File;
@@ -41,6 +52,33 @@ import java.util.Properties;
 public class LocalSdkParser {
 
     private Package[] mPackages;
+
+    /** Parse all SDK folders. */
+    public static final int PARSE_ALL            = 0xFFFF;
+    /** Parse the SDK/tools folder. */
+    public static final int PARSE_TOOLS          = 0x0001;
+    /** Parse the SDK/platform-tools folder */
+    public static final int PARSE_PLATFORM_TOOLS = 0x0002;
+    /** Parse the SDK/docs folder. */
+    public static final int PARSE_DOCS           = 0x0004;
+    /**
+     * Equivalent to parsing the SDK/platforms folder but does so
+     * by using the <em>valid</em> targets loaded by the {@link SdkManager}.
+     * Parsing the platforms also parses the SDK/system-images folder.
+     */
+    public static final int PARSE_PLATFORMS      = 0x0010;
+    /**
+     * Equivalent to parsing the SDK/addons folder but does so
+     * by using the <em>valid</em> targets loaded by the {@link SdkManager}.
+     */
+    public static final int PARSE_ADDONS         = 0x0020;
+    /** Parse the SDK/samples folder.
+     * Note: this will not detect samples located in the SDK/extras packages. */
+    public static final int PARSE_SAMPLES        = 0x0100;
+    /** Parse the SDK/sources folder. */
+    public static final int PARSE_SOURCES        = 0x0200;
+    /** Parse the SDK/extras folder. */
+    public static final int PARSE_EXTRAS         = 0x0400;
 
     public LocalSdkParser() {
         // pass
@@ -69,115 +107,165 @@ public class LocalSdkParser {
      * <p/>
      * Store the packages internally. You can use {@link #getPackages()} to retrieve them
      * at any time later.
+     * <p/>
+     * Equivalent to calling {@code parseSdk(..., PARSE_ALL, ...); }
      *
      * @param osSdkRoot The path to the SDK folder, typically {@code sdkManager.getLocation()}.
      * @param sdkManager An existing SDK manager to list current platforms and addons.
      * @param monitor A monitor to track progress. Cannot be null.
      * @return The packages found. Can be retrieved later using {@link #getPackages()}.
      */
-    public Package[] parseSdk(
-            String osSdkRoot,
-            SdkManager sdkManager,
-            ITaskMonitor monitor) {
+    public @NonNull Package[] parseSdk(
+            @NonNull String osSdkRoot,
+            @NonNull SdkManager sdkManager,
+            @NonNull ITaskMonitor monitor) {
+        return parseSdk(osSdkRoot, sdkManager, PARSE_ALL, monitor);
+    }
+
+    /**
+     * Scan the give SDK to find all the packages already installed at this location.
+     * <p/>
+     * Store the packages internally. You can use {@link #getPackages()} to retrieve them
+     * at any time later.
+     *
+     * @param osSdkRoot The path to the SDK folder, typically {@code sdkManager.getLocation()}.
+     * @param sdkManager An existing SDK manager to list current platforms and addons.
+     * @param parseFilter Either {@link #PARSE_ALL} or an ORed combination of the other
+     *      {@code PARSE_} constants to indicate what should be parsed.
+     * @param monitor A monitor to track progress. Cannot be null.
+     * @return The packages found. Can be retrieved later using {@link #getPackages()}.
+     */
+    public @NonNull Package[] parseSdk(
+            @NonNull String osSdkRoot,
+            @NonNull SdkManager sdkManager,
+            int parseFilter,
+            @NonNull ITaskMonitor monitor) {
         ArrayList<Package> packages = new ArrayList<Package>();
         HashSet<File> visited = new HashSet<File>();
 
         monitor.setProgressMax(10);
 
-        File dir = new File(osSdkRoot, SdkConstants.FD_DOCS);
-        Package pkg = scanDoc(dir, monitor);
-        if (pkg != null) {
-            packages.add(pkg);
-            visited.add(dir);
-        }
-        monitor.incProgress(1);
+        File dir = null;
+        Package pkg = null;
 
-        dir = new File(osSdkRoot, SdkConstants.FD_TOOLS);
-        pkg = scanTools(dir, monitor);
-        if (pkg != null) {
-            packages.add(pkg);
-            visited.add(dir);
-        }
-        monitor.incProgress(1);
-
-        dir = new File(osSdkRoot, SdkConstants.FD_PLATFORM_TOOLS);
-        pkg = scanPlatformTools(dir, monitor);
-        if (pkg != null) {
-            packages.add(pkg);
-            visited.add(dir);
-        }
-        monitor.incProgress(1);
-
-        File samplesRoot = new File(osSdkRoot, SdkConstants.FD_SAMPLES);
-
-        // for platforms, add-ons and samples, rely on the SdkManager parser
-        for(IAndroidTarget target : sdkManager.getTargets()) {
-            Properties props = parseProperties(new File(target.getLocation(),
-                    SdkConstants.FN_SOURCE_PROP));
-
-            try {
-                if (target.isPlatform()) {
-                    pkg = PlatformPackage.create(target, props);
-
-                    if (samplesRoot.isDirectory()) {
-                        // Get the samples dir for a platform if it is located in the new
-                        // root /samples dir. We purposely ignore "old" samples that are
-                        // located under the platform dir.
-                        File samplesDir = new File(target.getPath(IAndroidTarget.SAMPLES));
-                        if (samplesDir.exists() && samplesDir.getParentFile().equals(samplesRoot)) {
-                            Properties samplesProps = parseProperties(
-                                    new File(samplesDir, SdkConstants.FN_SOURCE_PROP));
-                            if (samplesProps != null) {
-                                Package pkg2 = SamplePackage.create(target, samplesProps);
-                                packages.add(pkg2);
-                            }
-                            visited.add(samplesDir);
-                        }
-                    }
-                } else {
-                    pkg = AddonPackage.create(target, props);
-                }
-
-                for (ISystemImage systemImage : target.getSystemImages()) {
-                    if (systemImage.getLocationType() == LocationType.IN_SYSTEM_IMAGE) {
-                        File siDir = systemImage.getLocation();
-                        if (siDir.isDirectory()) {
-                            Properties siProps = parseProperties(
-                                    new File(siDir, SdkConstants.FN_SOURCE_PROP));
-                            Package pkg2 = new SystemImagePackage(
-                                    target.getVersion(),
-                                    0 /*revision*/,   // this will use the one from siProps if any
-                                    systemImage.getAbiType(),
-                                    siProps,
-                                    siDir.getAbsolutePath());
-                            packages.add(pkg2);
-                            visited.add(siDir);
-                        }
-                    }
-                }
-
-            } catch (Exception e) {
-                monitor.error(e, null);
-            }
-
+        if ((parseFilter & PARSE_DOCS) != 0) {
+            dir = new File(osSdkRoot, SdkConstants.FD_DOCS);
+            pkg = scanDoc(dir, monitor);
             if (pkg != null) {
                 packages.add(pkg);
-                visited.add(new File(target.getLocation()));
+                visited.add(dir);
             }
         }
         monitor.incProgress(1);
 
-        scanMissingSystemImages(sdkManager, visited, packages, monitor);
+        if ((parseFilter & PARSE_TOOLS) != 0) {
+            dir = new File(osSdkRoot, SdkConstants.FD_TOOLS);
+            pkg = scanTools(dir, monitor);
+            if (pkg != null) {
+                packages.add(pkg);
+                visited.add(dir);
+            }
+        }
         monitor.incProgress(1);
-        scanMissingAddons(sdkManager, visited, packages, monitor);
+
+        if ((parseFilter & PARSE_PLATFORM_TOOLS) != 0) {
+            dir = new File(osSdkRoot, SdkConstants.FD_PLATFORM_TOOLS);
+            pkg = scanPlatformTools(dir, monitor);
+            if (pkg != null) {
+                packages.add(pkg);
+                visited.add(dir);
+            }
+        }
         monitor.incProgress(1);
-        scanMissingSamples(sdkManager, visited, packages, monitor);
+
+        // for platforms, add-ons and samples, rely on the SdkManager parser
+        if ((parseFilter & (PARSE_ADDONS | PARSE_PLATFORMS)) != 0) {
+            File samplesRoot = new File(osSdkRoot, SdkConstants.FD_SAMPLES);
+
+            for(IAndroidTarget target : sdkManager.getTargets()) {
+                Properties props = parseProperties(new File(target.getLocation(),
+                        SdkConstants.FN_SOURCE_PROP));
+
+                try {
+                    pkg = null;
+                    if (target.isPlatform() && (parseFilter & PARSE_PLATFORMS) != 0) {
+                        pkg = PlatformPackage.create(target, props);
+
+                        if (samplesRoot.isDirectory()) {
+                            // Get the samples dir for a platform if it is located in the new
+                            // root /samples dir. We purposely ignore "old" samples that are
+                            // located under the platform dir.
+                            File samplesDir = new File(target.getPath(IAndroidTarget.SAMPLES));
+                            if (samplesDir.exists() &&
+                                    samplesDir.getParentFile().equals(samplesRoot)) {
+                                Properties samplesProps = parseProperties(
+                                        new File(samplesDir, SdkConstants.FN_SOURCE_PROP));
+                                if (samplesProps != null) {
+                                    Package pkg2 = SamplePackage.create(target, samplesProps);
+                                    packages.add(pkg2);
+                                }
+                                visited.add(samplesDir);
+                            }
+                        }
+                    } else if ((parseFilter & PARSE_ADDONS) != 0) {
+                        pkg = AddonPackage.create(target, props);
+                    }
+
+                    if (pkg != null) {
+                        for (ISystemImage systemImage : target.getSystemImages()) {
+                            if (systemImage.getLocationType() == LocationType.IN_SYSTEM_IMAGE) {
+                                File siDir = systemImage.getLocation();
+                                if (siDir.isDirectory()) {
+                                    Properties siProps = parseProperties(
+                                            new File(siDir, SdkConstants.FN_SOURCE_PROP));
+                                    Package pkg2 = new SystemImagePackage(
+                                            target.getVersion(),
+                                            0 /*rev*/,   // this will use the one from siProps
+                                            systemImage.getAbiType(),
+                                            siProps,
+                                            siDir.getAbsolutePath());
+                                    packages.add(pkg2);
+                                    visited.add(siDir);
+                                }
+                            }
+                        }
+                    }
+
+                } catch (Exception e) {
+                    monitor.error(e, null);
+                }
+
+                if (pkg != null) {
+                    packages.add(pkg);
+                    visited.add(new File(target.getLocation()));
+                }
+            }
+        }
         monitor.incProgress(1);
-        scanExtras(sdkManager, visited, packages, monitor);
+
+        if ((parseFilter & PARSE_PLATFORMS) != 0) {
+            scanMissingSystemImages(sdkManager, visited, packages, monitor);
+        }
         monitor.incProgress(1);
-        scanExtrasDirectory(osSdkRoot, visited, packages, monitor);
+        if ((parseFilter & PARSE_ADDONS) != 0) {
+            scanMissingAddons(sdkManager, visited, packages, monitor);
+        }
         monitor.incProgress(1);
-        scanSources(sdkManager, visited, packages, monitor);
+        if ((parseFilter & PARSE_SAMPLES) != 0) {
+            scanMissingSamples(sdkManager, visited, packages, monitor);
+        }
+        monitor.incProgress(1);
+        if ((parseFilter & PARSE_EXTRAS) != 0) {
+            scanExtras(sdkManager, visited, packages, monitor);
+        }
+        monitor.incProgress(1);
+        if ((parseFilter & PARSE_EXTRAS) != 0) {
+            scanExtrasDirectory(osSdkRoot, visited, packages, monitor);
+        }
+        monitor.incProgress(1);
+        if ((parseFilter & PARSE_SOURCES) != 0) {
+            scanSources(sdkManager, visited, packages, monitor);
+        }
         monitor.incProgress(1);
 
         Collections.sort(packages);
@@ -235,7 +323,7 @@ public class LocalSdkParser {
                                 dir.getName(),              //path
                                 0,                          //revision
                                 null,                       //license
-                                "Tools",                    //description
+                                null,                       //description
                                 null,                       //descUrl
                                 Os.getCurrentOs(),          //archiveOs
                                 Arch.getCurrentArch(),      //archiveArch
@@ -308,11 +396,16 @@ public class LocalSdkParser {
             if (dir.isDirectory() && !visited.contains(dir)) {
                 Pair<Map<String, String>, String> infos =
                     SdkManager.parseAddonProperties(dir, sdkManager.getTargets(), log);
+                Properties sourceProps =
+                    parseProperties(new File(dir, SdkConstants.FN_SOURCE_PROP));
 
-                Map<String, String> props = infos.getFirst();
+                Map<String, String> addonProps = infos.getFirst();
                 String error = infos.getSecond();
                 try {
-                    Package pkg = AddonPackage.createBroken(dir.getAbsolutePath(), props, error);
+                    Package pkg = AddonPackage.createBroken(dir.getAbsolutePath(),
+                                                            sourceProps,
+                                                            addonProps,
+                                                            error);
                     packages.add(pkg);
                     visited.add(dir);
                 } catch (Exception e) {

@@ -23,6 +23,7 @@ import static com.android.tools.lint.detector.api.LintConstants.ATTR_LABEL;
 import static com.android.tools.lint.detector.api.LintConstants.ATTR_PROMPT;
 import static com.android.tools.lint.detector.api.LintConstants.ATTR_TEXT;
 
+import com.android.annotations.NonNull;
 import com.android.tools.lint.detector.api.Category;
 import com.android.tools.lint.detector.api.Issue;
 import com.android.tools.lint.detector.api.LayoutDetector;
@@ -66,23 +67,23 @@ public class HardcodedValuesDetector extends LayoutDetector {
     }
 
     @Override
-    public Speed getSpeed() {
+    public @NonNull Speed getSpeed() {
         return Speed.FAST;
     }
 
     @Override
     public Collection<String> getApplicableAttributes() {
-        return Arrays.asList(new String[] {
+        return Arrays.asList(
                 ATTR_TEXT,
                 ATTR_CONTENT_DESCRIPTION,
                 ATTR_HINT,
                 ATTR_LABEL,
                 ATTR_PROMPT
-        });
+        );
     }
 
     @Override
-    public void visitAttribute(XmlContext context, Attr attribute) {
+    public void visitAttribute(@NonNull XmlContext context, @NonNull Attr attribute) {
         String value = attribute.getValue();
         if (value.length() > 0 && (value.charAt(0) != '@' && value.charAt(0) != '?')) {
             // Make sure this is really one of the android: attributes
@@ -90,7 +91,7 @@ public class HardcodedValuesDetector extends LayoutDetector {
                 return;
             }
 
-            context.report(ISSUE, context.getLocation(attribute),
+            context.report(ISSUE, attribute, context.getLocation(attribute),
                     String.format("[I18N] Hardcoded string \"%1$s\", should use @string resource",
                             value), null);
         }

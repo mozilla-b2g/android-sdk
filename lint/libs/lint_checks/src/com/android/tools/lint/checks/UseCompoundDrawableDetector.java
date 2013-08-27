@@ -17,11 +17,14 @@
 package com.android.tools.lint.checks;
 
 import static com.android.tools.lint.detector.api.LintConstants.ANDROID_URI;
+import static com.android.tools.lint.detector.api.LintConstants.ATTR_BACKGROUND;
 import static com.android.tools.lint.detector.api.LintConstants.ATTR_LAYOUT_WEIGHT;
+import static com.android.tools.lint.detector.api.LintConstants.ATTR_SCALE_TYPE;
 import static com.android.tools.lint.detector.api.LintConstants.IMAGE_VIEW;
 import static com.android.tools.lint.detector.api.LintConstants.LINEAR_LAYOUT;
 import static com.android.tools.lint.detector.api.LintConstants.TEXT_VIEW;
 
+import com.android.annotations.NonNull;
 import com.android.tools.lint.detector.api.Category;
 import com.android.tools.lint.detector.api.Issue;
 import com.android.tools.lint.detector.api.LayoutDetector;
@@ -33,8 +36,8 @@ import com.android.tools.lint.detector.api.XmlContext;
 
 import org.w3c.dom.Element;
 
-import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -48,7 +51,9 @@ public class UseCompoundDrawableDetector extends LayoutDetector {
             "Checks whether the current node can be replaced by a TextView using compound drawables.",
             // TODO: OFFER MORE HELP!
             "A LinearLayout which contains an ImageView and a TextView can be more efficiently " +
-            "handled as a compound drawable",
+            "handled as a compound drawable.\n" +
+            "\n" +
+            "There's a lint quickfix to perform this conversion in the Eclipse plugin.",
             Category.PERFORMANCE,
             6,
             Severity.WARNING,
@@ -60,19 +65,19 @@ public class UseCompoundDrawableDetector extends LayoutDetector {
     }
 
     @Override
-    public Speed getSpeed() {
+    public @NonNull Speed getSpeed() {
         return Speed.FAST;
     }
 
     @Override
     public Collection<String> getApplicableElements() {
-        return Arrays.asList(new String[] {
+        return Collections.singletonList(
                 LINEAR_LAYOUT
-        });
+        );
     }
 
     @Override
-    public void visitElement(XmlContext context, Element element) {
+    public void visitElement(@NonNull XmlContext context, @NonNull Element element) {
         int childCount = LintUtils.getChildCount(element);
         if (childCount == 2) {
             List<Element> children = LintUtils.getChildren(element);
@@ -84,7 +89,22 @@ public class UseCompoundDrawableDetector extends LayoutDetector {
                 ((second.getTagName().equals(IMAGE_VIEW) &&
                         first.getTagName().equals(TEXT_VIEW) &&
                         !second.hasAttributeNS(ANDROID_URI, ATTR_LAYOUT_WEIGHT)))) {
-                context.report(ISSUE, context.getLocation(element),
+                // If the layout has a background, ignore since it would disappear from
+                // the TextView
+                if (element.hasAttributeNS(ANDROID_URI, ATTR_BACKGROUND)) {
+                    return;
+                }
+
+                // Certain scale types cannot be done with compound drawables
+                String scaleType = first.getTagName().equals(IMAGE_VIEW)
+                        ? first.getAttributeNS(ANDROID_URI, ATTR_SCALE_TYPE)
+                        : second.getAttributeNS(ANDROID_URI, ATTR_SCALE_TYPE);
+                if (scaleType != null && !scaleType.isEmpty()) {
+                    // For now, ignore if any scale type is set
+                    return;
+                }
+
+                context.report(ISSUE, element, context.getLocation(element),
                         "This tag and its children can be replaced by one <TextView/> and " +
                                 "a compound drawable", null);
             }

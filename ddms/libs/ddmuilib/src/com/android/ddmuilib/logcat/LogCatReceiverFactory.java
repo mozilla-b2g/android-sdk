@@ -37,20 +37,49 @@ public class LogCatReceiverFactory {
     /** Private constructor: cannot instantiate. */
     private LogCatReceiverFactory() {
         AndroidDebugBridge.addDeviceChangeListener(new IDeviceChangeListener() {
-            public void deviceDisconnected(IDevice device) {
-                removeReceiverFor(device);
+            @Override
+            public void deviceDisconnected(final IDevice device) {
+                // The deviceDisconnected() is called from DDMS code that holds
+                // multiple locks regarding list of clients, etc.
+                // It so happens that #newReceiver() below adds a clientChangeListener
+                // which requires those locks as well. So if we call
+                // #removeReceiverFor from a DDMS/Monitor thread, we could end up
+                // in a deadlock. As a result, we spawn a separate thread that
+                // doesn't hold any of the DDMS locks to remove the receiver.
+                Thread t = new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            removeReceiverFor(device);                        }
+                    }, "Remove logcat receiver for " + device.getSerialNumber());
+                t.start();
             }
 
+            @Override
             public void deviceConnected(IDevice device) {
             }
 
+            @Override
             public void deviceChanged(IDevice device, int changeMask) {
             }
         });
     }
 
+    /**
+     * Remove existing logcat receivers. This method should not be called from a DDMS thread
+     * context that might be holding locks. Doing so could result in a deadlock with the following
+     * two threads locked up: <ul>
+     * <li> {@link #removeReceiverFor(IDevice)} waiting to lock {@link LogCatReceiverFactory},
+     * while holding a DDMS monitor internal lock. </li>
+     * <li> {@link #newReceiver(IDevice, IPreferenceStore)} holding {@link LogCatReceiverFactory}
+     * while attempting to obtain a DDMS monitor lock. </li>
+     * </ul>
+     */
     private synchronized void removeReceiverFor(IDevice device) {
-        mReceiverCache.remove(device.getSerialNumber());
+        LogCatReceiver r = mReceiverCache.get(device.getSerialNumber());
+        if (r != null) {
+            r.stop();
+            mReceiverCache.remove(device.getSerialNumber());
+        }
     }
 
     public synchronized LogCatReceiver newReceiver(IDevice device, IPreferenceStore prefs) {

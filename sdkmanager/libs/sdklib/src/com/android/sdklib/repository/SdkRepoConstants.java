@@ -17,7 +17,7 @@
 package com.android.sdklib.repository;
 
 
-import com.android.sdklib.internal.repository.SdkSource;
+import com.android.sdklib.internal.repository.sources.SdkSource;
 
 import java.io.InputStream;
 
@@ -26,25 +26,43 @@ import java.io.InputStream;
  */
 public class SdkRepoConstants extends RepoConstants {
 
-    /** The latest version of the sdk-repository XML Schema.
-     *  Valid version numbers are between 1 and this number, included. */
-    public static final int NS_LATEST_VERSION = 5;
+    /**
+     * The latest version of the sdk-repository XML Schema.
+     * Valid version numbers are between 1 and this number, included.
+     */
+    public static final int NS_LATEST_VERSION = 7;
 
-    /** The URL of the official Google sdk-repository site.
-     *  The URL ends with a /, allowing easy concatenation. */
+    /**
+     * The min version of the sdk-repository XML Schema we'll try to load.
+     * When looking for a repository-N.xml on the server, we'll check from
+     * {@link #NS_LATEST_VERSION} down to this revision.
+     * We only introduced the "repository-N.xml" pattern start with revision
+     * 5, so we know that <em>our</em> server will never contain a repository
+     * XML with a schema version lower than this one.
+     */
+    public static final int NS_SERVER_MIN_VERSION = 5;
+
+    /**
+     * The URL of the official Google sdk-repository site.
+     * The URL ends with a /, allowing easy concatenation.
+     * */
     public static final String URL_GOOGLE_SDK_SITE =
         "https://dl-ssl.google.com/android/repository/";                        //$NON-NLS-1$
 
-    /** The default name looked for by {@link SdkSource} when trying to load an
-     * sdk-repository XML if the URL doesn't match an existing resource. */
+    /**
+     * The default name looked for by {@link SdkSource} when trying to load an
+     * sdk-repository XML if the URL doesn't match an existing resource.
+     */
     public static final String URL_DEFAULT_FILENAME = "repository.xml";         //$NON-NLS-1$
 
-    /** The pattern name looked by {@link SdkSource} when trying to load
-     * the latest sdk-repository XML that is specific to the current XSD
-     * schema revision.
+    /**
+     * The pattern name looked by {@link SdkSource} when trying to load
+     * an sdk-repository XML that is specific to a given XSD revision.
+     * <p/>
+     * This must be used with {@link String#format(String, Object...)} with
+     * one integer parameter between 1 and {@link #NS_LATEST_VERSION}.
      */
-    public static final String URL_DEFAULT_FILENAME2 =
-        String.format("repository-%d.xml", NS_LATEST_VERSION);                  //$NON-NLS-1$
+    public static final String URL_FILENAME_PATTERN = "repository-%1$d.xml";      //$NON-NLS-1$
 
     /** The base of our sdk-repository XML namespace. */
     private static final String NS_BASE =
@@ -62,6 +80,23 @@ public class SdkRepoConstants extends RepoConstants {
     /** The root sdk-repository element */
     public static final String NODE_SDK_REPOSITORY = "sdk-repository";        //$NON-NLS-1$
 
+    /* The major revision for tool and platform-tool package
+     * (the full revision number is revision.minor.micro + preview#.)
+     * Mandatory int > 0. 0 when missing, which should not happen in
+     * a valid document. */
+    public static final String NODE_MAJOR_REV       = "major";                //$NON-NLS-1$
+    /* The minor revision for tool and platform-tool package
+     * (the full revision number is revision.minor.micro + preview#.)
+     * Optional int >= 0. Implied to be 0 when missing. */
+    public static final String NODE_MINOR_REV       = "minor";                //$NON-NLS-1$
+    /* The micro revision for tool and platform-tool package
+     * (the full revision number is revision.minor.micro + preview#.)
+     * Optional int >= 0. Implied to be 0 when missing. */
+    public static final String NODE_MICRO_REV       = "micro";                //$NON-NLS-1$
+    /* The preview revision for tool and platform-tool package.
+     * Int > 0, only present for "preview / release candidate" packages. */
+    public static final String NODE_PREVIEW         = "preview";              //$NON-NLS-1$
+
     /** A platform package. */
     public static final String NODE_PLATFORM        = "platform";             //$NON-NLS-1$
     /** A tool package. */
@@ -72,15 +107,8 @@ public class SdkRepoConstants extends RepoConstants {
     public static final String NODE_DOC             = "doc";                  //$NON-NLS-1$
     /** A sample package. */
     public static final String NODE_SAMPLE          = "sample";               //$NON-NLS-1$
-    /** A system-image package. */
-    public static final String NODE_SYSTEM_IMAGE    = "system-image";         //$NON-NLS-1$
     /** A source package. */
     public static final String NODE_SOURCE          = "source";               //$NON-NLS-1$
-
-    /* An included-ABI element for a system-image package. */
-    public static final String NODE_ABI_INCLUDED    = "included-abi";         //$NON-NLS-1$
-    /* An ABI element for a system-image package. */
-    public static final String NODE_ABI             = "abi";                  //$NON-NLS-1$
 
 
     /**
@@ -94,7 +122,6 @@ public class SdkRepoConstants extends RepoConstants {
         NODE_PLATFORM_TOOL,
         NODE_DOC,
         NODE_SAMPLE,
-        NODE_EXTRA,
         NODE_SOURCE,
     };
 

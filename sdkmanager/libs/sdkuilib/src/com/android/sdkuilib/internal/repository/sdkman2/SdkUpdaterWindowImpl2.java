@@ -20,13 +20,14 @@ package com.android.sdkuilib.internal.repository.sdkman2;
 import com.android.sdklib.ISdkLog;
 import com.android.sdklib.SdkConstants;
 import com.android.sdklib.internal.repository.ITaskFactory;
+import com.android.sdklib.internal.repository.sources.SdkSourceProperties;
+import com.android.sdkuilib.internal.repository.AboutDialog;
 import com.android.sdkuilib.internal.repository.ISdkUpdaterWindow;
-import com.android.sdkuilib.internal.repository.ISettingsPage;
 import com.android.sdkuilib.internal.repository.MenuBarWrapper;
 import com.android.sdkuilib.internal.repository.SettingsController;
+import com.android.sdkuilib.internal.repository.SettingsController.Settings;
+import com.android.sdkuilib.internal.repository.SettingsDialog;
 import com.android.sdkuilib.internal.repository.UpdaterData;
-import com.android.sdkuilib.internal.repository.UpdaterPage;
-import com.android.sdkuilib.internal.repository.UpdaterPage.Purpose;
 import com.android.sdkuilib.internal.repository.icons.ImageFactory;
 import com.android.sdkuilib.internal.repository.sdkman2.PackagesPage.MenuAction;
 import com.android.sdkuilib.internal.tasks.ILogUiProvider;
@@ -37,10 +38,6 @@ import com.android.sdkuilib.internal.widgets.ToggleButton;
 import com.android.sdkuilib.repository.AvdManagerWindow.AvdInvocationContext;
 import com.android.sdkuilib.repository.ISdkChangeListener;
 import com.android.sdkuilib.repository.SdkUpdaterWindow.SdkInvocationContext;
-import com.android.sdkuilib.ui.GridDataBuilder;
-import com.android.sdkuilib.ui.GridLayoutBuilder;
-import com.android.sdkuilib.ui.SwtBaseDialog;
-import com.android.util.Pair;
 
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.events.DisposeEvent;
@@ -51,7 +48,6 @@ import org.eclipse.swt.graphics.Image;
 import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
-import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Event;
@@ -62,8 +58,6 @@ import org.eclipse.swt.widgets.MenuItem;
 import org.eclipse.swt.widgets.ProgressBar;
 import org.eclipse.swt.widgets.Shell;
 
-import java.util.ArrayList;
-
 /**
  * This is the private implementation of the UpdateWindow
  * for the second version of the SDK Manager.
@@ -72,18 +66,13 @@ import java.util.ArrayList;
  */
 public class SdkUpdaterWindowImpl2 implements ISdkUpdaterWindow {
 
-    private static final String APP_NAME = "Android SDK Manager";
+    public static final String APP_NAME = "Android SDK Manager";
     private static final String SIZE_POS_PREFIX = "sdkman2"; //$NON-NLS-1$
 
     private final Shell mParentShell;
     private final SdkInvocationContext mContext;
     /** Internal data shared between the window and its pages. */
     private final UpdaterData mUpdaterData;
-    /** A list of extra pages to instantiate. Each entry is an object array with 2 elements:
-     *  the string title and the Composite class to instantiate to create the page. */
-    private ArrayList<Pair<Class<? extends UpdaterPage>, Purpose>> mExtraPages;
-    /** Sets whether the auto-update wizard will be shown when opening the window. */
-    private boolean mRequestAutoUpdate;
 
     // --- UI members ---
 
@@ -139,6 +128,7 @@ public class SdkUpdaterWindowImpl2 implements ISdkUpdaterWindow {
      * Opens the window.
      * @wbp.parser.entryPoint
      */
+    @Override
     public void open() {
         if (mParentShell == null) {
             Display.setAppName(APP_NAME); //$hide$ (hide from SWT designer)
@@ -161,6 +151,9 @@ public class SdkUpdaterWindowImpl2 implements ISdkUpdaterWindow {
             }
         }
 
+        SdkSourceProperties p = new SdkSourceProperties();
+        p.save();
+
         dispose();  //$hide$
     }
 
@@ -174,6 +167,7 @@ public class SdkUpdaterWindowImpl2 implements ISdkUpdaterWindow {
 
         mShell = new Shell(mParentShell, style);
         mShell.addDisposeListener(new DisposeListener() {
+            @Override
             public void widgetDisposed(DisposeEvent e) {
                 ShellSizeAndPos.saveSizeAndPos(mShell, SIZE_POS_PREFIX);
                 onAndroidSdkUpdaterDispose();    //$hide$ (hide from SWT designer)
@@ -195,7 +189,6 @@ public class SdkUpdaterWindowImpl2 implements ISdkUpdaterWindow {
     }
 
     private void createContents() {
-
         mPkgPage = new PackagesPage(mShell, SWT.NONE, mUpdaterData, mContext);
         mPkgPage.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true, 2, 1));
 
@@ -219,6 +212,7 @@ public class SdkUpdaterWindowImpl2 implements ISdkUpdaterWindow {
                 "Click to abort the current task",
                 "");                                //$NON-NLS-1$ nothing to abort
         mButtonStop.addListener(SWT.Selection, new Listener() {
+            @Override
             public void handleEvent(Event event) {
                 onStopSelected();
             }
@@ -230,6 +224,7 @@ public class SdkUpdaterWindowImpl2 implements ISdkUpdaterWindow {
                 "Click to show the log window",     // tooltip for state hidden=>shown
                 "Click to hide the log window");    // tooltip for state shown=>hidden
         mButtonShowLog.addListener(SWT.Selection, new Listener() {
+            @Override
             public void handleEvent(Event event) {
                 onToggleLogWindow();
             }
@@ -325,23 +320,34 @@ public class SdkUpdaterWindowImpl2 implements ISdkUpdaterWindow {
         mPkgPage.registerMenuAction(
                 MenuAction.SHOW_ADDON_SITES, manageSources);
 
-        if (mContext == SdkInvocationContext.STANDALONE) {
-            // Note: when invoked from an IDE, the SwtMenuBar library isn't
-            // available. This means this source should not directly import
-            // any of SwtMenuBar classes, otherwise the whole window class
-            // would fail to load. The MenuBarWrapper below helps to make
-            // that indirection.
-
+        if (mContext == SdkInvocationContext.STANDALONE || mContext == SdkInvocationContext.IDE) {
             try {
                 new MenuBarWrapper(APP_NAME, menuTools) {
                     @Override
                     public void onPreferencesMenuSelected() {
-                        showRegisteredPage(Purpose.SETTINGS);
+
+                        // capture a copy of the initial settings
+                        Settings settings1 = new Settings(mSettingsController.getSettings());
+
+                        // open the dialog and wait for it to close
+                        SettingsDialog sd = new SettingsDialog(mShell, mUpdaterData);
+                        sd.open();
+
+                        // get the new settings
+                        Settings settings2 = mSettingsController.getSettings();
+
+                        // We need to reload the package list if the http mode or the preview
+                        // modes have changed.
+                        if (settings1.getForceHttp() != settings2.getForceHttp() ||
+                                settings1.getEnablePreviews() != settings2.getEnablePreviews()) {
+                            mPkgPage.onSdkReload();
+                        }
                     }
 
                     @Override
                     public void onAboutMenuSelected() {
-                        showRegisteredPage(Purpose.ABOUT_BOX);
+                        AboutDialog ad = new AboutDialog(mShell, mUpdaterData);
+                        ad.open();
                     }
 
                     @Override
@@ -351,7 +357,7 @@ public class SdkUpdaterWindowImpl2 implements ISdkUpdaterWindow {
                         }
                     }
                 };
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 mUpdaterData.getSdkLog().error(e, "Failed to setup menu bar");
                 e.printStackTrace();
             }
@@ -388,49 +394,10 @@ public class SdkUpdaterWindowImpl2 implements ISdkUpdaterWindow {
 
     // --- Public API -----------
 
-
-    /**
-     * Registers an extra page for the updater window.
-     * <p/>
-     * Pages must derive from {@link Composite} and implement a constructor that takes
-     * a single parent {@link Composite} argument.
-     * <p/>
-     * All pages must be registered before the call to {@link #open()}.
-     *
-     * @param pageClass The {@link Composite}-derived class that will implement the page.
-     * @param purpose The purpose of this page, e.g. an about box, settings page or generic.
-     */
-    @SuppressWarnings("unchecked")
-    public void registerPage(Class<? extends UpdaterPage> pageClass,
-            Purpose purpose) {
-        if (mExtraPages == null) {
-            mExtraPages = new ArrayList<Pair<Class<? extends UpdaterPage>, Purpose>>();
-        }
-        Pair<?, Purpose> value = Pair.of(pageClass, purpose);
-        mExtraPages.add((Pair<Class<? extends UpdaterPage>, Purpose>) value);
-    }
-
-    /**
-     * Indicate the initial page that should be selected when the window opens.
-     * This must be called before the call to {@link #open()}.
-     * If null or if the page class is not found, the first page will be selected.
-     */
-    public void setInitialPage(Class<? extends Composite> pageClass) {
-        // Unused in this case. This window display only one page.
-    }
-
-    /**
-     * Sets whether the auto-update wizard will be shown when opening the window.
-     * <p/>
-     * This must be called before the call to {@link #open()}.
-     */
-    public void setRequestAutoUpdate(boolean requestAutoUpdate) {
-        mRequestAutoUpdate = requestAutoUpdate;
-    }
-
     /**
      * Adds a new listener to be notified when a change is made to the content of the SDK.
      */
+    @Override
     public void addListener(ISdkChangeListener listener) {
         mUpdaterData.addListeners(listener);
     }
@@ -439,6 +406,7 @@ public class SdkUpdaterWindowImpl2 implements ISdkUpdaterWindow {
      * Removes a new listener to be notified anymore when a change is made to the content of
      * the SDK.
      */
+    @Override
     public void removeListener(ISdkChangeListener listener) {
         mUpdaterData.removeListener(listener);
     }
@@ -469,18 +437,22 @@ public class SdkUpdaterWindowImpl2 implements ISdkUpdaterWindow {
         // and filters errors to make sure the window is visible when
         // an error is logged.
         ILogUiProvider logAdapter = new ILogUiProvider() {
+            @Override
             public void setDescription(String description) {
                 mLogWindow.setDescription(description);
             }
 
+            @Override
             public void log(String log) {
                 mLogWindow.log(log);
             }
 
+            @Override
             public void logVerbose(String log) {
                 mLogWindow.logVerbose(log);
             }
 
+            @Override
             public void logError(String log) {
                 mLogWindow.logError(log);
 
@@ -489,16 +461,19 @@ public class SdkUpdaterWindowImpl2 implements ISdkUpdaterWindow {
                 // on a sub-thread but that doesn't seem cross-platform safe. We shouldn't
                 // have a lot of error logging, so this should be acceptable. If not, we could
                 // cache the visibility state.
-                mShell.getDisplay().syncExec(new Runnable() {
-                    public void run() {
-                        if (!mLogWindow.isVisible()) {
-                            // Don't toggle the window visibility directly.
-                            // Instead use the same action as the log-toggle button
-                            // so that the button's state be kept in sync.
-                            onToggleLogWindow();
+                if (mShell != null && !mShell.isDisposed()) {
+                    mShell.getDisplay().syncExec(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (!mLogWindow.isVisible()) {
+                                // Don't toggle the window visibility directly.
+                                // Instead use the same action as the log-toggle button
+                                // so that the button's state be kept in sync.
+                                onToggleLogWindow();
+                            }
                         }
-                    }
-                });
+                    });
+                }
             }
         };
 
@@ -517,17 +492,8 @@ public class SdkUpdaterWindowImpl2 implements ISdkUpdaterWindow {
 
         mUpdaterData.broadcastOnSdkLoaded();
 
-        if (mRequestAutoUpdate) {
-            mUpdaterData.updateOrInstallAll_WithGUI(
-                    null /*selectedArchives*/,
-                    false /* includeObsoletes */,
-                    mContext == SdkInvocationContext.IDE ?
-                            UpdaterData.TOOLS_MSG_UPDATED_FROM_ADT :
-                                UpdaterData.TOOLS_MSG_UPDATED_FROM_SDKMAN);
-        }
-
         // Tell the one page its the selected one
-        mPkgPage.onPageSelected();
+        mPkgPage.performFirstLoad();
 
         return true;
     }
@@ -592,32 +558,14 @@ public class SdkUpdaterWindowImpl2 implements ISdkUpdaterWindow {
 
     private void onToggleLogWindow() {
         // toggle visibility
-        mLogWindow.setVisible(!mLogWindow.isVisible());
-        mButtonShowLog.setState(mLogWindow.isVisible() ? 1 : 0);
+        if (!mButtonShowLog.isDisposed()) {
+            mLogWindow.setVisible(!mLogWindow.isVisible());
+            mButtonShowLog.setState(mLogWindow.isVisible() ? 1 : 0);
+        }
     }
 
     private void onStopSelected() {
         // TODO
-    }
-
-    private void showRegisteredPage(Purpose purpose) {
-        if (mExtraPages == null) {
-            return;
-        }
-
-        Class<? extends UpdaterPage> clazz = null;
-
-        for (Pair<Class<? extends UpdaterPage>, Purpose> extraPage : mExtraPages) {
-            if (extraPage.getSecond() == purpose) {
-                clazz = extraPage.getFirst();
-                break;
-            }
-        }
-
-        if (clazz != null) {
-            PageDialog d = new PageDialog(mShell, clazz, purpose == Purpose.SETTINGS);
-            d.open();
-        }
     }
 
     private void onAvdManager() {
@@ -627,11 +575,7 @@ public class SdkUpdaterWindowImpl2 implements ISdkUpdaterWindow {
             AvdManagerWindowImpl1 win = new AvdManagerWindowImpl1(
                     mShell,
                     mUpdaterData,
-                    AvdInvocationContext.SDK_MANAGER);
-
-            for (Pair<Class<? extends UpdaterPage>, Purpose> page : mExtraPages) {
-                win.registerPage(page.getFirst(), page.getSecond());
-            }
+                    AvdInvocationContext.DIALOG);
 
             win.open();
         } catch (Exception e) {
@@ -643,77 +587,4 @@ public class SdkUpdaterWindowImpl2 implements ISdkUpdaterWindow {
 
     // End of hiding from SWT Designer
     //$hide<<$
-
-    // -----
-
-    /**
-     * Dialog used to display either the About page or the Settings (aka Options) page
-     * with a "close" button.
-     */
-    private class PageDialog extends SwtBaseDialog {
-
-        private final Class<? extends UpdaterPage> mPageClass;
-        private final boolean mIsSettingsPage;
-
-        protected PageDialog(
-                Shell parentShell,
-                Class<? extends UpdaterPage> pageClass,
-                boolean isSettingsPage) {
-            super(parentShell, SWT.APPLICATION_MODAL, null /*title*/);
-            mPageClass = pageClass;
-            mIsSettingsPage = isSettingsPage;
-        }
-
-        @Override
-        protected void createContents() {
-            Shell shell = getShell();
-            setWindowImage(shell);
-
-            GridLayoutBuilder.create(shell).columns(2);
-
-            UpdaterPage content = UpdaterPage.newInstance(
-                    mPageClass,
-                    shell,
-                    SWT.NONE,
-                    mUpdaterData.getSdkLog());
-            GridDataBuilder.create(content).fill().grab().hSpan(2);
-            if (content.getLayout() instanceof GridLayout) {
-                GridLayout gl = (GridLayout) content.getLayout();
-                gl.marginHeight = gl.marginWidth = 0;
-            }
-
-            if (mIsSettingsPage && content instanceof ISettingsPage) {
-                mSettingsController.setSettingsPage((ISettingsPage) content);
-            }
-
-            getShell().setText(
-                    String.format("%1$s - %2$s", APP_NAME, content.getPageTitle()));
-
-            Label filler = new Label(shell, SWT.NONE);
-            GridDataBuilder.create(filler).hFill().hGrab();
-
-            Button close = new Button(shell, SWT.PUSH);
-            close.setText("Close");
-            GridDataBuilder.create(close);
-            close.addSelectionListener(new SelectionAdapter() {
-                @Override
-                public void widgetSelected(SelectionEvent e) {
-                    close();
-                }
-            });
-        }
-
-        @Override
-        protected void postCreate() {
-            // pass
-        }
-
-        @Override
-        protected void close() {
-            if (mIsSettingsPage) {
-                mSettingsController.setSettingsPage(null);
-            }
-            super.close();
-        }
-    }
 }

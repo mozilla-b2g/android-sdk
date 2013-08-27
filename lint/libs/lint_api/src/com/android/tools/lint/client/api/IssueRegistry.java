@@ -16,11 +16,14 @@
 
 package com.android.tools.lint.client.api;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.tools.lint.detector.api.Category;
 import com.android.tools.lint.detector.api.Detector;
 import com.android.tools.lint.detector.api.Issue;
 import com.android.tools.lint.detector.api.Scope;
 import com.android.tools.lint.detector.api.Severity;
+import com.google.common.annotations.Beta;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -31,7 +34,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Registry which provides a list of checks to be performed on an Android project */
+/** Registry which provides a list of checks to be performed on an Android project
+ * <p>
+ * <b>NOTE: This is not a public or final API; if you rely on this be prepared
+ * to adjust your code for the next tools release.</b>
+ */
+@Beta
 public abstract class IssueRegistry {
     private static List<Category> sCategories;
     private static Map<String, Issue> sIdToIssue;
@@ -40,14 +48,37 @@ public abstract class IssueRegistry {
      * Issue reported by lint (not a specific detector) when it cannot even
      * parse an XML file prior to analysis
      */
+    @NonNull
     public static final Issue PARSER_ERROR = Issue.create(
-            "XmlParserError", //$NON-NLS-1$
-            "Finds XML files that contain fatal parser errors",
-            "XML files must be parsable.",
+            "ParserError", //$NON-NLS-1$
+            "Finds files that contain fatal parser errors",
+            "Lint will ignore any files that contain fatal parsing errors. These may contain " +
+            "other errors, or contain code which affects issues in other files.",
             Category.CORRECTNESS,
             10,
             Severity.ERROR,
-            null,
+            Detector.class,
+            Scope.RESOURCE_FILE_SCOPE);
+
+    /**
+     * Issue reported by lint for various other issues which prevents lint from
+     * running normally when it's not necessarily an error in the user's code base.
+     */
+    @NonNull
+    public static final Issue LINT_ERROR = Issue.create(
+            "LintError", //$NON-NLS-1$
+            "Isues related to running lint itself, such as failure to read files, etc",
+            "This issue type represents a problem running lint itself. Examples include " +
+            "failure to find bytecode for source files (which means certain detectors " +
+            "could not be run), parsing errors in lint configuration files, etc." +
+            "\n" +
+            "These errors are not errors in your own code, but they are shown to make " +
+            "it clear that some checks were not completed.",
+
+            Category.LINT,
+            10,
+            Severity.ERROR,
+            Detector.class,
             Scope.RESOURCE_FILE_SCOPE);
 
     /**
@@ -56,6 +87,7 @@ public abstract class IssueRegistry {
      * @return the list of issues to be checked (including those that may be
      *         disabled!)
      */
+    @NonNull
     public abstract List<Issue> getIssues();
 
     /**
@@ -72,11 +104,12 @@ public abstract class IssueRegistry {
      *            the applicable detectors for that scope
      * @return a list of new detector instances
      */
+    @NonNull
     final List<? extends Detector> createDetectors(
-            LintClient client,
-            Configuration configuration,
-            EnumSet<Scope> scope,
-            Map<Scope, List<Detector>> scopeToDetectors) {
+            @NonNull LintClient client,
+            @NonNull Configuration configuration,
+            @NonNull EnumSet<Scope> scope,
+            @Nullable Map<Scope, List<Detector>> scopeToDetectors) {
         List<Issue> issues = getIssues();
         Set<Class<? extends Detector>> detectorClasses = new HashSet<Class<? extends Detector>>();
         Map<Class<? extends Detector>, EnumSet<Scope>> detectorToScope =
@@ -91,7 +124,7 @@ public abstract class IssueRegistry {
                 }
 
                 // Determine if the scope matches
-                if (!scope.containsAll(issueScope)) {
+                if (!issue.isAdequate(scope)) {
                     continue;
                 }
 
@@ -145,7 +178,7 @@ public abstract class IssueRegistry {
      * @param id the id to be checked
      * @return true if the given id is valid
      */
-    public final boolean isIssueId(String id) {
+    public final boolean isIssueId(@NonNull String id) {
         return getIssue(id) != null;
     }
 
@@ -155,7 +188,7 @@ public abstract class IssueRegistry {
      * @param name the category name to be checked
      * @return true if the given string is a valid category
      */
-    public final boolean isCategoryName(String name) {
+    public final boolean isCategoryName(@NonNull String name) {
         for (Category c : getCategories()) {
             if (c.getName().equals(name) || c.getFullName().equals(name)) {
                 return true;
@@ -170,6 +203,7 @@ public abstract class IssueRegistry {
      *
      * @return an iterator for all the categories, never null
      */
+    @NonNull
     public List<Category> getCategories() {
         if (sCategories == null) {
             final Set<Category> categories = new HashSet<Category>();
@@ -190,13 +224,17 @@ public abstract class IssueRegistry {
      * @param id the id to be checked
      * @return the corresponding issue, or null
      */
-    public final Issue getIssue(String id) {
+    @Nullable
+    public final Issue getIssue(@NonNull String id) {
         if (sIdToIssue == null) {
             List<Issue> issues = getIssues();
             sIdToIssue = new HashMap<String, Issue>(issues.size());
             for (Issue issue : issues) {
                 sIdToIssue.put(issue.getId(), issue);
             }
+
+            sIdToIssue.put(PARSER_ERROR.getId(), PARSER_ERROR);
+            sIdToIssue.put(LINT_ERROR.getId(), LINT_ERROR);
         }
         return sIdToIssue.get(id);
     }

@@ -17,10 +17,10 @@
 package com.android.ant;
 
 import com.android.sdklib.build.ApkBuilder;
+import com.android.sdklib.build.ApkBuilder.FileEntry;
 import com.android.sdklib.build.ApkCreationException;
 import com.android.sdklib.build.DuplicateFileException;
 import com.android.sdklib.build.SealedApkException;
-import com.android.sdklib.build.ApkBuilder.FileEntry;
 
 import org.apache.tools.ant.BuildException;
 import org.apache.tools.ant.types.Path;
@@ -269,6 +269,7 @@ public class ApkBuilderTask extends SingleDependencyTask {
                     File folder = new File(path);
                     if (folder.isDirectory()) {
                         String[] filenames = folder.list(new FilenameFilter() {
+                            @Override
                             public boolean accept(File dir, String name) {
                                 return PATTERN_JAR_EXT.matcher(name).matches();
                             }
@@ -341,35 +342,25 @@ public class ApkBuilderTask extends SingleDependencyTask {
 
             // add the content of the zip files.
             for (File f : zipFiles) {
+                if (mVerbose) {
+                    System.out.println("Zip Input: " + f.getAbsolutePath());
+                }
                 apkBuilder.addZipFile(f);
             }
 
             // now go through the list of file to directly add the to the list.
             for (File f : sourceFolderList) {
-                apkBuilder.addSourceFolder(f);
-            }
-
-            // now go through the list of jar folders.
-            for (Path pathList : mJarfolderList) {
-                for (String path : pathList.list()) {
-                    // it's ok if top level folders are missing
-                    File folder = new File(path);
-                    if (folder.isDirectory()) {
-                        String[] filenames = folder.list(new FilenameFilter() {
-                            public boolean accept(File dir, String name) {
-                                return PATTERN_JAR_EXT.matcher(name).matches();
-                            }
-                        });
-
-                        for (String filename : filenames) {
-                            apkBuilder.addResourcesFromJar(new File(folder, filename));
-                        }
-                    }
+                if (mVerbose) {
+                    System.out.println("Source Folder Input: " + f.getAbsolutePath());
                 }
+                apkBuilder.addSourceFolder(f);
             }
 
             // now go through the list of jar files.
             for (File f : jarFileList) {
+                if (mVerbose) {
+                    System.out.println("Jar Input: " + f.getAbsolutePath());
+                }
                 apkBuilder.addResourcesFromJar(f);
             }
 

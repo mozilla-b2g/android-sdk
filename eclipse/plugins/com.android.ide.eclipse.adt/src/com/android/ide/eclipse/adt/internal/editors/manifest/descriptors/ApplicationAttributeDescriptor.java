@@ -37,17 +37,17 @@ public class ApplicationAttributeDescriptor extends TextAttributeDescriptor {
      * Used by {@link DescriptorsUtils} to create instances of this descriptor.
      */
     public static final ITextAttributeCreator CREATOR = new ITextAttributeCreator() {
+        @Override
         public TextAttributeDescriptor create(String xmlLocalName,
-                String uiName, String nsUri, String tooltip,
-                IAttributeInfo attrInfo) {
+                String nsUri, IAttributeInfo attrInfo) {
             return new ApplicationAttributeDescriptor(
-                    xmlLocalName, uiName, nsUri, tooltip, attrInfo);
+                    xmlLocalName, nsUri, attrInfo);
         }
     };
 
-    public ApplicationAttributeDescriptor(String xmlLocalName, String uiName,
-            String nsUri, String tooltip, IAttributeInfo attrInfo) {
-        super(xmlLocalName, uiName, nsUri, tooltip, attrInfo);
+    private ApplicationAttributeDescriptor(String xmlLocalName, String nsUri,
+            IAttributeInfo attrInfo) {
+        super(xmlLocalName, nsUri, attrInfo);
     }
 
     /**

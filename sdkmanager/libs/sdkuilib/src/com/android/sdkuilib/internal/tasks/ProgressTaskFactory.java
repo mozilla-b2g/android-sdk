@@ -34,15 +34,17 @@ public final class ProgressTaskFactory implements ITaskFactory {
         mShell = shell;
     }
 
+    @Override
     public void start(String title, ITask task) {
         start(title, null /*parentMonitor*/, task);
     }
 
+    @Override
     public void start(String title, ITaskMonitor parentMonitor, ITask task) {
 
         if (parentMonitor == null) {
-            new ProgressTask(mShell, title, task);
-
+            ProgressTask p = new ProgressTask(mShell, title);
+            p.start(task);
         } else {
             // Use all the reminder of the parent monitor.
             if (parentMonitor.getProgressMax() == 0) {

@@ -33,7 +33,7 @@ import com.android.ide.common.resources.ResourceResolver;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.DocumentDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.PaletteMetadataDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.ViewMetadataRepository;
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.ViewMetadataRepository.RenderMode;
@@ -206,7 +206,7 @@ public class PreviewIconFactory {
         File imageDir = getImageDir(true);
 
         GraphicalEditorPart editor = mPalette.getEditor();
-        LayoutEditor layoutEditor = editor.getLayoutEditor();
+        LayoutEditorDelegate layoutEditorDelegate = editor.getEditorDelegate();
         LayoutLibrary layoutLibrary = editor.getLayoutLibrary();
         Integer overrideBgColor = null;
         if (layoutLibrary != null) {
@@ -229,7 +229,7 @@ public class PreviewIconFactory {
         }
 
         // Construct UI model from XML
-        AndroidTargetData data = layoutEditor.getTargetData();
+        AndroidTargetData data = layoutEditorDelegate.getEditor().getTargetData();
         DocumentDescriptor documentDescriptor;
         if (data == null) {
             documentDescriptor = new DocumentDescriptor("temp", null/*children*/);//$NON-NLS-1$
@@ -237,7 +237,7 @@ public class PreviewIconFactory {
             documentDescriptor = data.getLayoutDescriptors().getDescriptor();
         }
         UiDocumentNode model = (UiDocumentNode) documentDescriptor.createUiNode();
-        model.setEditor(layoutEditor);
+        model.setEditor(layoutEditorDelegate.getEditor());
         model.setUnknownDescriptorProvider(editor.getModel().getUnknownDescriptorProvider());
 
         Element documentElement = document.getDocumentElement();
@@ -362,6 +362,8 @@ public class PreviewIconFactory {
                 session.dispose();
             }
         }
+
+        mPalette.getEditor().recomputeLayout();
 
         return true;
     }
@@ -514,7 +516,7 @@ public class PreviewIconFactory {
             if (themeName.startsWith(themeNamePrefix)) {
                 themeName = themeName.substring(themeNamePrefix.length());
             }
-            String dirName = String.format("palette-preview-r16-%s-%s-%s", cleanup(targetName),
+            String dirName = String.format("palette-preview-r16b-%s-%s-%s", cleanup(targetName),
                     cleanup(themeName), cleanup(mPalette.getCurrentDevice()));
             IPath dirPath = pluginState.append(dirName);
 

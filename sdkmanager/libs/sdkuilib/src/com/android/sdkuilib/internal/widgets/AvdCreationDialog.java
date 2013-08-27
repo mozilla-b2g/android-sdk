@@ -23,10 +23,14 @@ import com.android.sdklib.ISdkLog;
 import com.android.sdklib.ISystemImage;
 import com.android.sdklib.SdkConstants;
 import com.android.sdklib.SdkManager;
+import com.android.sdklib.devices.Abi;
+import com.android.sdklib.devices.Device;
+import com.android.sdklib.devices.DeviceManager;
+import com.android.sdklib.devices.Hardware;
 import com.android.sdklib.internal.avd.AvdInfo;
 import com.android.sdklib.internal.avd.AvdManager;
-import com.android.sdklib.internal.avd.HardwareProperties;
 import com.android.sdklib.internal.avd.AvdManager.AvdConflict;
+import com.android.sdklib.internal.avd.HardwareProperties;
 import com.android.sdklib.internal.avd.HardwareProperties.HardwareProperty;
 import com.android.sdklib.internal.project.ProjectProperties;
 import com.android.sdkuilib.internal.repository.icons.ImageFactory;
@@ -74,9 +78,11 @@ import org.eclipse.swt.widgets.Text;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 import java.util.Map.Entry;
+import java.util.Set;
+import java.util.TreeMap;
 import java.util.regex.Matcher;
 
 /**
@@ -99,6 +105,8 @@ final class AvdCreationDialog extends GridDialog {
     private final ArrayList<String> mEditedProperties = new ArrayList<String>();
     private final ImageFactory mImageFactory;
     private final ISdkLog mSdkLog;
+    private final DeviceManager mDeviceManager;
+    private final List<Device> mDeviceList = new ArrayList<Device>();
     /**
      * The original AvdInfo if we're editing an existing AVD.
      * Null when we're creating a new AVD.
@@ -110,6 +118,8 @@ final class AvdCreationDialog extends GridDialog {
 
     private Combo mAbiTypeCombo;
     private String mAbiType;
+
+    private Combo mDeviceCombo;
 
     private Button mSdCardSizeRadio;
     private Text mSdCardSize;
@@ -141,6 +151,7 @@ final class AvdCreationDialog extends GridDialog {
      * {@link VerifyListener} for {@link Text} widgets that should only contains numbers.
      */
     private final VerifyListener mDigitVerifier = new VerifyListener() {
+        @Override
         public void verifyText(VerifyEvent event) {
             int count = event.text.length();
             for (int i = 0 ; i < count ; i++) {
@@ -159,6 +170,7 @@ final class AvdCreationDialog extends GridDialog {
      * When editing an existing AVD, it's OK for the name to match the existing AVD.
      */
     private class CreateNameModifyListener implements ModifyListener {
+        @Override
         public void modifyText(ModifyEvent e) {
             String name = mAvdName.getText().trim();
             if (mEditAvdInfo == null || !name.equals(mEditAvdInfo.getName())) {
@@ -193,6 +205,7 @@ final class AvdCreationDialog extends GridDialog {
      * {@link ModifyListener} used for live-validation of the fields content.
      */
     private class ValidateListener extends SelectionAdapter implements ModifyListener {
+        @Override
         public void modifyText(ModifyEvent e) {
             validatePage();
         }
@@ -227,6 +240,9 @@ final class AvdCreationDialog extends GridDialog {
         mEditAvdInfo = editAvdInfo;
 
         File hardwareDefs = null;
+        mDeviceManager = new DeviceManager(log);
+        mDeviceList.addAll(mDeviceManager.getUserDevices());
+        mDeviceList.addAll(mDeviceManager.getDefaultDevices());
 
         SdkManager sdkMan = avdManager.getSdkManager();
         if (sdkMan != null) {
@@ -234,6 +250,7 @@ final class AvdCreationDialog extends GridDialog {
             if (sdkPath != null) {
                 hardwareDefs = new File (sdkPath + File.separator +
                         SdkConstants.OS_SDK_TOOLS_LIB_FOLDER, SdkConstants.FN_HARDWARE_INI);
+                mDeviceList.addAll(mDeviceManager.getVendorDevices(sdkPath));
             }
         }
 
@@ -300,8 +317,30 @@ final class AvdCreationDialog extends GridDialog {
                 super.widgetSelected(e);
                 reloadSkinCombo();
                 reloadAbiTypeCombo();
+                reloadDeviceCombo();
                 validatePage();
             }
+        });
+
+        // Device Selection
+        label = new Label(parent, SWT.NONE);
+        label.setText("Device:");
+        tooltip = "The device to base the AVD on. This is an optional setting and will merely " +
+                "prefill the settings so they match the selected device as closely as possible.";
+        label.setToolTipText(tooltip);
+        mDeviceCombo = new Combo(parent, SWT.READ_ONLY | SWT.DROP_DOWN);
+        mDeviceCombo.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
+        mDeviceCombo.setToolTipText(tooltip);
+        mDeviceCombo.setEnabled(false);
+        mDeviceCombo.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                super.widgetSelected(e);
+                prefillWithDeviceConfig();
+                validatePage();
+            }
+
+
         });
 
         //ABI group
@@ -534,6 +573,7 @@ final class AvdCreationDialog extends GridDialog {
         mStatusLabel.setText(" \n "); //$NON-NLS-1$
 
         reloadTargetCombo();
+        reloadDeviceCombo();
     }
 
     /**
@@ -553,6 +593,7 @@ final class AvdCreationDialog extends GridDialog {
         // -- Table viewer
         mHardwareViewer = new TableViewer(hardwareTable);
         mHardwareViewer.addSelectionChangedListener(new ISelectionChangedListener() {
+            @Override
             public void selectionChanged(SelectionChangedEvent event) {
                 // it's a single selection mode, we can just access the selection index
                 // from the table directly.
@@ -562,14 +603,17 @@ final class AvdCreationDialog extends GridDialog {
 
         // only a content provider. Use viewers per column below (for editing support)
         mHardwareViewer.setContentProvider(new IStructuredContentProvider() {
+            @Override
             public void inputChanged(Viewer viewer, Object oldInput, Object newInput) {
                 // we can just ignore this. we just use mProperties directly.
             }
 
+            @Override
             public Object[] getElements(Object arg0) {
                 return mProperties.keySet().toArray();
             }
 
+            @Override
             public void dispose() {
                 // pass
             }
@@ -612,6 +656,7 @@ final class AvdCreationDialog extends GridDialog {
             protected void setValue(Object element, Object value) {
                 String hardwareName = (String)element;
                 HardwareProperty property = mHardwareMap.get(hardwareName);
+                int index;
                 switch (property.getType()) {
                     case INTEGER:
                         mProperties.put((String)element, (String)value);
@@ -622,8 +667,17 @@ final class AvdCreationDialog extends GridDialog {
                         }
                         break;
                     case BOOLEAN:
-                        int index = (Integer)value;
+                        index = (Integer)value;
                         mProperties.put((String)element, HardwareProperties.BOOLEAN_VALUES[index]);
+                        break;
+                    case STRING_ENUM:
+                    case INTEGER_ENUM:
+                        // For a combo, value is the index of the enum to use.
+                        index = (Integer)value;
+                        String[] values = property.getEnum();
+                        if (values != null && values.length > index) {
+                            mProperties.put((String)element, values[index]);
+                        }
                         break;
                 }
                 mHardwareViewer.refresh(element);
@@ -641,6 +695,17 @@ final class AvdCreationDialog extends GridDialog {
                         return value;
                     case BOOLEAN:
                         return HardwareProperties.getBooleanValueIndex(value);
+                    case STRING_ENUM:
+                    case INTEGER_ENUM:
+                        // For a combo, we need to return the index of the value in the enum
+                        String[] values = property.getEnum();
+                        if (values != null) {
+                            for (int i = 0; i < values.length; i++) {
+                                if (values[i].equals(value)) {
+                                    return i;
+                                }
+                            }
+                        }
                 }
 
                 return null;
@@ -660,6 +725,14 @@ final class AvdCreationDialog extends GridDialog {
                         return new ComboBoxCellEditor(hardwareTable,
                                 HardwareProperties.BOOLEAN_VALUES,
                                 SWT.READ_ONLY | SWT.DROP_DOWN);
+                    case STRING_ENUM:
+                    case INTEGER_ENUM:
+                        String[] values = property.getEnum();
+                        if (values != null && values.length > 0) {
+                            return new ComboBoxCellEditor(hardwareTable,
+                                    values,
+                                    SWT.READ_ONLY | SWT.DROP_DOWN);
+                        }
                 }
                 return null;
             }
@@ -691,6 +764,23 @@ final class AvdCreationDialog extends GridDialog {
 
         mAvdName.setText(mEditAvdInfo.getName());
 
+        Map<String, String> props = mEditAvdInfo.getProperties();
+
+        if (props != null) {
+            // Try to match it to a device
+
+            // The device has to be set before everything else because
+            // selecting a device will modify other options
+            for (int i = 0; i < mDeviceList.size(); i++){
+                Device d = mDeviceList.get(i);
+                if(d.getManufacturer().equals(props.get(AvdManager.AVD_INI_DEVICE_MANUFACTURER))
+                        && d.getName().equals(props.get(AvdManager.AVD_INI_DEVICE_NAME))) {
+                    mDeviceCombo.select(i);
+                    break;
+                }
+            }
+        }
+
         IAndroidTarget target = mEditAvdInfo.getTarget();
         if (target != null && !mCurrentTargets.isEmpty()) {
             // Try to select the target in the target combo.
@@ -703,6 +793,7 @@ final class AvdCreationDialog extends GridDialog {
                 if (target.equals(mCurrentTargets.get(mTargetCombo.getItem(i)))) {
                     mTargetCombo.select(i);
                     reloadAbiTypeCombo();
+                    reloadDeviceCombo();
                     reloadSkinCombo();
                     break;
                 }
@@ -724,8 +815,8 @@ final class AvdCreationDialog extends GridDialog {
             }
         }
 
-        Map<String, String> props = mEditAvdInfo.getProperties();
         if (props != null) {
+
             // First try the skin name and if it doesn't work fallback on the skin path
             nextSkin: for (int s = 0; s < 2; s++) {
                 String skin = props.get(s == 0 ? AvdManager.AVD_INI_SKIN_NAME
@@ -812,8 +903,45 @@ final class AvdCreationDialog extends GridDialog {
         mProperties.remove(AvdManager.AVD_INI_SNAPSHOT_PRESENT);
         mProperties.remove(AvdManager.AVD_INI_IMAGES_1);
         mProperties.remove(AvdManager.AVD_INI_IMAGES_2);
+        mProperties.remove(AvdManager.AVD_INI_DEVICE_MANUFACTURER);
+        mProperties.remove(AvdManager.AVD_INI_DEVICE_NAME);
 
         mHardwareViewer.refresh();
+    }
+
+    // Sets all of the other options based on the device currently selected in mDeviceCombo
+    private void prefillWithDeviceConfig() {
+        Device d = getSelectedDevice();
+        if (d != null) {
+            Hardware hw = d.getDefaultHardware();
+
+            // Try setting the CPU/ABI
+            if (mAbiTypeCombo.isEnabled()) {
+                Set<Abi> abis = hw.getSupportedAbis();
+                // This is O(n*m), but the two lists should be sufficiently small.
+                for (Abi abi : abis) {
+                    for (int i = 0; i < mAbiTypeCombo.getItemCount(); i++) {
+                        if (mAbiTypeCombo.getItem(i)
+                                .equals(AvdInfo.getPrettyAbiType(abi.toString()))){
+                            mAbiTypeCombo.select(i);
+                        }
+                    }
+                }
+            }
+
+            // Set the screen resolution
+            mSkinListRadio.setSelection(false);
+            mSkinSizeRadio.setSelection(true);
+            mSkinCombo.setEnabled(false);
+            mSkinSizeWidth.setEnabled(true);
+            mSkinSizeWidth.setText(Integer.toString(hw.getScreen().getXDimension()));
+            mSkinSizeHeight.setEnabled(true);
+            mSkinSizeHeight.setText(Integer.toString(hw.getScreen().getYDimension()));
+
+            mProperties.putAll(DeviceManager.getHardwareProperties(d));
+            mHardwareViewer.refresh();
+
+        }
     }
 
     @Override
@@ -859,6 +987,8 @@ final class AvdCreationDialog extends GridDialog {
         }
     }
 
+
+
     private void reloadTargetCombo() {
         String selected = null;
         int index = mTargetCombo.getSelectionIndex();
@@ -902,6 +1032,26 @@ final class AvdCreationDialog extends GridDialog {
         }
 
         reloadSkinCombo();
+    }
+
+
+    private void reloadDeviceCombo() {
+        Device selectedDevice = getSelectedDevice();
+
+        mDeviceCombo.removeAll();
+        for (Device d : mDeviceList) {
+            mDeviceCombo.add(d.getManufacturer() + " " + d.getName());
+        }
+
+        // Try to select the previously selected device if it still exists
+        if (selectedDevice != null) {
+            int index = mDeviceList.indexOf(selectedDevice);
+            if (index >= 0) {
+                mDeviceCombo.select(index);
+            }
+        }
+
+        mDeviceCombo.setEnabled(mTargetCombo.getSelectionIndex() >= 0);
     }
 
     private void reloadSkinCombo() {
@@ -1241,18 +1391,26 @@ final class AvdCreationDialog extends GridDialog {
      */
     private boolean createAvd() {
         String avdName = mAvdName.getText().trim();
-        int targetIndex = mTargetCombo.getSelectionIndex();
+        int index = mTargetCombo.getSelectionIndex();
 
         // quick check on the name and the target selection
-        if (avdName.length() == 0 || targetIndex < 0) {
+        if (avdName.length() == 0 || index < 0) {
             return false;
         }
 
         // resolve the target.
-        String targetName = mTargetCombo.getItem(targetIndex);
+        String targetName = mTargetCombo.getItem(index);
         IAndroidTarget target = mCurrentTargets.get(targetName);
         if (target == null) {
             return false;
+        }
+
+        index = mDeviceCombo.getSelectionIndex();
+        if (index >= 0 && index < mDeviceList.size()) {
+            Device d = mDeviceList.get(index);
+            // Set the properties so it gets saved to the avd's ini
+            mProperties.put(AvdManager.AVD_INI_DEVICE_MANUFACTURER, d.getManufacturer());
+            mProperties.put(AvdManager.AVD_INI_DEVICE_NAME, d.getName());
         }
 
         // get the abi type
@@ -1348,6 +1506,10 @@ final class AvdCreationDialog extends GridDialog {
 
         success = avdInfo != null;
 
+        // Remove the device name and manufacturer properties so they don't show up in the hardware list
+        mProperties.remove(AvdManager.AVD_INI_DEVICE_MANUFACTURER);
+        mProperties.remove(AvdManager.AVD_INI_DEVICE_NAME);
+
         if (log instanceof MessageBoxLog) {
             ((MessageBoxLog) log).displayResult(success);
         }
@@ -1378,6 +1540,15 @@ final class AvdCreationDialog extends GridDialog {
         }
 
         return new ISystemImage[0];
+    }
+
+    private Device getSelectedDevice() {
+        int targetIndex = mDeviceCombo.getSelectionIndex();
+        if (targetIndex >= 0 && mDeviceList.size() > targetIndex){
+            return mDeviceList.get(targetIndex);
+        } else {
+            return null;
+        }
     }
 
     // End of hiding from SWT Designer

@@ -15,9 +15,10 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
+import static com.android.util.XmlUtils.ANDROID_URI;
 
+import com.android.annotations.NonNull;
 import com.android.ide.common.api.INode;
 import com.android.ide.common.api.RuleAction;
 import com.android.ide.common.api.RuleAction.Choices;
@@ -25,20 +26,24 @@ import com.android.ide.common.api.RuleAction.Separator;
 import com.android.ide.common.api.RuleAction.Toggle;
 import com.android.ide.common.layout.BaseViewRule;
 import com.android.ide.eclipse.adt.internal.editors.IconFactory;
+import com.android.ide.eclipse.adt.internal.editors.common.CommonXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.layout.configuration.ConfigurationComposite;
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.NodeProxy;
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.RulesEngine;
 import com.android.ide.eclipse.adt.internal.lint.EclipseLintClient;
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
 import com.android.sdkuilib.internal.widgets.ResolutionChooserDialog;
+import com.google.common.base.Strings;
 
 import org.eclipse.core.resources.IFile;
+import org.eclipse.core.resources.IMarker;
 import org.eclipse.jface.window.Window;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.events.SelectionAdapter;
 import org.eclipse.swt.events.SelectionEvent;
 import org.eclipse.swt.graphics.Image;
 import org.eclipse.swt.graphics.Point;
+import org.eclipse.swt.graphics.Rectangle;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
@@ -72,6 +77,7 @@ public class LayoutActionBar extends Composite {
     private ToolItem mZoomInButton;
     private ToolItem mZoomFitButton;
     private ToolItem mLintButton;
+    private List<RuleAction> mPrevActions;
 
     /**
      * Creates a new {@link LayoutActionBar} and adds it to the given parent.
@@ -87,10 +93,10 @@ public class LayoutActionBar extends Composite {
         GridLayout layout = new GridLayout(3, false);
         setLayout(layout);
 
-        mLayoutToolBar = new ToolBar(this, SWT.FLAT | SWT.RIGHT | SWT.HORIZONTAL);
-        mLayoutToolBar.setLayoutData(new GridData(SWT.BEGINNING, SWT.BEGINNING, true, false));
+        mLayoutToolBar = new ToolBar(this, /*SWT.WRAP |*/ SWT.FLAT | SWT.RIGHT | SWT.HORIZONTAL);
+        mLayoutToolBar.setLayoutData(new GridData(SWT.FILL, SWT.BEGINNING, true, false));
         mZoomToolBar = createZoomControls();
-        mZoomToolBar.setLayoutData(new GridData(SWT.END, SWT.BEGINNING, true, false));
+        mZoomToolBar.setLayoutData(new GridData(SWT.END, SWT.BEGINNING, false, false));
         mLintToolBar = createLintControls();
 
         GridData lintData = new GridData(SWT.END, SWT.BEGINNING, false, false);
@@ -98,14 +104,14 @@ public class LayoutActionBar extends Composite {
         mLintToolBar.setLayoutData(lintData);
     }
 
+    @Override
+    public void dispose() {
+        super.dispose();
+        mPrevActions = null;
+    }
+
     /** Updates the layout contents based on the current selection */
     void updateSelection() {
-        // Get rid of any previous children
-        for (ToolItem c : mLayoutToolBar.getItems()) {
-            c.dispose();
-        }
-        mLayoutToolBar.pack();
-
         NodeProxy parent = null;
         LayoutCanvas canvas = mEditor.getCanvasControl();
         SelectionManager selectionManager = canvas.getSelectionManager();
@@ -167,10 +173,93 @@ public class LayoutActionBar extends Composite {
             }
         }
 
-        addActions(actions, index, label);
+        if (!updateActions(actions)) {
+            updateToolbar(actions, index, label);
+        }
+        mPrevActions = actions;
+    }
 
+    /** Update the toolbar widgets */
+    private void updateToolbar(final List<RuleAction> actions, final int labelIndex,
+            final String label) {
+        if (mLayoutToolBar == null || mLayoutToolBar.isDisposed()) {
+            return;
+        }
+        for (ToolItem c : mLayoutToolBar.getItems()) {
+            c.dispose();
+        }
+        mLayoutToolBar.pack();
+        addActions(actions, labelIndex, label);
         mLayoutToolBar.pack();
         mLayoutToolBar.layout();
+    }
+
+    /**
+     * Attempts to update the existing toolbar actions, if the action list is
+     * similar to the current list. Returns false if this cannot be done and the
+     * contents must be replaced.
+     */
+    private boolean updateActions(@NonNull List<RuleAction> actions) {
+        List<RuleAction> before = mPrevActions;
+        List<RuleAction> after = actions;
+
+        if (before == null) {
+            return false;
+        }
+
+        if (!before.equals(after) || after.size() > mLayoutToolBar.getItemCount()) {
+            return false;
+        }
+
+        int actionIndex = 0;
+        for (int i = 0, max = mLayoutToolBar.getItemCount(); i < max; i++) {
+            ToolItem item = mLayoutToolBar.getItem(i);
+            int style = item.getStyle();
+            Object data = item.getData();
+            if (data != null) {
+                // One action can result in multiple toolbar items (e.g. a choice action
+                // can result in multiple radio buttons), so we've have to replace all of
+                // them with the corresponding new action
+                RuleAction prevAction = before.get(actionIndex);
+                while (prevAction != data) {
+                    actionIndex++;
+                    if (actionIndex == before.size()) {
+                        return false;
+                    }
+                    prevAction = before.get(actionIndex);
+                    if (prevAction == data) {
+                        break;
+                    } else if (!(prevAction instanceof RuleAction.Separator)) {
+                        return false;
+                    }
+                }
+                RuleAction newAction = after.get(actionIndex);
+                assert newAction.equals(prevAction); // Maybe I can do this lazily instead?
+
+                // Update action binding to the new action
+                item.setData(newAction);
+
+                // Sync button states: the checked state is not considered part of
+                // RuleAction equality
+                if ((style & SWT.CHECK) != 0) {
+                    assert newAction instanceof Toggle;
+                    Toggle toggle = (Toggle) newAction;
+                    item.setSelection(toggle.isChecked());
+                } else if ((style & SWT.RADIO) != 0) {
+                    assert newAction instanceof Choices;
+                    Choices choices = (Choices) newAction;
+                    String current = choices.getCurrent();
+                    String id = (String) item.getData(ATTR_ID);
+                    boolean selected = Strings.nullToEmpty(current).equals(id);
+                    item.setSelection(selected);
+                }
+            } else {
+                // Must be a separator, or a label (which we insert for nested widgets)
+                assert (style & SWT.SEPARATOR) != 0 || !item.getText().isEmpty() : item;
+            }
+        }
+
+        return true;
     }
 
     private void addActions(List<RuleAction> actions, int labelIndex, String label) {
@@ -226,7 +315,7 @@ public class LayoutActionBar extends Composite {
         }
     }
 
-    private void addToggle(final Toggle toggle) {
+    private void addToggle(Toggle toggle) {
         final ToolItem button = new ToolItem(mLayoutToolBar, SWT.CHECK);
 
         URL iconUrl = toggle.getIconUrl();
@@ -237,10 +326,12 @@ public class LayoutActionBar extends Composite {
         } else {
             button.setText(title);
         }
+        button.setData(toggle);
 
         button.addSelectionListener(new SelectionAdapter() {
             @Override
             public void widgetSelected(SelectionEvent e) {
+                Toggle toggle = (Toggle) button.getData();
                 toggle.getCallback().action(toggle, getSelectedNodes(),
                         toggle.getId(), button.getSelection());
                 updateSelection();
@@ -263,7 +354,7 @@ public class LayoutActionBar extends Composite {
     }
 
 
-    private void addPlainAction(final RuleAction menuAction) {
+    private void addPlainAction(RuleAction menuAction) {
         final ToolItem button = new ToolItem(mLayoutToolBar, SWT.PUSH);
 
         URL iconUrl = menuAction.getIconUrl();
@@ -274,10 +365,12 @@ public class LayoutActionBar extends Composite {
         } else {
             button.setText(title);
         }
+        button.setData(menuAction);
 
         button.addSelectionListener(new SelectionAdapter() {
             @Override
             public void widgetSelected(SelectionEvent e) {
+                RuleAction menuAction = (RuleAction) button.getData();
                 menuAction.getCallback().action(menuAction, getSelectedNodes(), menuAction.getId(),
                         false);
                 updateSelection();
@@ -285,7 +378,7 @@ public class LayoutActionBar extends Composite {
         });
     }
 
-    private void addRadio(final RuleAction.Choices choices) {
+    private void addRadio(RuleAction.Choices choices) {
         List<URL> icons = choices.getIconUrls();
         List<String> titles = choices.getTitles();
         List<String> ids = choices.getIds();
@@ -301,10 +394,13 @@ public class LayoutActionBar extends Composite {
             final ToolItem item = new ToolItem(mLayoutToolBar, SWT.RADIO);
             item.setToolTipText(title);
             item.setImage(IconFactory.getInstance().getIcon(iconUrl));
+            item.setData(choices);
+            item.setData(ATTR_ID, id);
             item.addSelectionListener(new SelectionAdapter() {
                 @Override
                 public void widgetSelected(SelectionEvent e) {
                     if (item.getSelection()) {
+                        RuleAction.Choices choices = (Choices) item.getData();
                         choices.getCallback().action(choices, getSelectedNodes(), id, null);
                         updateSelection();
                     }
@@ -317,7 +413,7 @@ public class LayoutActionBar extends Composite {
         }
     }
 
-    private void addDropdown(final RuleAction.Choices choices) {
+    private void addDropdown(RuleAction.Choices choices) {
         final ToolItem combo = new ToolItem(mLayoutToolBar, SWT.DROP_DOWN);
         URL iconUrl = choices.getIconUrl();
         if (iconUrl != null) {
@@ -326,15 +422,13 @@ public class LayoutActionBar extends Composite {
         } else {
             combo.setText(choices.getTitle());
         }
+        combo.setData(choices);
 
         Listener menuListener = new Listener() {
+            @Override
             public void handleEvent(Event event) {
-                // if (event.detail == SWT.ARROW) {
-                Point point = new Point(event.x, event.y);
-                point = combo.getDisplay().map(mLayoutToolBar, null, point);
-
                 Menu menu = new Menu(mLayoutToolBar.getShell(), SWT.POP_UP);
-
+                RuleAction.Choices choices = (Choices) combo.getData();
                 List<URL> icons = choices.getIconUrls();
                 List<String> titles = choices.getTitles();
                 List<String> ids = choices.getIds();
@@ -359,15 +453,17 @@ public class LayoutActionBar extends Composite {
                     item.addSelectionListener(new SelectionAdapter() {
                         @Override
                         public void widgetSelected(SelectionEvent e) {
+                            RuleAction.Choices choices = (Choices) combo.getData();
                             choices.getCallback().action(choices, getSelectedNodes(), id, null);
                             updateSelection();
                         }
                     });
                 }
 
-                // TODO - how do I dispose of this?
-
-                menu.setLocation(point);
+                Rectangle bounds = combo.getBounds();
+                Point location = new Point(bounds.x, bounds.y + bounds.height);
+                location = combo.getParent().toDisplay(location);
+                menu.setLocation(location.x, location.y);
                 menu.setVisible(true);
             }
         };
@@ -459,8 +555,11 @@ public class LayoutActionBar extends Composite {
         mLintButton.addSelectionListener(new SelectionAdapter() {
             @Override
             public void widgetSelected(SelectionEvent e) {
-                IFile file = mEditor.getLayoutEditor().getInputFile();
-                EclipseLintClient.showErrors(getShell(), file);
+                CommonXmlEditor editor = mEditor.getEditorDelegate().getEditor();
+                IFile file = editor.getInputFile();
+                if (file != null) {
+                    EclipseLintClient.showErrors(getShell(), file, editor);
+                }
             }
         });
 
@@ -471,7 +570,17 @@ public class LayoutActionBar extends Composite {
      * Updates the lint indicator state in the given layout editor
      */
     public void updateErrorIndicator() {
-        updateErrorIndicator(EclipseLintClient.hasMarkers(mEditor.getEditedFile()));
+        updateErrorIndicator(mEditor.getEditedFile());
+    }
+
+    /**
+     * Updates the lint indicator state for the given file
+     *
+     * @param file the file to show the indicator status for
+     */
+    public void updateErrorIndicator(IFile file) {
+        IMarker[] markers = EclipseLintClient.getMarkers(file);
+        updateErrorIndicator(markers.length);
     }
 
     /**
@@ -479,13 +588,14 @@ public class LayoutActionBar extends Composite {
      *
      * @param hasLintWarnings whether there are lint errors to be shown
      */
-    void updateErrorIndicator(final boolean hasLintWarnings) {
+    private void updateErrorIndicator(final int markerCount) {
         Display display = getDisplay();
         if (display.getThread() != Thread.currentThread()) {
             display.asyncExec(new Runnable() {
+                @Override
                 public void run() {
                     if (!isDisposed()) {
-                        updateErrorIndicator(hasLintWarnings);
+                        updateErrorIndicator(markerCount);
                     }
                 }
             });
@@ -493,10 +603,37 @@ public class LayoutActionBar extends Composite {
         }
 
         GridData layoutData = (GridData) mLintToolBar.getLayoutData();
-        if (layoutData.exclude == hasLintWarnings) {
-            layoutData.exclude = !hasLintWarnings;
-            mLintToolBar.setVisible(hasLintWarnings);
-            layout();
+        Integer existing = (Integer) mLintToolBar.getData();
+        Integer current = Integer.valueOf(markerCount);
+        if (!current.equals(existing)) {
+            mLintToolBar.setData(current);
+            boolean layout = false;
+            boolean hasLintWarnings = markerCount > 0 && AdtPrefs.getPrefs().isLintOnSave();
+            if (layoutData.exclude == hasLintWarnings) {
+                layoutData.exclude = !hasLintWarnings;
+                mLintToolBar.setVisible(hasLintWarnings);
+                layout = true;
+            }
+            if (markerCount > 0) {
+                String iconName = "";
+                switch (markerCount) {
+                    case 1: iconName = "lint1"; break;  //$NON-NLS-1$
+                    case 2: iconName = "lint2"; break;  //$NON-NLS-1$
+                    case 3: iconName = "lint3"; break;  //$NON-NLS-1$
+                    case 4: iconName = "lint4"; break;  //$NON-NLS-1$
+                    case 5: iconName = "lint5"; break;  //$NON-NLS-1$
+                    case 6: iconName = "lint6"; break;  //$NON-NLS-1$
+                    case 7: iconName = "lint7"; break;  //$NON-NLS-1$
+                    case 8: iconName = "lint8"; break;  //$NON-NLS-1$
+                    case 9: iconName = "lint9"; break;  //$NON-NLS-1$
+                    default: iconName = "lint9p"; break;//$NON-NLS-1$
+                }
+                mLintButton.setImage(IconFactory.getInstance().getIcon(iconName));
+            }
+            if (layout) {
+                layout();
+            }
+            redraw();
         }
     }
 

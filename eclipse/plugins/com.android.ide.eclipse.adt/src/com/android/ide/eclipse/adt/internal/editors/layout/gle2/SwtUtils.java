@@ -18,10 +18,15 @@ package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 import com.android.ide.common.api.Rect;
 
 import org.eclipse.swt.SWTException;
+import org.eclipse.swt.graphics.Device;
+import org.eclipse.swt.graphics.Font;
+import org.eclipse.swt.graphics.FontMetrics;
+import org.eclipse.swt.graphics.GC;
 import org.eclipse.swt.graphics.Image;
 import org.eclipse.swt.graphics.ImageData;
 import org.eclipse.swt.graphics.PaletteData;
 import org.eclipse.swt.graphics.Rectangle;
+import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Display;
 
 import java.awt.Graphics;
@@ -119,7 +124,7 @@ public class SwtUtils {
      * @return A new SWT {@link Image} with the same contents as the source
      *         {@link BufferedImage}
      */
-    public static Image convertToSwt(Display display, BufferedImage awtImage,
+    public static Image convertToSwt(Device display, BufferedImage awtImage,
             boolean transferAlpha, int globalAlpha) {
         if (!isSupportedPaletteType(awtImage.getType())) {
             awtImage = convertToCompatibleFormat(awtImage);
@@ -351,5 +356,34 @@ public class SwtUtils {
     public static boolean equals(Rect r1, Rectangle r2) {
         return r1.x == r2.x && r1.y == r2.y && r1.w == r2.width && r1.h == r2.height;
 
+    }
+
+    /**
+     * Get the average width of the font used by the given control
+     *
+     * @param display the display associated with the font usage
+     * @param font the font to look up the average character width for
+     * @return the average width, in pixels, of the given font
+     */
+    public static final int getAverageCharWidth(Display display, Font font) {
+        GC gc = new GC(display);
+        gc.setFont(font);
+        FontMetrics fontMetrics = gc.getFontMetrics();
+        int width = fontMetrics.getAverageCharWidth();
+        gc.dispose();
+        return width;
+    }
+
+    /**
+     * Get the average width of the given font
+     *
+     * @param control the control to look up the default font for
+     * @return the average width, in pixels, of the current font in the control
+     */
+    public static final int getAverageCharWidth(Control control) {
+        GC gc = new GC(control.getDisplay());
+        int width = gc.getFontMetrics().getAverageCharWidth();
+        gc.dispose();
+        return width;
     }
 }

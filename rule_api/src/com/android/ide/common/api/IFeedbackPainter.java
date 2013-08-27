@@ -16,6 +16,9 @@
 
 package com.android.ide.common.api;
 
+import com.android.annotations.NonNull;
+import com.google.common.annotations.Beta;
+
 /**
  * A feedback painter paints drop feedback during a drag &amp; drop operation.
  * <p>
@@ -23,6 +26,7 @@ package com.android.ide.common.api;
  * to adjust your code for the next tools release.</b>
  * </p>
  */
+@Beta
 public interface IFeedbackPainter {
     /**
      * Paints feedback for the given target node into the given graphics context.
@@ -31,5 +35,5 @@ public interface IFeedbackPainter {
      * @param targetNode The node being dragged
      * @param feedback The feedback data
      */
-    void paint(IGraphics gc, INode targetNode, DropFeedback feedback);
+    void paint(@NonNull IGraphics gc, @NonNull INode targetNode, @NonNull DropFeedback feedback);
 }

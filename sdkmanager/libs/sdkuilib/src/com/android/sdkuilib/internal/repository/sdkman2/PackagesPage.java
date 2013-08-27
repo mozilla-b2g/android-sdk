@@ -17,14 +17,15 @@
 package com.android.sdkuilib.internal.repository.sdkman2;
 
 import com.android.sdklib.SdkConstants;
-import com.android.sdklib.internal.repository.Archive;
-import com.android.sdklib.internal.repository.ArchiveInstaller;
+import com.android.sdklib.internal.repository.DownloadCache;
+import com.android.sdklib.internal.repository.DownloadCache.Strategy;
 import com.android.sdklib.internal.repository.IDescription;
 import com.android.sdklib.internal.repository.ITask;
 import com.android.sdklib.internal.repository.ITaskMonitor;
-import com.android.sdklib.internal.repository.Package;
-import com.android.sdklib.internal.repository.SdkSource;
-import com.android.sdkuilib.internal.repository.IPageListener;
+import com.android.sdklib.internal.repository.archives.Archive;
+import com.android.sdklib.internal.repository.archives.ArchiveInstaller;
+import com.android.sdklib.internal.repository.packages.Package;
+import com.android.sdklib.internal.repository.sources.SdkSource;
 import com.android.sdkuilib.internal.repository.UpdaterData;
 import com.android.sdkuilib.internal.repository.UpdaterPage;
 import com.android.sdkuilib.internal.repository.icons.ImageFactory;
@@ -36,7 +37,6 @@ import com.android.sdkuilib.ui.GridDataBuilder;
 import com.android.sdkuilib.ui.GridLayoutBuilder;
 
 import org.eclipse.jface.dialogs.MessageDialog;
-import org.eclipse.jface.viewers.CellLabelProvider;
 import org.eclipse.jface.viewers.CheckStateChangedEvent;
 import org.eclipse.jface.viewers.CheckboxTreeViewer;
 import org.eclipse.jface.viewers.ColumnLabelProvider;
@@ -48,8 +48,6 @@ import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jface.viewers.ITableFontProvider;
 import org.eclipse.jface.viewers.ITreeContentProvider;
 import org.eclipse.jface.viewers.ITreeSelection;
-import org.eclipse.jface.viewers.TreeColumnViewerLabelProvider;
-import org.eclipse.jface.viewers.TreePath;
 import org.eclipse.jface.viewers.TreeViewerColumn;
 import org.eclipse.jface.viewers.Viewer;
 import org.eclipse.jface.viewers.ViewerFilter;
@@ -59,7 +57,6 @@ import org.eclipse.swt.events.DisposeEvent;
 import org.eclipse.swt.events.DisposeListener;
 import org.eclipse.swt.events.SelectionAdapter;
 import org.eclipse.swt.events.SelectionEvent;
-import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.Font;
 import org.eclipse.swt.graphics.FontData;
 import org.eclipse.swt.graphics.Image;
@@ -90,8 +87,7 @@ import java.util.Map.Entry;
  * remote available packages. This gives an overview of what is installed
  * vs what is available and allows the user to update or install packages.
  */
-public class PackagesPage extends UpdaterPage
-        implements ISdkChangeListener, IPageListener {
+public class PackagesPage extends UpdaterPage implements ISdkChangeListener {
 
     static final String ICON_CAT_OTHER      = "pkgcat_other_16.png";    //$NON-NLS-1$
     static final String ICON_CAT_PLATFORM   = "pkgcat_16.png";          //$NON-NLS-1$
@@ -135,6 +131,7 @@ public class PackagesPage extends UpdaterPage
     private final SdkInvocationContext mContext;
     private final UpdaterData mUpdaterData;
     private final PackagesDiffLogic mDiffLogic;
+
     private boolean mDisplayArchives = false;
     private boolean mOperationPending;
 
@@ -173,12 +170,16 @@ public class PackagesPage extends UpdaterPage
         postCreate();  //$hide$
     }
 
-    public void onPageSelected() {
-        List<PkgCategory> cats = mDiffLogic.getCategories(isSortByApi());
-        if (cats == null || cats.isEmpty()) {
-            // Initialize the package list the first time the page is shown.
-            loadPackages();
-        }
+    public void performFirstLoad() {
+        // First a package loader is created that only checks
+        // the local cache xml files. It populates the package
+        // list based on what the client got last, essentially.
+        loadPackages(true /*useLocalCache*/);
+
+        // Next a regular package loader is created that will
+        // respect the expiration and refresh parameters of the
+        // download cache.
+        loadPackages(false /*useLocalCache*/);
     }
 
     @SuppressWarnings("unused")
@@ -210,12 +211,14 @@ public class PackagesPage extends UpdaterPage
         });
 
         mTreeViewer.addCheckStateListener(new ICheckStateListener() {
+            @Override
             public void checkStateChanged(CheckStateChangedEvent event) {
                 onTreeCheckStateChanged(event); //$hide$
             }
         });
 
         mTreeViewer.addDoubleClickListener(new IDoubleClickListener() {
+            @Override
             public void doubleClick(DoubleClickEvent event) {
                 onTreeDoubleClick(event); //$hide$
             }
@@ -421,6 +424,8 @@ public class PackagesPage extends UpdaterPage
                 case TOGGLE_SHOW_ARCHIVES:
                     mDisplayArchives = !mDisplayArchives;
                     // Force the viewer to be refreshed
+                    ((PkgContentProvider) mTreeViewer.getContentProvider()).setDisplayArchives(
+                                                                                  mDisplayArchives);
                     mTreeViewer.setInput(null);
                     refreshViewerInput();
                     syncViewerSelection();
@@ -516,9 +521,10 @@ public class PackagesPage extends UpdaterPage
                 value = button.getSelection();
             }
 
-            item.setSelection(value);
+            if (!item.isDisposed()) {
+                item.setSelection(value);
+            }
         }
-
     }
 
     private void postCreate() {
@@ -526,19 +532,26 @@ public class PackagesPage extends UpdaterPage
             mTextSdkOsPath.setText(mUpdaterData.getOsSdkRoot());
         }
 
-        mTreeViewer.setContentProvider(new PkgContentProvider());
+        mTreeViewer.setContentProvider(new PkgContentProvider(mTreeViewer));
+        ((PkgContentProvider) mTreeViewer.getContentProvider()).setDisplayArchives(
+                                                                                mDisplayArchives);
         ColumnViewerToolTipSupport.enableFor(mTreeViewer, ToolTip.NO_RECREATE);
 
-        mColumnApi.setLabelProvider     (new PkgTreeColumnViewerLabelProvider(mColumnApi));
-        mColumnName.setLabelProvider    (new PkgTreeColumnViewerLabelProvider(mColumnName));
-        mColumnStatus.setLabelProvider  (new PkgTreeColumnViewerLabelProvider(mColumnStatus));
-        mColumnRevision.setLabelProvider(new PkgTreeColumnViewerLabelProvider(mColumnRevision));
+        mColumnApi.setLabelProvider(
+                new PkgTreeColumnViewerLabelProvider(new PkgCellLabelProvider(mColumnApi)));
+        mColumnName.setLabelProvider(
+                new PkgTreeColumnViewerLabelProvider(new PkgCellLabelProvider(mColumnName)));
+        mColumnStatus.setLabelProvider(
+                new PkgTreeColumnViewerLabelProvider(new PkgCellLabelProvider(mColumnStatus)));
+        mColumnRevision.setLabelProvider(
+                new PkgTreeColumnViewerLabelProvider(new PkgCellLabelProvider(mColumnRevision)));
 
         FontData fontData = mTree.getFont().getFontData()[0];
         fontData.setStyle(SWT.ITALIC);
         mTreeFontItalic = new Font(mTree.getDisplay(), fontData);
 
         mTree.addDisposeListener(new DisposeListener() {
+            @Override
             public void widgetDisposed(DisposeEvent e) {
                 mTreeFontItalic.dispose();
                 mTreeFontItalic = null;
@@ -573,7 +586,24 @@ public class PackagesPage extends UpdaterPage
         loadPackages();
     }
 
+    /**
+     * Performs a "normal" reload of the package information, use the default download
+     * cache and refreshing strategy as needed.
+     */
     private void loadPackages() {
+        loadPackages(false /*useLocalCache*/);
+    }
+
+    /**
+     * Performs a reload of the package information.
+     *
+     * @param useLocalCache When true, the {@link PackageLoader} is switched to use
+     *  a specific {@link DownloadCache} using the {@link Strategy#ONLY_CACHE}, meaning
+     *  it will only use data from the local cache. It will not try to fetch or refresh
+     *  manifests. This is used once the very first time the sdk manager window opens
+     *  and is typically followed by a regular load with refresh.
+     */
+    private void loadPackages(final boolean useLocalCache) {
         if (mUpdaterData == null) {
             return;
         }
@@ -586,13 +616,27 @@ public class PackagesPage extends UpdaterPage
 
         final boolean displaySortByApi = isSortByApi();
 
-        if (!mTreeColumnName.isDisposed()) {
-            mTreeColumnName.setImage(
-                    getImage(displaySortByApi ? ICON_SORT_BY_API : ICON_SORT_BY_SOURCE));
+        if (mTreeColumnName.isDisposed()) {
+            // If the UI got disposed, don't try to load anything since we won't be
+            // able to display it anyway.
+            return;
         }
 
+        mTreeColumnName.setImage(getImage(displaySortByApi ? ICON_SORT_BY_API
+                                                           : ICON_SORT_BY_SOURCE));
+
+        PackageLoader packageLoader = null;
+        if (useLocalCache) {
+            packageLoader =
+                new PackageLoader(mUpdaterData, new DownloadCache(Strategy.ONLY_CACHE));
+        } else {
+            packageLoader = mUpdaterData.getPackageLoader();
+        }
+        assert packageLoader != null;
+
         mDiffLogic.updateStart();
-        mDiffLogic.getPackageLoader().loadPackages(new ISourceLoadedCallback() {
+        packageLoader.loadPackages(new ISourceLoadedCallback() {
+            @Override
             public boolean onUpdateSource(SdkSource source, Package[] newPackages) {
                 // This runs in a thread and must not access UI directly.
                 final boolean changed = mDiffLogic.updateSourcePackages(
@@ -600,6 +644,7 @@ public class PackagesPage extends UpdaterPage
 
                 if (!mGroupPackages.isDisposed()) {
                     mGroupPackages.getDisplay().syncExec(new Runnable() {
+                        @Override
                         public void run() {
                             if (changed ||
                                 mTreeViewer.getInput() != mDiffLogic.getCategories(isSortByApi())) {
@@ -615,19 +660,23 @@ public class PackagesPage extends UpdaterPage
                 return !mGroupPackages.isDisposed();
             }
 
+            @Override
             public void onLoadCompleted() {
                 // This runs in a thread and must not access UI directly.
                 final boolean changed = mDiffLogic.updateEnd(displaySortByApi);
 
                 if (!mGroupPackages.isDisposed()) {
                     mGroupPackages.getDisplay().syncExec(new Runnable() {
+                        @Override
                         public void run() {
                             if (changed ||
                                 mTreeViewer.getInput() != mDiffLogic.getCategories(isSortByApi())) {
                                 refreshViewerInput();
                             }
 
-                            if (mDiffLogic.isFirstLoadComplete() && !mGroupPackages.isDisposed()) {
+                            if (!useLocalCache &&
+                                    mDiffLogic.isFirstLoadComplete() &&
+                                    !mGroupPackages.isDisposed()) {
                                 // At the end of the first load, if nothing is selected then
                                 // automatically select all new and update packages.
                                 Object[] checked = mTreeViewer.getCheckedElements();
@@ -731,15 +780,29 @@ public class PackagesPage extends UpdaterPage
             return;
         }
         if (mTreeViewer != null && !mTreeViewer.getTree().isDisposed()) {
+
+            boolean enablePreviews =
+                mUpdaterData.getSettingsController().getSettings().getEnablePreviews();
+
             mTreeViewer.setExpandedState(elem, true);
-            for (Object pkg :
+            nextCategory: for (Object pkg :
                     ((ITreeContentProvider) mTreeViewer.getContentProvider()).getChildren(elem)) {
                 if (pkg instanceof PkgCategory) {
                     PkgCategory cat = (PkgCategory) pkg;
+
+                    // Always expand the Tools category (and the preview one, if enabled)
+                    if (cat.getKey().equals(PkgCategoryApi.KEY_TOOLS) ||
+                            (enablePreviews &&
+                                    cat.getKey().equals(PkgCategoryApi.KEY_TOOLS_PREVIEW))) {
+                        expandInitial(pkg);
+                        continue nextCategory;
+                    }
+
+
                     for (PkgItem item : cat.getItems()) {
                         if (item.getState() == PkgState.INSTALLED) {
                             expandInitial(pkg);
-                            break;
+                            continue nextCategory;
                         }
                     }
                 }
@@ -992,22 +1055,26 @@ public class PackagesPage extends UpdaterPage
      * Updates the Install and Delete Package buttons.
      */
     private void updateButtonsState() {
-        int numPackages = getArchivesForInstall(null /*archives*/);
+        if (!mButtonInstall.isDisposed()) {
+            int numPackages = getArchivesForInstall(null /*archives*/);
 
-        mButtonInstall.setEnabled((numPackages > 0) && !mOperationPending);
-        mButtonInstall.setText(
-                numPackages == 0 ? "Install packages..." :          // disabled button case
-                    numPackages == 1 ? "Install 1 package..." :
-                        String.format("Install %d packages...", numPackages));
+            mButtonInstall.setEnabled((numPackages > 0) && !mOperationPending);
+            mButtonInstall.setText(
+                    numPackages == 0 ? "Install packages..." :          // disabled button case
+                        numPackages == 1 ? "Install 1 package..." :
+                            String.format("Install %d packages...", numPackages));
+        }
 
-        // We can only delete local archives
-        numPackages = getArchivesToDelete(null /*outMsg*/, null /*outArchives*/);
+        if (!mButtonDelete.isDisposed()) {
+            // We can only delete local archives
+            int numPackages = getArchivesToDelete(null /*outMsg*/, null /*outArchives*/);
 
-        mButtonDelete.setEnabled((numPackages > 0) && !mOperationPending);
-        mButtonDelete.setText(
-                numPackages == 0 ? "Delete packages..." :           // disabled button case
-                    numPackages == 1 ? "Delete 1 package..." :
-                        String.format("Delete %d packages...", numPackages));
+            mButtonDelete.setEnabled((numPackages > 0) && !mOperationPending);
+            mButtonDelete.setText(
+                    numPackages == 0 ? "Delete packages..." :           // disabled button case
+                        numPackages == 1 ? "Delete 1 package..." :
+                            String.format("Delete %d packages...", numPackages));
+        }
     }
 
     /**
@@ -1148,6 +1215,7 @@ public class PackagesPage extends UpdaterPage
                     beginOperationPending();
 
                     mUpdaterData.getTaskFactory().start("Delete Package", new ITask() {
+                        @Override
                         public void run(ITaskMonitor monitor) {
                             monitor.setProgressMax(archives.size() + 1);
                             for (Archive a : archives) {
@@ -1262,116 +1330,6 @@ public class PackagesPage extends UpdaterPage
 
     // ----------------------
 
-    /**
-     * A custom version of {@link TreeColumnViewerLabelProvider} which
-     * handles {@link TreePath}s and delegates content to a base
-     * {@link PkgCellLabelProvider} for the given {@link TreeViewerColumn}.
-     * <p/>
-     * The implementation handles a variety of providers (table label, table
-     * color, table font) but does not implement a tooltip provider, so we
-     * delegate the calls here to the appropriate {@link PkgCellLabelProvider}.
-     * <p/>
-     * Only {@link #getToolTipText(Object)} is really useful for us but we
-     * delegate all the tooltip calls for completeness and avoid surprises later
-     * if we ever decide to override more things in the label provider.
-     */
-    public class PkgTreeColumnViewerLabelProvider extends TreeColumnViewerLabelProvider {
-
-        private CellLabelProvider mTooltipProvider;
-
-        public PkgTreeColumnViewerLabelProvider(TreeViewerColumn column) {
-            super(new PkgCellLabelProvider(column));
-        }
-
-        @Override
-        public void setProviders(Object provider) {
-            super.setProviders(provider);
-            if (provider instanceof CellLabelProvider) {
-                mTooltipProvider = (CellLabelProvider) provider;
-            }
-        }
-
-        @Override
-        public Image getToolTipImage(Object object) {
-            if (mTooltipProvider != null) {
-                return mTooltipProvider.getToolTipImage(object);
-            }
-            return super.getToolTipImage(object);
-        }
-
-        @Override
-        public String getToolTipText(Object element) {
-            if (mTooltipProvider != null) {
-                return mTooltipProvider.getToolTipText(element);
-            }
-            return super.getToolTipText(element);
-        }
-
-        @Override
-        public Color getToolTipBackgroundColor(Object object) {
-            if (mTooltipProvider != null) {
-                return mTooltipProvider.getToolTipBackgroundColor(object);
-            }
-            return super.getToolTipBackgroundColor(object);
-        }
-
-        @Override
-        public Color getToolTipForegroundColor(Object object) {
-            if (mTooltipProvider != null) {
-                return mTooltipProvider.getToolTipForegroundColor(object);
-            }
-            return super.getToolTipForegroundColor(object);
-        }
-
-        @Override
-        public Font getToolTipFont(Object object) {
-            if (mTooltipProvider != null) {
-                return mTooltipProvider.getToolTipFont(object);
-            }
-            return super.getToolTipFont(object);
-        }
-
-        @Override
-        public Point getToolTipShift(Object object) {
-            if (mTooltipProvider != null) {
-                return mTooltipProvider.getToolTipShift(object);
-            }
-            return super.getToolTipShift(object);
-        }
-
-        @Override
-        public boolean useNativeToolTip(Object object) {
-            if (mTooltipProvider != null) {
-                return mTooltipProvider.useNativeToolTip(object);
-            }
-            return super.useNativeToolTip(object);
-        }
-
-        @Override
-        public int getToolTipTimeDisplayed(Object object) {
-            if (mTooltipProvider != null) {
-                return mTooltipProvider.getToolTipTimeDisplayed(object);
-            }
-            return super.getToolTipTimeDisplayed(object);
-        }
-
-        @Override
-        public int getToolTipDisplayDelayTime(Object object) {
-            if (mTooltipProvider != null) {
-                return mTooltipProvider.getToolTipDisplayDelayTime(object);
-            }
-            return super.getToolTipDisplayDelayTime(object);
-        }
-
-        @Override
-        public int getToolTipStyle(Object object) {
-            if (mTooltipProvider != null) {
-                return mTooltipProvider.getToolTipStyle(object);
-            }
-            return super.getToolTipStyle(object);
-        }
-    }
-
     public class PkgCellLabelProvider extends ColumnLabelProvider implements ITableFontProvider {
 
         private final TreeViewerColumn mColumn;
@@ -1385,7 +1343,6 @@ public class PackagesPage extends UpdaterPage
         public String getText(Object element) {
 
             if (mColumn == mColumnName) {
-
                 if (element instanceof PkgCategory) {
                     return ((PkgCategory) element).getLabel();
                 } else if (element instanceof PkgItem) {
@@ -1395,7 +1352,6 @@ public class PackagesPage extends UpdaterPage
                 }
 
             } else if (mColumn == mColumnApi) {
-
                 int api = -1;
                 if (element instanceof PkgItem) {
                     api = ((PkgItem) element).getApi();
@@ -1405,14 +1361,12 @@ public class PackagesPage extends UpdaterPage
                 }
 
             } else if (mColumn == mColumnRevision) {
-
                 if (element instanceof PkgItem) {
                     PkgItem pkg = (PkgItem) element;
-                    return Integer.toString(pkg.getRevision());
+                    return pkg.getRevision().toShortString();
                 }
 
             } else if (mColumn == mColumnStatus) {
-
                 if (element instanceof PkgItem) {
                     PkgItem pkg = (PkgItem) element;
 
@@ -1422,7 +1376,7 @@ public class PackagesPage extends UpdaterPage
                         if (update != null) {
                             return String.format(
                                     "Update available: rev. %1$s",
-                                    update.getRevision());
+                                    update.getRevision().toShortString());
                         }
                         return "Installed";
 
@@ -1439,11 +1393,11 @@ public class PackagesPage extends UpdaterPage
 
                 } else if (element instanceof Package) {
                     // This is an update package.
-                    return "New revision " + Integer.toString(((Package) element).getRevision());
+                    return "New revision " + ((Package) element).getRevision().toShortString();
                 }
             }
 
-            return "";
+            return ""; //$NON-NLS-1$
         }
 
         private String getPkgItemName(PkgItem item) {
@@ -1528,6 +1482,7 @@ public class PackagesPage extends UpdaterPage
 
         // -- ITableFontProvider
 
+        @Override
         public Font getFont(Object element, int columnIndex) {
             if (element instanceof PkgItem) {
                 if (((PkgItem) element).getState() == PkgState.NEW) {
@@ -1544,29 +1499,55 @@ public class PackagesPage extends UpdaterPage
 
         @Override
         public String getToolTipText(Object element) {
-            if (element instanceof PkgItem) {
-                element = ((PkgItem) element).getMainPackage();
+            PkgItem pi = element instanceof PkgItem ? (PkgItem) element : null;
+            if (pi != null) {
+                element = pi.getMainPackage();
             }
             if (element instanceof IDescription) {
-                String s = ((IDescription) element).getLongDescription();
-                if (element instanceof Package) {
-                    SdkSource src = ((Package) element).getParentSource();
-                    if (src != null) {
-                        try {
-                            URL url = new URL(src.getUrl());
-                            String host = url.getHost();
-                            if (((Package) element).isLocal()) {
-                                s += String.format("\nInstalled from %1$s", host);
-                            } else {
-                                s += String.format("\nProvided by %1$s", host);
-                            }
-                        } catch (MalformedURLException ignore) {
-                        }
-                    }
+                String s = getTooltipDescription((IDescription) element);
+
+                if (pi != null && pi.hasUpdatePkg()) {
+                    s += "\n-----------------" +        //$NON-NLS-1$
+                         "\nUpdate Available:\n" +      //$NON-NLS-1$
+                         getTooltipDescription(pi.getUpdatePkg());
                 }
+
                 return s;
             }
             return super.getToolTipText(element);
+        }
+
+        private String getTooltipDescription(IDescription element) {
+            String s = element.getLongDescription();
+            if (element instanceof Package) {
+                Package p = (Package) element;
+
+                if (!p.isLocal()) {
+                    // For non-installed item, try to find a download size
+                    for (Archive a : p.getArchives()) {
+                        if (!a.isLocal() && a.isCompatible()) {
+                            s += '\n' + a.getSizeDescription();
+                            break;
+                        }
+                    }
+                }
+
+                // Display info about where this package comes/came from
+                SdkSource src = p.getParentSource();
+                if (src != null) {
+                    try {
+                        URL url = new URL(src.getUrl());
+                        String host = url.getHost();
+                        if (p.isLocal()) {
+                            s += String.format("\nInstalled from %1$s", host);
+                        } else {
+                            s += String.format("\nProvided by %1$s", host);
+                        }
+                    } catch (MalformedURLException ignore) {
+                    }
+                }
+            }
+            return s;
         }
 
         @Override
@@ -1580,115 +1561,26 @@ public class PackagesPage extends UpdaterPage
         }
     }
 
-    private class PkgContentProvider implements ITreeContentProvider {
-
-        public Object[] getChildren(Object parentElement) {
-            if (parentElement instanceof ArrayList<?>) {
-                return ((ArrayList<?>) parentElement).toArray();
-
-            } else if (parentElement instanceof PkgCategory) {
-                return ((PkgCategory) parentElement).getItems().toArray();
-
-            } else if (parentElement instanceof PkgItem) {
-                if (mDisplayArchives) {
-
-                    Package pkg = ((PkgItem) parentElement).getUpdatePkg();
-
-                    // Display update packages as sub-items if the details mode is activated.
-                    if (pkg != null) {
-                        return new Object[] { pkg };
-                    }
-
-                    return ((PkgItem) parentElement).getArchives();
-                }
-
-            } else if (parentElement instanceof Package) {
-                if (mDisplayArchives) {
-                    return ((Package) parentElement).getArchives();
-                }
-
-            }
-
-            return new Object[0];
-        }
-
-        @SuppressWarnings("unchecked")
-        public Object getParent(Object element) {
-            // This operation is expensive, so we do the minimum
-            // and don't try to cover all cases.
-
-            if (element instanceof PkgItem) {
-                Object input = mTreeViewer.getInput();
-                if (input != null) {
-                    for (PkgCategory cat : (List<PkgCategory>) input) {
-                        if (cat.getItems().contains(element)) {
-                            return cat;
-                        }
-                    }
-                }
-            }
-
-            return null;
-        }
-
-        public boolean hasChildren(Object parentElement) {
-            if (parentElement instanceof ArrayList<?>) {
-                return true;
-
-            } else if (parentElement instanceof PkgCategory) {
-                return true;
-
-            } else if (parentElement instanceof PkgItem) {
-                if (mDisplayArchives) {
-                    Package pkg = ((PkgItem) parentElement).getUpdatePkg();
-
-                    // Display update packages as sub-items if the details mode is activated.
-                    if (pkg != null) {
-                        return true;
-                    }
-
-                    Archive[] archives = ((PkgItem) parentElement).getArchives();
-                    return archives.length > 0;
-                }
-            } else if (parentElement instanceof Package) {
-                if (mDisplayArchives) {
-                    return ((Package) parentElement).getArchives().length > 0;
-                }
-            }
-
-            return false;
-        }
-
-        public Object[] getElements(Object inputElement) {
-            return getChildren(inputElement);
-        }
-
-        public void dispose() {
-            // unused
-
-        }
-
-        public void inputChanged(Viewer arg0, Object arg1, Object arg2) {
-            // unused
-        }
-    }
-
     // --- Implementation of ISdkChangeListener ---
 
+    @Override
     public void onSdkLoaded() {
         onSdkReload();
     }
 
+    @Override
     public void onSdkReload() {
         // The sdkmanager finished reloading its data. We must not call localReload() from here
         // since we don't want to alter the sdkmanager's data that just finished loading.
         loadPackages();
     }
 
+    @Override
     public void preInstallHook() {
         // nothing to be done for now.
     }
 
+    @Override
     public void postInstallHook() {
         // nothing to be done for now.
     }

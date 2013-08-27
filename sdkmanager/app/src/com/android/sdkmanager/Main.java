@@ -22,34 +22,32 @@ import com.android.io.FileWrapper;
 import com.android.prefs.AndroidLocation;
 import com.android.prefs.AndroidLocation.AndroidLocationException;
 import com.android.sdklib.IAndroidTarget;
+import com.android.sdklib.IAndroidTarget.IOptionalLibrary;
 import com.android.sdklib.ISdkLog;
 import com.android.sdklib.ISystemImage;
 import com.android.sdklib.SdkConstants;
 import com.android.sdklib.SdkManager;
-import com.android.sdklib.IAndroidTarget.IOptionalLibrary;
 import com.android.sdklib.internal.avd.AvdInfo;
 import com.android.sdklib.internal.avd.AvdManager;
 import com.android.sdklib.internal.avd.HardwareProperties;
 import com.android.sdklib.internal.avd.HardwareProperties.HardwareProperty;
 import com.android.sdklib.internal.build.MakeIdentity;
 import com.android.sdklib.internal.project.ProjectCreator;
-import com.android.sdklib.internal.project.ProjectProperties;
 import com.android.sdklib.internal.project.ProjectCreator.OutputLevel;
+import com.android.sdklib.internal.project.ProjectProperties;
 import com.android.sdklib.internal.project.ProjectProperties.PropertyType;
-import com.android.sdklib.internal.repository.PlatformToolPackage;
-import com.android.sdklib.internal.repository.ToolPackage;
+import com.android.sdklib.internal.repository.DownloadCache;
+import com.android.sdklib.internal.repository.DownloadCache.Strategy;
+import com.android.sdklib.internal.repository.packages.PlatformToolPackage;
+import com.android.sdklib.internal.repository.packages.ToolPackage;
 import com.android.sdklib.repository.SdkAddonConstants;
 import com.android.sdklib.repository.SdkRepoConstants;
 import com.android.sdklib.xml.AndroidXPathFactory;
-import com.android.sdkmanager.internal.repository.AboutPage;
-import com.android.sdkmanager.internal.repository.SettingsPage;
 import com.android.sdkuilib.internal.repository.SdkUpdaterNoWindow;
-import com.android.sdkuilib.internal.repository.UpdaterPage;
-import com.android.sdkuilib.internal.repository.sdkman2.PackagesPage;
 import com.android.sdkuilib.internal.widgets.MessageBoxLog;
 import com.android.sdkuilib.repository.AvdManagerWindow;
-import com.android.sdkuilib.repository.SdkUpdaterWindow;
 import com.android.sdkuilib.repository.AvdManagerWindow.AvdInvocationContext;
+import com.android.sdkuilib.repository.SdkUpdaterWindow;
 import com.android.sdkuilib.repository.SdkUpdaterWindow.SdkInvocationContext;
 import com.android.util.Pair;
 
@@ -127,6 +125,7 @@ public class Main {
      */
     private void createLogger() {
         mSdkLog = new ISdkLog() {
+            @Override
             public void error(Throwable t, String errorFormat, Object... args) {
                 if (errorFormat != null) {
                     System.err.printf("Error: " + errorFormat, args);
@@ -139,6 +138,7 @@ public class Main {
                 }
             }
 
+            @Override
             public void warning(String warningFormat, Object... args) {
                 if (mSdkCommandLine.isVerbose()) {
                     System.out.printf("Warning: " + warningFormat, args);
@@ -148,6 +148,7 @@ public class Main {
                 }
             }
 
+            @Override
             public void printf(String msgFormat, Object... args) {
                 System.out.printf(msgFormat, args);
             }
@@ -230,6 +231,13 @@ public class Main {
      * Actually do an action...
      */
     private void doAction() {
+
+        if (mSdkCommandLine.hasClearCache()) {
+            DownloadCache d = new DownloadCache(Strategy.SERVE_CACHE);
+            d.clearCache();
+            mSdkLog.printf("SDK Manager repository: manifest cache cleared.\n");
+        }
+
         String verb = mSdkCommandLine.getVerb();
         String directObject = mSdkCommandLine.getDirectObject();
 
@@ -283,7 +291,7 @@ public class Main {
                 if (mSdkCommandLine.getFlagNoUI(verb)) {
                     updateSdkNoUI();
                 } else {
-                    showSdkManagerWindow(true /*autoUpdate*/);
+                    showSdkManagerWindow();
                 }
 
             } else if (SdkCommandLine.OBJECT_ADB.equals(directObject)) {
@@ -291,7 +299,7 @@ public class Main {
 
             }
         } else if (SdkCommandLine.VERB_SDK.equals(verb)) {
-            showSdkManagerWindow(false /*autoUpdate*/);
+            showSdkManagerWindow();
 
         } else if (SdkCommandLine.VERB_AVD.equals(verb)) {
             showAvdManagerWindow();
@@ -305,7 +313,7 @@ public class Main {
             moveAvd();
 
         } else if (verb == null && directObject == null) {
-            showSdkManagerWindow(false /*autoUpdate*/);
+            showSdkManagerWindow();
 
         } else {
             mSdkCommandLine.printHelpAndExit(null);
@@ -315,7 +323,7 @@ public class Main {
     /**
      * Display the main SDK Manager app window
      */
-    private void showSdkManagerWindow(boolean autoUpdate) {
+    private void showSdkManagerWindow() {
         try {
             MessageBoxLog errorLogger = new MessageBoxLog(
                     "SDK Manager",
@@ -327,12 +335,6 @@ public class Main {
                     errorLogger,
                     mOsSdkFolder,
                     SdkInvocationContext.STANDALONE);
-            window.registerPage(SettingsPage.class, UpdaterPage.Purpose.SETTINGS);
-            window.registerPage(AboutPage.class,    UpdaterPage.Purpose.ABOUT_BOX);
-            if (autoUpdate) {
-                window.setInitialPage(PackagesPage.class);
-                window.setRequestAutoUpdate(true);
-            }
             window.open();
 
             errorLogger.displayResult(true);
@@ -358,9 +360,6 @@ public class Main {
                     mOsSdkFolder,
                     AvdInvocationContext.STANDALONE);
 
-            window.registerPage(SettingsPage.class, UpdaterPage.Purpose.SETTINGS);
-            window.registerPage(AboutPage.class,    UpdaterPage.Purpose.ABOUT_BOX);
-
             window.open();
 
             errorLogger.displayResult(true);
@@ -371,28 +370,44 @@ public class Main {
     }
 
     private void displayRemoteSdkListNoUI() {
-        boolean force = mSdkCommandLine.getFlagForce();
-        boolean useHttp = mSdkCommandLine.getFlagNoHttps();
-        boolean obsolete = mSdkCommandLine.getFlagObsolete();
+        boolean force    = mSdkCommandLine.getFlagForce();
+        boolean useHttp  = mSdkCommandLine.getFlagNoHttps();
+        boolean all      = mSdkCommandLine.getFlagAll();
         boolean extended = mSdkCommandLine.getFlagExtended();
         String proxyHost = mSdkCommandLine.getParamProxyHost();
         String proxyPort = mSdkCommandLine.getParamProxyPort();
 
-        SdkUpdaterNoWindow upd = new SdkUpdaterNoWindow(mOsSdkFolder, mSdkManager, mSdkLog,
-                force, useHttp, proxyHost, proxyPort);
-        upd.listRemotePackages(obsolete, extended);
+        boolean obsolete = mSdkCommandLine.getFlagObsolete();
+        all |= obsolete;
+
+        SdkUpdaterNoWindow upd = new SdkUpdaterNoWindow(
+                mOsSdkFolder,
+                mSdkManager,
+                mSdkLog,
+                force,
+                useHttp,
+                proxyHost,
+                proxyPort);
+        upd.listRemotePackages(all, extended);
+
+        if (obsolete) {
+            mSdkLog.printf("Note: Flag --obsolete is deprecated and will be removed in the next version.\n      Please use --all instead.\n");
+        }
     }
 
     /**
      * Updates the whole SDK without any UI, just using console output.
      */
     private void updateSdkNoUI() {
-        boolean force = mSdkCommandLine.getFlagForce();
-        boolean useHttp = mSdkCommandLine.getFlagNoHttps();
-        boolean dryMode = mSdkCommandLine.getFlagDryMode();
-        boolean obsolete = mSdkCommandLine.getFlagObsolete();
+        boolean force    = mSdkCommandLine.getFlagForce();
+        boolean useHttp  = mSdkCommandLine.getFlagNoHttps();
+        boolean dryMode  = mSdkCommandLine.getFlagDryMode();
+        boolean all      = mSdkCommandLine.getFlagAll();
         String proxyHost = mSdkCommandLine.getParamProxyHost();
         String proxyPort = mSdkCommandLine.getParamProxyPort();
+
+        boolean obsolete = mSdkCommandLine.getFlagObsolete();
+        all |= obsolete;
 
         // Check filter types.
         Pair<String, ArrayList<String>> filterResult =
@@ -402,9 +417,19 @@ public class Main {
             errorAndExit(filterResult.getFirst());
         }
 
-        SdkUpdaterNoWindow upd = new SdkUpdaterNoWindow(mOsSdkFolder, mSdkManager, mSdkLog,
-                force, useHttp, proxyHost, proxyPort);
-        upd.updateAll(filterResult.getSecond(), obsolete, dryMode);
+        SdkUpdaterNoWindow upd = new SdkUpdaterNoWindow(
+                mOsSdkFolder,
+                mSdkManager,
+                mSdkLog,
+                force,
+                useHttp,
+                proxyHost,
+                proxyPort);
+        upd.updateAll(filterResult.getSecond(), all, dryMode);
+
+        if (obsolete) {
+            mSdkLog.printf("Note: Flag --obsolete is deprecated and will be removed in the next version.\n      Please use --all instead.\n");
+        }
     }
 
     /**
@@ -1474,6 +1499,7 @@ public class Main {
         final AtomicBoolean keepErasing = new AtomicBoolean(true);
 
         Thread eraser = new Thread(new Runnable() {
+            @Override
             public void run() {
                 while (keepErasing.get()) {
                     System.err.print("\b ");    //$NON-NLS-1$. \b=Backspace

@@ -28,20 +28,8 @@ import java.util.Map;
  * A {@link GraphicGenerator} that generates Android "launcher" icons.
  */
 public class LauncherIconGenerator extends GraphicGenerator {
-    private static final Rectangle IMAGE_SIZE_HDPI = new Rectangle(0, 0, 72, 72);
-    /* TODO: Adapt from html version:
-          'square-web-targetRect': { x: 21, y: 21, w: 470, h: 470 },
-          'circle-web-targetRect': { x: 21, y: 21, w: 470, h: 470 },
-        'square-xhdpi-targetRect': { x:  4, y:  4, w:  88, h:  88 },
-        'circle-xhdpi-targetRect': { x:  4, y:  4, w:  88, h:  88 },
-         'square-hdpi-targetRect': { x:  3, y:  3, w:  66, h:  66 },
-         'circle-hdpi-targetRect': { x:  3, y:  3, w:  66, h:  66 }, <====
-         'square-mdpi-targetRect': { x:  2, y:  2, w:  44, h:  44 },
-         'circle-mdpi-targetRect': { x:  2, y:  2, w:  44, h:  44 },
-         'square-ldpi-targetRect': { x:  1, y:  1, w:  34, h:  34 },
-         'circle-ldpi-targetRect': { x:  1, y:  1, w:  34, h:  34 }
-     */
-    private static final Rectangle TARGET_RECT_HDPI = new Rectangle(3, 3, 66, 66);
+    private static final Rectangle IMAGE_SIZE_MDPI = new Rectangle(0, 0, 48, 48);
+    private static final Rectangle TARGET_RECT_MDPI = new Rectangle(2, 2, 44, 44);
 
     @Override
     public BufferedImage generate(GraphicGeneratorContext context, Options options) {
@@ -54,31 +42,40 @@ public class LauncherIconGenerator extends GraphicGenerator {
             density = launcherOptions.density.getResourceValue();
         }
         String shape = launcherOptions.shape.id;
-        BufferedImage mBackImage = context.loadImageResource("/images/launcher_stencil/"
+        BufferedImage mBackImage = null;
+        BufferedImage mForeImage = null;
+        BufferedImage mMaskImage = null;
+        if (launcherOptions.shape != Shape.NONE) {
+            mBackImage = context.loadImageResource("/images/launcher_stencil/"
                 + shape + "/" + density + "/back.png");
-        BufferedImage mForeImage = context.loadImageResource("/images/launcher_stencil/"
+            mForeImage = context.loadImageResource("/images/launcher_stencil/"
                 + shape + "/" + density + "/" + launcherOptions.style.id + ".png");
-        BufferedImage mMaskImage = context.loadImageResource("/images/launcher_stencil/"
+            mMaskImage = context.loadImageResource("/images/launcher_stencil/"
                 + shape + "/" + density + "/mask.png");
+        }
 
-        float scaleFactor = GraphicGenerator.getHdpiScaleFactor(launcherOptions.density);
+        float scaleFactor = GraphicGenerator.getMdpiScaleFactor(launcherOptions.density);
         if (launcherOptions.isWebGraphic) {
             // Target size for the web graphic is 512
-            scaleFactor = 512 / (float) IMAGE_SIZE_HDPI.height;
+            scaleFactor = 512 / (float) IMAGE_SIZE_MDPI.height;
         }
-        Rectangle imageRect = Util.scaleRectangle(IMAGE_SIZE_HDPI, scaleFactor);
-        Rectangle targetRect = Util.scaleRectangle(TARGET_RECT_HDPI, scaleFactor);
+        Rectangle imageRect = Util.scaleRectangle(IMAGE_SIZE_MDPI, scaleFactor);
+        Rectangle targetRect = Util.scaleRectangle(TARGET_RECT_MDPI, scaleFactor);
 
         BufferedImage outImage = Util.newArgbBufferedImage(imageRect.width, imageRect.height);
         Graphics2D g = (Graphics2D) outImage.getGraphics();
-        g.drawImage(mBackImage, 0, 0, null);
+        if (mBackImage != null) {
+            g.drawImage(mBackImage, 0, 0, null);
+        }
 
         BufferedImage tempImage = Util.newArgbBufferedImage(imageRect.width, imageRect.height);
         Graphics2D g2 = (Graphics2D) tempImage.getGraphics();
-        g2.drawImage(mMaskImage, 0, 0, null);
-        g2.setComposite(AlphaComposite.SrcAtop);
-        g2.setPaint(new Color(launcherOptions.backgroundColor));
-        g2.fillRect(0, 0, imageRect.width, imageRect.height);
+        if (mMaskImage != null) {
+            g2.drawImage(mMaskImage, 0, 0, null);
+            g2.setComposite(AlphaComposite.SrcAtop);
+            g2.setPaint(new Color(launcherOptions.backgroundColor));
+            g2.fillRect(0, 0, imageRect.width, imageRect.height);
+        }
 
         if (launcherOptions.crop) {
             Util.drawCenterCrop(g2, launcherOptions.sourceImage, targetRect);
@@ -87,7 +84,9 @@ public class LauncherIconGenerator extends GraphicGenerator {
         }
 
         g.drawImage(tempImage, 0, 0, null);
-        g.drawImage(mForeImage, 0, 0, null);
+        if (mForeImage != null) {
+            g.drawImage(mForeImage, 0, 0, null);
+        }
 
         g.dispose();
         g2.dispose();

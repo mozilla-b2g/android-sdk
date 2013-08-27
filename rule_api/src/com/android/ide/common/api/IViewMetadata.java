@@ -16,13 +16,20 @@
 
 package com.android.ide.common.api;
 
+import com.android.annotations.NonNull;
+import com.google.common.annotations.Beta;
+
 import java.util.List;
 
 /**
  * Metadata about a particular view. The metadata for a View can be found by asking the
  * {@link IClientRulesEngine} for the metadata for a given class via
  * {@link IClientRulesEngine#getMetadata}.
+ * <p>
+ * <b>NOTE: This is not a public or final API; if you rely on this be prepared
+ * to adjust your code for the next tools release.</b>
  */
+@Beta
 public interface IViewMetadata {
     /**
      * Returns the display name views of this type (a name suitable to display to the
@@ -34,6 +41,7 @@ public interface IViewMetadata {
      *
      * @return the user visible name of views of this type (never null)
      */
+    @NonNull
     public String getDisplayName();
 
     /**
@@ -41,13 +49,16 @@ public interface IViewMetadata {
      *
      * @return the insets for this view
      */
+    @NonNull
     public Margins getInsets();
 
     /**
      * Returns the {@link FillPreference} of this view
      *
-     * @return the {@link FillPreference} of this view
+     * @return the {@link FillPreference} of this view, never null but may be
+     *     {@link FillPreference#NONE}
      */
+    @NonNull
     public FillPreference getFillPreference();
 
     /**
@@ -56,6 +67,7 @@ public interface IViewMetadata {
      * @return a list of attribute names (not including a namespace prefix) that
      *         are commonly set for this type of view, never null
      */
+    @NonNull
     public List<String> getTopAttributes();
 
     /**
@@ -108,5 +120,4 @@ public interface IViewMetadata {
                     (!verticalContext && (this == OPPOSITE || this == HEIGHT_IN_HORIZONTAL)));
         }
     }
-
 }

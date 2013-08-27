@@ -19,10 +19,19 @@ package com.android.ide.eclipse.pdt.internal;
 import com.android.ide.eclipse.ddms.ISourceRevealer;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.core.runtime.CoreException;
+import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.jdt.core.IJavaProject;
+import org.eclipse.jdt.core.IMethod;
 import org.eclipse.jdt.core.IType;
 import org.eclipse.jdt.core.JavaCore;
 import org.eclipse.jdt.core.JavaModelException;
+import org.eclipse.jdt.core.search.IJavaSearchConstants;
+import org.eclipse.jdt.core.search.SearchEngine;
+import org.eclipse.jdt.core.search.SearchMatch;
+import org.eclipse.jdt.core.search.SearchParticipant;
+import org.eclipse.jdt.core.search.SearchPattern;
+import org.eclipse.jdt.core.search.SearchRequestor;
 import org.eclipse.jdt.ui.JavaUI;
 import org.eclipse.jdt.ui.actions.OpenJavaPerspectiveAction;
 import org.eclipse.jface.text.BadLocationException;
@@ -30,19 +39,23 @@ import org.eclipse.jface.text.IDocument;
 import org.eclipse.jface.text.IRegion;
 import org.eclipse.ui.IEditorInput;
 import org.eclipse.ui.IEditorPart;
+import org.eclipse.ui.IPerspectiveRegistry;
 import org.eclipse.ui.IWorkbench;
 import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.IWorkbenchWindow;
 import org.eclipse.ui.PartInitException;
 import org.eclipse.ui.PlatformUI;
+import org.eclipse.ui.WorkbenchException;
 import org.eclipse.ui.texteditor.IDocumentProvider;
 import org.eclipse.ui.texteditor.ITextEditor;
 
 /**
  * Implementation of the com.android.ide.ddms.sourceRevealer extension point.
+ * This implementation is a copy of com.android.ide.eclipse.adt.SourceRevealer.
  */
 public class SourceRevealer extends DevTreeProjectProvider implements ISourceRevealer {
 
+    @Override
     public boolean reveal(String applicationName, String className, int line) {
         IProject project = getProject();
 
@@ -98,6 +111,70 @@ public class SourceRevealer extends DevTreeProjectProvider implements ISourceRev
         }
 
         return false;
+    }
+
+    @Override
+    public boolean revealMethod(String fqmn, String fileName, int lineNumber, String perspective) {
+        SearchEngine se = new SearchEngine();
+        SearchPattern searchPattern = SearchPattern.createPattern(
+                fqmn,
+                IJavaSearchConstants.METHOD,
+                IJavaSearchConstants.DECLARATIONS,
+                SearchPattern.R_EXACT_MATCH | SearchPattern.R_CASE_SENSITIVE);
+        MethodSearchRequestor requestor = new MethodSearchRequestor(perspective);
+        try {
+            se.search(searchPattern,
+                    new SearchParticipant[] {SearchEngine.getDefaultSearchParticipant()},
+                    SearchEngine.createWorkspaceScope(),
+                    requestor,
+                    new NullProgressMonitor());
+        } catch (CoreException e) {
+            return false;
+        }
+
+        return requestor.didMatch();
+    }
+
+    private static class MethodSearchRequestor extends SearchRequestor {
+        private boolean mFoundMatch = false;
+        private final String mPerspective;
+
+        public MethodSearchRequestor(String perspective) {
+            mPerspective = perspective;
+        }
+
+        public boolean didMatch() {
+            return mFoundMatch;
+        }
+
+        @Override
+        public void acceptSearchMatch(SearchMatch match) throws CoreException {
+            Object element = match.getElement();
+            if (element instanceof IMethod && !mFoundMatch) {
+                if (mPerspective != null) {
+                    SourceRevealer.switchToPerspective(mPerspective);
+                }
+
+                IMethod method = (IMethod) element;
+                JavaUI.openInEditor(method);
+                mFoundMatch = true;
+            }
+        }
+    }
+
+    public static void switchToPerspective(String perspectiveId) {
+        IWorkbench workbench = PlatformUI.getWorkbench();
+        IWorkbenchWindow window = workbench.getActiveWorkbenchWindow();
+        IPerspectiveRegistry perspectiveRegistry = workbench.getPerspectiveRegistry();
+        if (perspectiveId != null
+                && perspectiveId.length() > 0
+                && perspectiveRegistry.findPerspectiveWithId(perspectiveId) != null) {
+            try {
+                workbench.showPerspective(perspectiveId, window);
+            } catch (WorkbenchException e) {
+                // ignore exception, perspective won't be switched
+            }
+        }
     }
 
 }

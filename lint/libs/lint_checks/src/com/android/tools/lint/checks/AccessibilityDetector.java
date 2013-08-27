@@ -21,6 +21,7 @@ import static com.android.tools.lint.detector.api.LintConstants.ATTR_CONTENT_DES
 import static com.android.tools.lint.detector.api.LintConstants.IMAGE_BUTTON;
 import static com.android.tools.lint.detector.api.LintConstants.IMAGE_VIEW;
 
+import com.android.annotations.NonNull;
 import com.android.tools.lint.detector.api.Category;
 import com.android.tools.lint.detector.api.Issue;
 import com.android.tools.lint.detector.api.LayoutDetector;
@@ -57,33 +58,33 @@ public class AccessibilityDetector extends LayoutDetector {
             AccessibilityDetector.class,
             Scope.RESOURCE_FILE_SCOPE);
 
-    /** Constructs a new accessibility check */
+    /** Constructs a new {@link AccessibilityDetector} */
     public AccessibilityDetector() {
     }
 
     @Override
-    public Speed getSpeed() {
+    public @NonNull Speed getSpeed() {
         return Speed.FAST;
     }
 
     @Override
     public Collection<String> getApplicableElements() {
-        return Arrays.asList(new String[] {
+        return Arrays.asList(
                 IMAGE_BUTTON,
                 IMAGE_VIEW
-        });
+        );
     }
 
     @Override
-    public void visitElement(XmlContext context, Element element) {
+    public void visitElement(@NonNull XmlContext context, @NonNull Element element) {
         if (!element.hasAttributeNS(ANDROID_URI, ATTR_CONTENT_DESCRIPTION)) {
-            context.report(ISSUE, context.getLocation(element),
+            context.report(ISSUE, element, context.getLocation(element),
                     "[Accessibility] Missing contentDescription attribute on image", null);
         } else {
             Attr attributeNode = element.getAttributeNodeNS(ANDROID_URI, ATTR_CONTENT_DESCRIPTION);
             String attribute = attributeNode.getValue();
             if (attribute.length() == 0 || attribute.equals("TODO")) { //$NON-NLS-1$
-                context.report(ISSUE, context.getLocation(attributeNode),
+                context.report(ISSUE, attributeNode, context.getLocation(attributeNode),
                         "[Accessibility] Empty contentDescription attribute on image", null);
             }
         }

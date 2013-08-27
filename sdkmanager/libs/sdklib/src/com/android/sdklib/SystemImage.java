@@ -19,6 +19,7 @@ package com.android.sdklib;
 import com.android.sdklib.io.FileOp;
 
 import java.io.File;
+import java.util.Locale;
 
 
 /**
@@ -39,7 +40,8 @@ public class SystemImage implements ISystemImage {
      * @param location The location of an installed system image.
      * @param locationType Where the system image folder is located for this ABI.
      * @param abiType The ABI type. For example, one of {@link SdkConstants#ABI_ARMEABI},
-     *          {@link SdkConstants#ABI_ARMEABI_V7A} or  {@link SdkConstants#ABI_INTEL_ATOM}.
+     *          {@link SdkConstants#ABI_ARMEABI_V7A}, {@link SdkConstants#ABI_INTEL_ATOM} or
+     *          {@link SdkConstants#ABI_MIPS}.
      */
     public SystemImage(File location, LocationType locationType, String abiType) {
         mLocation = location;
@@ -54,7 +56,8 @@ public class SystemImage implements ISystemImage {
      * @param sdkManager The current SDK manager.
      * @param locationType Where the system image folder is located for this ABI.
      * @param abiType The ABI type. For example, one of {@link SdkConstants#ABI_ARMEABI},
-     *          {@link SdkConstants#ABI_ARMEABI_V7A} or  {@link SdkConstants#ABI_INTEL_ATOM}.
+     *          {@link SdkConstants#ABI_ARMEABI_V7A}, {@link SdkConstants#ABI_INTEL_ATOM} or
+     *          {@link SdkConstants#ABI_MIPS}.
      * @throws IllegalArgumentException if the {@code target} used for
      *         {@link ISystemImage.LocationType#IN_SYSTEM_IMAGE} is not a {@link PlatformTarget}.
      */
@@ -121,24 +124,29 @@ public class SystemImage implements ISystemImage {
     }
 
     /** Returns the actual location of an installed system image. */
+    @Override
     public File getLocation() {
         return mLocation;
     }
 
     /** Indicates the location strategy for this system image in the SDK. */
+    @Override
     public LocationType getLocationType() {
         return mLocationtype;
     }
 
     /**
      * Returns the ABI type. For example, one of {@link SdkConstants#ABI_ARMEABI},
-     * {@link SdkConstants#ABI_ARMEABI_V7A} or  {@link SdkConstants#ABI_INTEL_ATOM}.
+     * {@link SdkConstants#ABI_ARMEABI_V7A}, {@link SdkConstants#ABI_INTEL_ATOM} or
+     * {@link SdkConstants#ABI_MIPS}.
      * Cannot be null nor empty.
      */
+    @Override
     public String getAbiType() {
         return mAbiType;
     }
 
+    @Override
     public int compareTo(ISystemImage other) {
         // Sort by ABI name only. This is what matters from a user point of view.
         return this.getAbiType().compareToIgnoreCase(other.getAbiType());
@@ -154,7 +162,7 @@ public class SystemImage implements ISystemImage {
     public String toString() {
         return String.format("SystemImage ABI=%s, location %s='%s'",           //$NON-NLS-1$
                 mAbiType,
-                mLocationtype.toString().replace('_', ' ').toLowerCase(),
+                mLocationtype.toString().replace('_', ' ').toLowerCase(Locale.US),
                 mLocation
                 );
     }

@@ -23,7 +23,6 @@ import com.android.ide.eclipse.adt.internal.build.builders.ResourceManagerBuilde
 import com.android.sdklib.SdkConstants;
 
 import java.io.File;
-import java.util.regex.Pattern;
 
 /**
  * Constant definition class.<br>
@@ -126,6 +125,10 @@ public class AdtConstants {
     public static final String DOT_BMP = ".bmp"; //$NON-NLS-1$
     /** Dot-Extension for SVG files, i.e. ".svg" */
     public static final String DOT_SVG = ".svg"; //$NON-NLS-1$
+    /** Dot-Extension for template files */
+    public static final String DOT_FTL = ".ftl"; //$NON-NLS-1$
+    /** Dot-Extension of text files, i.e. ".txt" */
+    public final static String DOT_TXT = ".txt"; //$NON-NLS-1$
 
     /** Name of the android sources directory */
     public static final String FD_ANDROID_SOURCES = "sources"; //$NON-NLS-1$
@@ -140,10 +143,9 @@ public class AdtConstants {
     public final static String FN_MANIFEST_CLASS = "Manifest.java"; //$NON-NLS-1$
     /** Temporary packaged resources file name, i.e. "resources.ap_" */
     public final static String FN_RESOURCES_AP_ = "resources.ap_"; //$NON-NLS-1$
-    /** Temporary packaged resources file name for a specific set of configuration */
-    public final static String FN_RESOURCES_S_AP_ = "resources-%s.ap_"; //$NON-NLS-1$
-    public final static Pattern PATTERN_RESOURCES_S_AP_ =
-        Pattern.compile("resources-.*\\.ap_", Pattern.CASE_INSENSITIVE); //$NON-NLS-1$
+
+    /** aapt's proguard output */
+    public final static String FN_AAPT_PROGUARD = "proguard.txt"; //$NON-NLS-1$
 
     public final static String FN_TRACEVIEW =
         (SdkConstants.CURRENT_PLATFORM == SdkConstants.PLATFORM_WINDOWS) ?
@@ -214,10 +216,16 @@ public class AdtConstants {
     public final static String MARKER_ADT = AdtPlugin.PLUGIN_ID + ".adtProblem"; //$NON-NLS-1$
 
     /** Marker for Android Target errors.
-     * This is not cleared on each like other markers. Instead, it's cleared
+     * This is not cleared on each build like other markers. Instead, it's cleared
      * when an AndroidClasspathContainerInitializer has succeeded in creating an
      * AndroidClasspathContainer */
     public final static String MARKER_TARGET = AdtPlugin.PLUGIN_ID + ".targetProblem"; //$NON-NLS-1$
+    /** Marker for Android Dependency errors.
+     * This is not cleared on each build like other markers. Instead, it's cleared
+     * when a LibraryClasspathContainerInitializer has succeeded in creating a
+     * LibraryClasspathContainer */
+    public final static String MARKER_DEPENDENCY = AdtPlugin.PLUGIN_ID + ".dependencyProblem"; //$NON-NLS-1$
+
 
     /** aapt marker error when running the compile command, only to be used
      * in {@link PreCompilerBuilder} */
@@ -236,12 +244,16 @@ public class AdtConstants {
      * from the {@link PreCompilerBuilder} */
     public final static String MARKER_ANDROID = LEGACY_PLUGIN_ID + ".androidProblem"; //$NON-NLS-1$
 
+
     /** aapt marker error when running the package command, only to be used in
      * {@link PostCompilerBuilder} */
     public final static String MARKER_AAPT_PACKAGE = LEGACY_PLUGIN_ID + ".aapt2Problem"; //$NON-NLS-1$
 
     /** final packaging error marker, only to be used in {@link PostCompilerBuilder} */
     public final static String MARKER_PACKAGING = AdtPlugin.PLUGIN_ID + ".packagingProblem"; //$NON-NLS-1$
+
+    /** manifest merger error, only to be used in {@link PreCompilerBuilder} */
+    public final static String MARKER_MANIFMERGER = AdtPlugin.PLUGIN_ID + ".manifMergerProblem"; //$NON-NLS-1$
 
     /** Marker for lint errors */
     public final static String MARKER_LINT = AdtPlugin.PLUGIN_ID + ".lintProblem"; //$NON-NLS-1$

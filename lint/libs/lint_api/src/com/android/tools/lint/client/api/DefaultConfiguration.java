@@ -16,11 +16,15 @@
 
 package com.android.tools.lint.client.api;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.tools.lint.detector.api.Context;
 import com.android.tools.lint.detector.api.Issue;
 import com.android.tools.lint.detector.api.Location;
 import com.android.tools.lint.detector.api.Project;
 import com.android.tools.lint.detector.api.Severity;
+import com.google.common.annotations.Beta;
+import com.google.common.io.Closeables;
 
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -28,6 +32,7 @@ import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
+import org.xml.sax.SAXParseException;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedWriter;
@@ -41,6 +46,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -50,20 +56,25 @@ import javax.xml.parsers.DocumentBuilderFactory;
 /**
  * Default implementation of a {@link Configuration} which reads and writes
  * configuration data into {@code lint.xml} in the project directory.
- *
  * <p/>
  * <b>NOTE: This is not a public or final API; if you rely on this be prepared
  * to adjust your code for the next tools release.</b>
  */
+@Beta
 public class DefaultConfiguration extends Configuration {
     private final LintClient mClient;
     private static final String CONFIG_FILE_NAME = "lint.xml"; //$NON-NLS-1$
 
     // Lint XML File
+    @NonNull
     private static final String TAG_ISSUE = "issue"; //$NON-NLS-1$
+    @NonNull
     private static final String ATTR_ID = "id"; //$NON-NLS-1$
+    @NonNull
     private static final String ATTR_SEVERITY = "severity"; //$NON-NLS-1$
+    @NonNull
     private static final String ATTR_PATH = "path"; //$NON-NLS-1$
+    @NonNull
     private static final String TAG_IGNORE = "ignore"; //$NON-NLS-1$
 
     private final Configuration mParent;
@@ -79,15 +90,21 @@ public class DefaultConfiguration extends Configuration {
      */
     private Map<String, Severity> mSeverity;
 
-    protected DefaultConfiguration(LintClient client, Project project, Configuration parent,
-            File configFile) {
+    protected DefaultConfiguration(
+            @NonNull LintClient client,
+            @Nullable Project project,
+            @Nullable Configuration parent,
+            @NonNull File configFile) {
         mClient = client;
         mProject = project;
         mParent = parent;
         mConfigFile = configFile;
     }
 
-    protected DefaultConfiguration(LintClient client, Project project, Configuration parent) {
+    protected DefaultConfiguration(
+            @NonNull LintClient client,
+            @NonNull Project project,
+            @Nullable Configuration parent) {
         this(client, project, parent, new File(project.getDir(), CONFIG_FILE_NAME));
     }
 
@@ -99,8 +116,11 @@ public class DefaultConfiguration extends Configuration {
      * @param parent the parent/fallback configuration or null
      * @return a new configuration
      */
-    public static DefaultConfiguration create(LintClient client, Project project,
-            Configuration parent) {
+    @NonNull
+    public static DefaultConfiguration create(
+            @NonNull LintClient client,
+            @NonNull Project project,
+            @Nullable Configuration parent) {
         return new DefaultConfiguration(client, project, parent);
     }
 
@@ -113,13 +133,18 @@ public class DefaultConfiguration extends Configuration {
      * @param lintFile the lint file containing the configuration
      * @return a new configuration
      */
-    public static DefaultConfiguration create(LintClient client, File lintFile) {
+    @NonNull
+    public static DefaultConfiguration create(@NonNull LintClient client, @NonNull File lintFile) {
         return new DefaultConfiguration(client, null /*project*/, null /*parent*/, lintFile);
     }
 
     @Override
-    public boolean isIgnored(Context context, Issue issue, Location location, String message,
-            Object data) {
+    public boolean isIgnored(
+            @NonNull Context context,
+            @NonNull Issue issue,
+            @Nullable Location location,
+            @NonNull String message,
+            @Nullable Object data) {
         ensureInitialized();
 
         String id = issue.getId();
@@ -141,7 +166,8 @@ public class DefaultConfiguration extends Configuration {
         return false;
     }
 
-    protected Severity getDefaultSeverity(Issue issue) {
+    @NonNull
+    protected Severity getDefaultSeverity(@NonNull Issue issue) {
         if (!issue.isEnabledByDefault()) {
             return Severity.IGNORE;
         }
@@ -150,7 +176,8 @@ public class DefaultConfiguration extends Configuration {
     }
 
     @Override
-    public Severity getSeverity(Issue issue) {
+    @NonNull
+    public Severity getSeverity(@NonNull Issue issue) {
         ensureInitialized();
 
         Severity severity = mSeverity.get(issue.getId());
@@ -171,6 +198,22 @@ public class DefaultConfiguration extends Configuration {
         }
     }
 
+    private void formatError(String message, Object... args) {
+        if (args != null && args.length > 0) {
+            message = String.format(message, args);
+        }
+        message = "Failed to parse lint.xml configuration file: " + message;
+        LintDriver driver = new LintDriver(new IssueRegistry() {
+            @Override @NonNull public List<Issue> getIssues() {
+                return Collections.emptyList();
+            }
+        }, mClient);
+        mClient.report(new Context(driver, mProject, mProject, mConfigFile),
+                IssueRegistry.LINT_ERROR,
+                mProject.getConfiguration().getSeverity(IssueRegistry.LINT_ERROR),
+                Location.create(mConfigFile), message, null);
+    }
+
     private void readConfig() {
         mSuppressed = new HashMap<String, List<String>>();
         mSeverity = new HashMap<String, Severity>();
@@ -179,9 +222,11 @@ public class DefaultConfiguration extends Configuration {
             return;
         }
 
+        @SuppressWarnings("resource") // Eclipse doesn't know about Closeables.closeQuietly
+        BufferedInputStream input = null;
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            BufferedInputStream input = new BufferedInputStream(new FileInputStream(mConfigFile));
+            input = new BufferedInputStream(new FileInputStream(mConfigFile));
             InputSource source = new InputSource(input);
             factory.setNamespaceAware(false);
             factory.setValidating(false);
@@ -193,8 +238,7 @@ public class DefaultConfiguration extends Configuration {
                 Element element = (Element) node;
                 String id = element.getAttribute(ATTR_ID);
                 if (id.length() == 0) {
-                    mClient.log(null,
-                            "Invalid lint config file: Missing required issue id attribute");
+                    formatError("Invalid lint config file: Missing required issue id attribute");
                     continue;
                 }
 
@@ -213,7 +257,7 @@ public class DefaultConfiguration extends Configuration {
                             }
                         }
                     } else {
-                        mClient.log(null,  "Unexpected attribute %1$s", name);
+                        formatError("Unexpected attribute \"%1$s\"", name);
                     }
                 }
 
@@ -226,7 +270,7 @@ public class DefaultConfiguration extends Configuration {
                             Element ignore = (Element) child;
                             String path = ignore.getAttribute(ATTR_PATH);
                             if (path.length() == 0) {
-                                mClient.log(null,  "Missing required %1$s attribute under %2$s",
+                                formatError("Missing required %1$s attribute under %2$s",
                                     ATTR_PATH, id);
                             } else {
                                 List<String> paths = mSuppressed.get(id);
@@ -240,8 +284,12 @@ public class DefaultConfiguration extends Configuration {
                     }
                 }
             }
+        } catch (SAXParseException e) {
+            formatError(e.getMessage());
         } catch (Exception e) {
             mClient.log(e, null);
+        } finally {
+            Closeables.closeQuietly(input);
         }
     }
 
@@ -278,7 +326,8 @@ public class DefaultConfiguration extends Configuration {
                     writeAttribute(writer, ATTR_ID, id);
                     Severity severity = mSeverity.get(id);
                     if (severity != null) {
-                        writeAttribute(writer, ATTR_SEVERITY, severity.name().toLowerCase());
+                        writeAttribute(writer, ATTR_SEVERITY,
+                                severity.name().toLowerCase(Locale.US));
                     }
 
                     List<String> paths = mSuppressed.get(id);
@@ -325,7 +374,8 @@ public class DefaultConfiguration extends Configuration {
         }
     }
 
-    private static void writeAttribute(Writer writer, String name, String value)
+    private static void writeAttribute(
+            @NonNull Writer writer, @NonNull String name, @NonNull String value)
             throws IOException {
         writer.write(' ');
         writer.write(name);
@@ -336,8 +386,12 @@ public class DefaultConfiguration extends Configuration {
     }
 
     @Override
-    public void ignore(Context context, Issue issue, Location location, String message,
-            Object data) {
+    public void ignore(
+            @NonNull Context context,
+            @NonNull Issue issue,
+            @Nullable Location location,
+            @NonNull String message,
+            @Nullable Object data) {
         // This configuration only supports suppressing warnings on a per-file basis
         if (location != null) {
             ignore(issue, location.getFile());
@@ -350,7 +404,7 @@ public class DefaultConfiguration extends Configuration {
      * @param issue the issue to be ignored in the given file
      * @param file the file to ignore the issue in
      */
-    public void ignore(Issue issue, File file) {
+    public void ignore(@NonNull Issue issue, @NonNull File file) {
         ensureInitialized();
 
         String path = mProject != null ? mProject.getRelativePath(file) : file.getPath();
@@ -371,7 +425,7 @@ public class DefaultConfiguration extends Configuration {
     }
 
     @Override
-    public void setSeverity(Issue issue, Severity severity) {
+    public void setSeverity(@NonNull Issue issue, @Nullable Severity severity) {
         ensureInitialized();
 
         String id = issue.getId();

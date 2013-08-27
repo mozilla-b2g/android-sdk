@@ -36,8 +36,10 @@ import java.util.Collections;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
 
@@ -58,11 +60,12 @@ public abstract class ResourceRepository {
     protected final Map<ResourceFolderType, List<ResourceFolder>> mFolderMap =
         new EnumMap<ResourceFolderType, List<ResourceFolder>>(ResourceFolderType.class);
 
-    protected final Map<ResourceType, List<ResourceItem>> mResourceMap =
-        new EnumMap<ResourceType, List<ResourceItem>>(ResourceType.class);
+    protected final Map<ResourceType, Map<String, ResourceItem>> mResourceMap =
+            new EnumMap<ResourceType, Map<String, ResourceItem>>(
+            ResourceType.class);
 
-    private final Map<List<ResourceItem>, List<ResourceItem>> mReadOnlyListMap =
-        new IdentityHashMap<List<ResourceItem>, List<ResourceItem>>();
+    private final Map<Map<String, ResourceItem>, Collection<ResourceItem>> mReadOnlyListMap =
+            new IdentityHashMap<Map<String, ResourceItem>, Collection<ResourceItem>>();
 
     private final boolean mFrameworkRepository;
 
@@ -193,13 +196,13 @@ public abstract class ResourceRepository {
      * @return true if the resource is known
      */
     public boolean hasResourceItem(ResourceType type, String name) {
-        List<ResourceItem> list = mResourceMap.get(type);
+        Map<String, ResourceItem> map = mResourceMap.get(type);
 
-        if (list != null) {
-            for (ResourceItem item : list) {
-                if (name.equals(item.getName())) {
-                    return true;
-                }
+        if (map != null) {
+
+            ResourceItem resourceItem = map.get(name);
+            if (resourceItem != null) {
+                return true;
             }
         }
 
@@ -225,16 +228,56 @@ public abstract class ResourceRepository {
 
             item = createResourceItem(name);
 
-            List<ResourceItem> list = mResourceMap.get(type);
-            if (list == null) {
-                list = new ArrayList<ResourceItem>();
-                mResourceMap.put(type, list);
+            Map<String, ResourceItem> map = mResourceMap.get(type);
+
+            if (map == null) {
+                if (isFrameworkRepository()) {
+                    // Pick initial size for the maps. Also change the load factor to 1.0
+                    // to avoid rehashing the whole table when we (as expected) get near
+                    // the known rough size of each resource type map.
+                    int size;
+                    switch (type) {
+                        // Based on counts in API 16. Going back to API 10, the counts
+                        // are roughly 25-50% smaller (e.g. compared to the top 5 types below
+                        // the fractions are 1107 vs 1734, 831 vs 1508, 895 vs 1255,
+                        // 733 vs 1064 and 171 vs 783.
+                        case PUBLIC:           size = 1734; break;
+                        case DRAWABLE:         size = 1508; break;
+                        case STRING:           size = 1255; break;
+                        case ATTR:             size = 1064; break;
+                        case STYLE:             size = 783; break;
+                        case ID:                size = 347; break;
+                        case DECLARE_STYLEABLE: size = 210; break;
+                        case LAYOUT:            size = 187; break;
+                        case COLOR:             size = 120; break;
+                        case ANIM:               size = 95; break;
+                        case DIMEN:              size = 81; break;
+                        case BOOL:               size = 54; break;
+                        case INTEGER:            size = 52; break;
+                        case ARRAY:              size = 51; break;
+                        case PLURALS:            size = 20; break;
+                        case XML:                size = 14; break;
+                        case INTERPOLATOR :      size = 13; break;
+                        case ANIMATOR:            size = 8; break;
+                        case RAW:                 size = 4; break;
+                        case MENU:                size = 2; break;
+                        case MIPMAP:              size = 2; break;
+                        case FRACTION:            size = 1; break;
+                        default:
+                            size = 2;
+                    }
+                    map = new HashMap<String, ResourceItem>(size, 1.0f);
+                } else {
+                    map = new HashMap<String, ResourceItem>();
+                }
+                mResourceMap.put(type, map);
             }
 
-            list.add(item);
+            map.put(item.getName(), item);
 
             if (oldItem != null) {
-                list.remove(oldItem);
+                map.remove(oldItem.getName());
+
             }
         }
 
@@ -324,16 +367,16 @@ public abstract class ResourceRepository {
      * @return a non null collection of resource items
      */
     public Collection<ResourceItem> getResourceItemsOfType(ResourceType type) {
-        List<ResourceItem> list = mResourceMap.get(type);
+        Map<String, ResourceItem> map = mResourceMap.get(type);
 
-        if (list == null) {
+        if (map == null) {
             return Collections.emptyList();
         }
 
-        List<ResourceItem> roList = mReadOnlyListMap.get(list);
+        Collection<ResourceItem> roList = mReadOnlyListMap.get(map);
         if (roList == null) {
-            roList = Collections.unmodifiableList(list);
-            mReadOnlyListMap.put(list, roList);
+            roList = Collections.unmodifiableCollection(map.values());
+            mReadOnlyListMap.put(map, roList);
         }
 
         return roList;
@@ -345,7 +388,7 @@ public abstract class ResourceRepository {
      * @return true if the repository contains resources of the given type, false otherwise.
      */
     public boolean hasResourcesOfType(ResourceType type) {
-        List<ResourceItem> items = mResourceMap.get(type);
+        Map<String, ResourceItem> items = mResourceMap.get(type);
         return (items != null && items.size() > 0);
     }
 
@@ -355,7 +398,17 @@ public abstract class ResourceRepository {
      * @return the {@link ResourceFolder} or null if it was not found.
      */
     public ResourceFolder getResourceFolder(IAbstractFolder folder) {
-        for (List<ResourceFolder> list : mFolderMap.values()) {
+        Collection<List<ResourceFolder>> values = mFolderMap.values();
+
+        if (values.isEmpty()) { // This shouldn't be necessary, but has been observed
+            try {
+                loadResources(folder.getParentFolder());
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+
+        for (List<ResourceFolder> list : values) {
             for (ResourceFolder resFolder : list) {
                 IAbstractFolder wrapper = resFolder.getFolder();
                 if (wrapper.equals(folder)) {
@@ -557,10 +610,10 @@ public abstract class ResourceRepository {
     }
 
     protected void removeFile(ResourceType type, ResourceFile file) {
-        List<ResourceItem> list = mResourceMap.get(type);
-        if (list != null) {
-            for (int i = 0 ; i < list.size(); i++) {
-                ResourceItem item = list.get(i);
+        Map<String, ResourceItem> map = mResourceMap.get(type);
+        if (map != null) {
+            Collection<ResourceItem> values = map.values();
+            for (ResourceItem item : values) {
                 item.removeFile(file);
             }
         }
@@ -577,7 +630,7 @@ public abstract class ResourceRepository {
             FolderConfiguration referenceConfig) {
 
         // get the resource item for the given type
-        List<ResourceItem> items = mResourceMap.get(type);
+        Map<String, ResourceItem> items = mResourceMap.get(type);
         if (items == null) {
             return new HashMap<String, ResourceValue>();
         }
@@ -585,7 +638,7 @@ public abstract class ResourceRepository {
         // create the map
         HashMap<String, ResourceValue> map = new HashMap<String, ResourceValue>(items.size());
 
-        for (ResourceItem item : items) {
+        for (ResourceItem item : items.values()) {
             ResourceValue value = item.getResourceValue(type, referenceConfig,
                     isFrameworkRepository());
             if (value != null) {
@@ -598,19 +651,21 @@ public abstract class ResourceRepository {
 
 
     /**
-     * Called after a resource change event, when the resource delta has been processed.
+     * Cleans up the repository of resource items that have no source file anymore.
      */
-    protected void postUpdate() {
+    public void postUpdateCleanUp() {
         // Since removed files/folders remove source files from existing ResourceItem, loop through
         // all resource items and remove the ones that have no source files.
 
-        Collection<List<ResourceItem>> lists = mResourceMap.values();
-        for (List<ResourceItem> list : lists) {
-            for (int i = 0 ; i < list.size() ;) {
-                if (list.get(i).hasNoSourceFile()) {
-                    list.remove(i);
-                } else {
-                    i++;
+        Collection<Map<String, ResourceItem>> maps = mResourceMap.values();
+        for (Map<String, ResourceItem> map : maps) {
+            Set<String> keySet = map.keySet();
+            Iterator<String> iterator = keySet.iterator();
+            while (iterator.hasNext()) {
+                String name = iterator.next();
+                ResourceItem resourceItem = map.get(name);
+                if (resourceItem.hasNoSourceFile()) {
+                    iterator.remove();
                 }
             }
         }
@@ -624,17 +679,16 @@ public abstract class ResourceRepository {
      * @return the existing ResourceItem or null if no match was found.
      */
     private ResourceItem findDeclaredResourceItem(ResourceType type, String name) {
-        List<ResourceItem> list = mResourceMap.get(type);
+        Map<String, ResourceItem> map = mResourceMap.get(type);
 
-        if (list != null) {
-            for (ResourceItem item : list) {
-                // ignore inline
-                if (name.equals(item.getName()) && item.isDeclaredInline() == false) {
-                    return item;
-                }
+        if (map != null) {
+            ResourceItem resourceItem = map.get(name);
+            if (resourceItem != null && !resourceItem.isDeclaredInline()) {
+                return resourceItem;
             }
         }
 
         return null;
     }
 }
+

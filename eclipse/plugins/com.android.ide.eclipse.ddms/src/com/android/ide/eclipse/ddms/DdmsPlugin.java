@@ -17,16 +17,18 @@
 package com.android.ide.eclipse.ddms;
 
 import com.android.ddmlib.AndroidDebugBridge;
+import com.android.ddmlib.AndroidDebugBridge.IDeviceChangeListener;
 import com.android.ddmlib.Client;
 import com.android.ddmlib.DdmPreferences;
 import com.android.ddmlib.IDevice;
 import com.android.ddmlib.Log;
-import com.android.ddmlib.AndroidDebugBridge.IDeviceChangeListener;
 import com.android.ddmlib.Log.ILogOutput;
 import com.android.ddmlib.Log.LogLevel;
 import com.android.ddmuilib.DdmUiPreferences;
-import com.android.ddmuilib.StackTracePanel;
 import com.android.ddmuilib.DevicePanel.IUiSelectionListener;
+import com.android.ddmuilib.StackTracePanel;
+import com.android.ddmuilib.console.DdmConsole;
+import com.android.ddmuilib.console.IDdmConsole;
 import com.android.ide.eclipse.ddms.i18n.Messages;
 import com.android.ide.eclipse.ddms.preferences.PreferenceInitializer;
 
@@ -82,7 +84,6 @@ public final class DdmsPlugin extends AbstractUIPlugin implements IDeviceChangeL
      * Initialized from an extension point.
      */
     private IDebuggerConnector[] mDebuggerConnectors;
-    private ISourceRevealer[] mSourceRevealers;
     private ITraceviewLauncher[] mTraceviewLaunchers;
 
 
@@ -159,6 +160,7 @@ public final class DdmsPlugin extends AbstractUIPlugin implements IDeviceChangeL
         // changing the console properties update the UI, we need to make this change
         // in the UI thread.
         display.asyncExec(new Runnable() {
+            @Override
             public void run() {
                 errorConsoleStream.setColor(mRed);
             }
@@ -166,20 +168,23 @@ public final class DdmsPlugin extends AbstractUIPlugin implements IDeviceChangeL
 
         // set up the ddms log to use the ddms console.
         Log.setLogOutput(new ILogOutput() {
+            @Override
             public void printLog(LogLevel logLevel, String tag, String message) {
                 if (logLevel.getPriority() >= LogLevel.ERROR.getPriority()) {
                     printToStream(errorConsoleStream, tag, message);
-                    ConsolePlugin.getDefault().getConsoleManager().showConsoleView(mDdmsConsole);
+                    showConsoleView(mDdmsConsole);
                 } else {
                     printToStream(consoleStream, tag, message);
                 }
             }
 
+            @Override
             public void printAndPromptLog(final LogLevel logLevel, final String tag,
                     final String message) {
                 printLog(logLevel, tag, message);
                 // dialog box only run in UI thread..
                 display.asyncExec(new Runnable() {
+                    @Override
                     public void run() {
                         Shell shell = display.getActiveShell();
                         if (logLevel == LogLevel.ERROR) {
@@ -193,8 +198,35 @@ public final class DdmsPlugin extends AbstractUIPlugin implements IDeviceChangeL
 
         });
 
+        // set up the ddms console to use this objects
+        DdmConsole.setConsole(new IDdmConsole() {
+            @Override
+            public void printErrorToConsole(String message) {
+                printToStream(errorConsoleStream, null, message);
+                showConsoleView(mDdmsConsole);
+            }
+            @Override
+            public void printErrorToConsole(String[] messages) {
+                for (String m : messages) {
+                    printToStream(errorConsoleStream, null, m);
+                }
+                showConsoleView(mDdmsConsole);
+            }
+            @Override
+            public void printToConsole(String message) {
+                printToStream(consoleStream, null, message);
+            }
+            @Override
+            public void printToConsole(String[] messages) {
+                for (String m : messages) {
+                    printToStream(consoleStream, null, m);
+                }
+            }
+        });
+
         // set the listener for the preference change
         eclipseStore.addPropertyChangeListener(new IPropertyChangeListener() {
+            @Override
             public void propertyChange(PropertyChangeEvent event) {
                 // get the name of the property that changed.
                 String property = event.getProperty();
@@ -293,10 +325,6 @@ public final class DdmsPlugin extends AbstractUIPlugin implements IDeviceChangeL
                     // get the available debugger connectors
                     mDebuggerConnectors = instantiateDebuggerConnectors(dcce);
 
-                    // get the available source revealers
-                    elements = findConfigElements("com.android.ide.eclipse.ddms.sourceRevealer"); //$NON-NLS-1$
-                    mSourceRevealers = instantiateSourceRevealers(elements);
-
                     // get the available Traceview Launchers.
                     elements = findConfigElements("com.android.ide.eclipse.ddms.traceviewLauncher"); //$NON-NLS-1$
                     mTraceviewLaunchers = instantiateTraceviewLauncher(elements);
@@ -309,11 +337,16 @@ public final class DdmsPlugin extends AbstractUIPlugin implements IDeviceChangeL
         }.schedule();
     }
 
-    private IConfigurationElement[] findConfigElements(String name) {
+    private void showConsoleView(MessageConsole console) {
+        ConsolePlugin.getDefault().getConsoleManager().showConsoleView(console);
+    }
 
+
+    /** Obtain a list of configuration elements that extend the given extension point. */
+    IConfigurationElement[] findConfigElements(String extensionPointId) {
         // get the adb location from an implementation of the ADB Locator extension point.
         IExtensionRegistry extensionRegistry = Platform.getExtensionRegistry();
-        IExtensionPoint extensionPoint = extensionRegistry.getExtensionPoint(name);
+        IExtensionPoint extensionPoint = extensionRegistry.getExtensionPoint(extensionPointId);
         if (extensionPoint != null) {
             return extensionPoint.getConfigurationElements();
         }
@@ -366,29 +399,6 @@ public final class DdmsPlugin extends AbstractUIPlugin implements IDeviceChangeL
         }
 
         return list.toArray(new IDebuggerConnector[list.size()]);
-    }
-
-    /**
-     * Finds if any other plug-in is extending the exposed Extension Point called sourceRevealer.
-     *
-     * @return an array of all locators found, or an empty array if none were found.
-     */
-    private ISourceRevealer[] instantiateSourceRevealers(IConfigurationElement[] configElements)
-            throws CoreException {
-        ArrayList<ISourceRevealer> list = new ArrayList<ISourceRevealer>();
-
-        if (configElements.length > 0) {
-            // only use the first one, ignore the others.
-            IConfigurationElement configElement = configElements[0];
-
-            // instantiate the class
-            Object obj = configElement.createExecutableExtension("class"); //$NON-NLS-1$
-            if (obj instanceof ISourceRevealer) {
-                list.add((ISourceRevealer) obj);
-            }
-        }
-
-        return list.toArray(new ISourceRevealer[list.size()]);
     }
 
     /**
@@ -572,6 +582,7 @@ public final class DdmsPlugin extends AbstractUIPlugin implements IDeviceChangeL
      *
      * @see IDeviceChangeListener#deviceConnected(IDevice)
      */
+    @Override
     public void deviceConnected(IDevice device) {
         // if we are listening to selection coming from the ui, then we do nothing, as
         // any change in the devices/clients, will be handled by the UI, and we'll receive
@@ -591,6 +602,7 @@ public final class DdmsPlugin extends AbstractUIPlugin implements IDeviceChangeL
      *
      * @see IDeviceChangeListener#deviceDisconnected(IDevice)
      */
+    @Override
     public void deviceDisconnected(IDevice device) {
         // if we are listening to selection coming from the ui, then we do nothing, as
         // any change in the devices/clients, will be handled by the UI, and we'll receive
@@ -626,6 +638,7 @@ public final class DdmsPlugin extends AbstractUIPlugin implements IDeviceChangeL
      *
      * @see IDeviceChangeListener#deviceChanged(IDevice)
      */
+    @Override
     public void deviceChanged(IDevice device, int changeMask) {
         // if we are listening to selection coming from the ui, then we do nothing, as
         // any change in the devices/clients, will be handled by the UI, and we'll receive
@@ -662,6 +675,7 @@ public final class DdmsPlugin extends AbstractUIPlugin implements IDeviceChangeL
      * @param selectedDevice the selected device. If null, no devices are selected.
      * @param selectedClient The selected client. If null, no clients are selected.
      */
+    @Override
     public synchronized void selectionChanged(IDevice selectedDevice, Client selectedClient) {
         if (mCurrentDevice != selectedDevice) {
             mCurrentDevice = selectedDevice;
@@ -693,6 +707,7 @@ public final class DdmsPlugin extends AbstractUIPlugin implements IDeviceChangeL
             Display display = getDisplay();
 
             display.asyncExec(new Runnable() {
+                @Override
                 public void run() {
                     // set the new device if different.
                     boolean newDevice = false;
@@ -772,19 +787,9 @@ public final class DdmsPlugin extends AbstractUIPlugin implements IDeviceChangeL
     /**
      * Implementation of com.android.ddmuilib.StackTracePanel.ISourceRevealer.
      */
+    @Override
     public void reveal(String applicationName, String className, int line) {
-        // loop on all source revealer till one succeeds
-        if (mSourceRevealers != null) {
-            for (ISourceRevealer revealer : mSourceRevealers) {
-                try {
-                    if (revealer.reveal(applicationName, className, line)) {
-                        break;
-                    }
-                } catch (Throwable t) {
-                    // ignore, we'll just not use this implementation.
-                }
-            }
-        }
+        JavaSourceRevealer.reveal(applicationName, className, line);
     }
 
     public boolean launchTraceview(String osPath) {

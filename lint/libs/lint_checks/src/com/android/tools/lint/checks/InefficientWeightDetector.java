@@ -25,6 +25,7 @@ import static com.android.tools.lint.detector.api.LintConstants.ATTR_ORIENTATION
 import static com.android.tools.lint.detector.api.LintConstants.LINEAR_LAYOUT;
 import static com.android.tools.lint.detector.api.LintConstants.VALUE_VERTICAL;
 
+import com.android.annotations.NonNull;
 import com.android.tools.lint.detector.api.Category;
 import com.android.tools.lint.detector.api.Issue;
 import com.android.tools.lint.detector.api.LayoutDetector;
@@ -40,7 +41,7 @@ import org.w3c.dom.Node;
 
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -93,14 +94,14 @@ public class InefficientWeightDetector extends LayoutDetector {
      * Map from element to whether that element has a non-zero linear layout
      * weight or has an ancestor which does
      */
-    private Map<Node, Boolean> mInsideWeight = new HashMap<Node, Boolean>();
+    private Map<Node, Boolean> mInsideWeight = new IdentityHashMap<Node, Boolean>();
 
     /** Constructs a new {@link InefficientWeightDetector} */
     public InefficientWeightDetector() {
     }
 
     @Override
-    public Speed getSpeed() {
+    public @NonNull Speed getSpeed() {
         return Speed.FAST;
     }
 
@@ -110,13 +111,12 @@ public class InefficientWeightDetector extends LayoutDetector {
     }
 
     @Override
-    public void visitElement(XmlContext context, Element element) {
+    public void visitElement(@NonNull XmlContext context, @NonNull Element element) {
         List<Element> children = LintUtils.getChildren(element);
         // See if there is exactly one child with a weight
         boolean multipleWeights = false;
         Element weightChild = null;
         boolean checkNesting = context.isEnabled(NESTED_WEIGHTS);
-        Node parent = element.getParentNode();
         for (Element child : children) {
             if (child.hasAttributeNS(ANDROID_URI, ATTR_LAYOUT_WEIGHT)) {
                 if (weightChild != null) {
@@ -127,14 +127,14 @@ public class InefficientWeightDetector extends LayoutDetector {
                 }
 
                 if (checkNesting) {
-                    mInsideWeight.put(element, Boolean.TRUE);
+                    mInsideWeight.put(child, Boolean.TRUE);
 
-                    Boolean inside = mInsideWeight.get(parent);
+                    Boolean inside = mInsideWeight.get(element);
                     if (inside == null) {
-                        mInsideWeight.put(parent, Boolean.FALSE);
+                        mInsideWeight.put(element, Boolean.FALSE);
                     } else if (inside) {
                         Attr sizeNode = child.getAttributeNodeNS(ANDROID_URI, ATTR_LAYOUT_WEIGHT);
-                        context.report(NESTED_WEIGHTS,
+                        context.report(NESTED_WEIGHTS, sizeNode,
                                 context.getLocation(sizeNode),
                                 "Nested weights are bad for performance", null);
                         // Don't warn again
@@ -144,8 +144,9 @@ public class InefficientWeightDetector extends LayoutDetector {
             }
         }
 
-        if (context.isEnabled(BASELINE_WEIGHTS) && weightChild != null &&
-                !element.hasAttributeNS(ANDROID_URI, ATTR_BASELINE_ALIGNED)) {
+        if (context.isEnabled(BASELINE_WEIGHTS) && weightChild != null
+                && !VALUE_VERTICAL.equals(element.getAttributeNS(ANDROID_URI, ATTR_ORIENTATION))
+                && !element.hasAttributeNS(ANDROID_URI, ATTR_BASELINE_ALIGNED)) {
             // See if all the children are layouts
             boolean allChildrenAreLayouts = children.size() > 0;
             for (Element child : children) {
@@ -156,6 +157,7 @@ public class InefficientWeightDetector extends LayoutDetector {
             }
             if (allChildrenAreLayouts) {
                 context.report(BASELINE_WEIGHTS,
+                        element,
                         context.getLocation(element),
                         "Set android:baselineAligned=\"false\" on this element for better performance",
                         null);
@@ -177,6 +179,7 @@ public class InefficientWeightDetector extends LayoutDetector {
                         "Use a %1$s of 0dip instead of %2$s for better performance",
                         dimension, size);
                 context.report(INEFFICIENT_WEIGHT,
+                        weightChild,
                         context.getLocation(sizeNode != null ? sizeNode : weightChild), msg, null);
 
             }

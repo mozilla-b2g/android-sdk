@@ -18,11 +18,12 @@ package com.android.ide.eclipse.adt.internal.editors;
 
 import static org.eclipse.wst.sse.ui.internal.actions.StructuredTextEditorActionConstants.ACTION_NAME_FORMAT_DOCUMENT;
 
+import com.android.annotations.Nullable;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.AdtUtils;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
-import com.android.ide.eclipse.adt.internal.lint.LintRunner;
+import com.android.ide.eclipse.adt.internal.lint.EclipseLintRunner;
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
 import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetData;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
@@ -55,8 +56,9 @@ import org.eclipse.swt.widgets.Display;
 import org.eclipse.ui.IActionBars;
 import org.eclipse.ui.IEditorInput;
 import org.eclipse.ui.IEditorPart;
-import org.eclipse.ui.IEditorSite;
+import org.eclipse.ui.IEditorReference;
 import org.eclipse.ui.IFileEditorInput;
+import org.eclipse.ui.IURIEditorInput;
 import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.IWorkbenchWindow;
 import org.eclipse.ui.PartInitException;
@@ -70,10 +72,12 @@ import org.eclipse.ui.forms.events.HyperlinkAdapter;
 import org.eclipse.ui.forms.events.HyperlinkEvent;
 import org.eclipse.ui.forms.events.IHyperlinkListener;
 import org.eclipse.ui.forms.widgets.FormText;
+import org.eclipse.ui.ide.IDEActionFactory;
 import org.eclipse.ui.ide.IGotoMarker;
 import org.eclipse.ui.internal.browser.WorkbenchBrowserSupport;
 import org.eclipse.ui.part.MultiPageEditorPart;
 import org.eclipse.ui.part.WorkbenchPart;
+import org.eclipse.ui.views.contentoutline.IContentOutlinePage;
 import org.eclipse.wst.sse.core.StructuredModelManager;
 import org.eclipse.wst.sse.core.internal.provisional.IModelManager;
 import org.eclipse.wst.sse.core.internal.provisional.IModelStateListener;
@@ -89,6 +93,7 @@ import org.w3c.dom.Node;
 
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.util.Collections;
 
 /**
  * Multi-page form editor for Android XML files.
@@ -135,7 +140,7 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
      * so the document listeners can use this flag to skip updating the model when edits
      * are observed during a formatting operation
      */
-    protected boolean mIgnoreXmlUpdate;
+    private boolean mIgnoreXmlUpdate;
 
     /**
      * Flag indicating we're inside {@link #wrapEditXmlModel(Runnable)}.
@@ -158,25 +163,22 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
 
     /**
      * Creates a form editor.
-     * <p/>The editor will setup a {@link ITargetChangeListener} and call
-     * {@link #initUiRootNode(boolean)}, when the SDK or the target changes.
-     *
-     * @see #AndroidXmlEditor(boolean)
+     * <p/>
+     * Some derived classes will want to use {@link #addDefaultTargetListener()}
+     * to setup the default listener to monitor SDK target changes. This
+     * is no longer the default.
      */
     public AndroidXmlEditor() {
-        this(true);
+        super();
+        ResourcesPlugin.getWorkspace().addResourceChangeListener(this);
     }
 
     /**
-     * Creates a form editor.
-     * @param addTargetListener whether to create an {@link ITargetChangeListener}.
+     * Setups a default {@link ITargetChangeListener} that will call
+     * {@link #initUiRootNode(boolean)} when the SDK or the target changes..
      */
-    public AndroidXmlEditor(boolean addTargetListener) {
-        super();
-
-        ResourcesPlugin.getWorkspace().addResourceChangeListener(this);
-
-        if (addTargetListener) {
+    public void addDefaultTargetListener() {
+        if (mTargetListener == null) {
             mTargetListener = new TargetChangeListener() {
                 @Override
                 public IProject getProject() {
@@ -233,9 +235,7 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
      *
      * @param xml_doc The XML document, if available, or null if none exists.
      */
-    protected void xmlModelChanged(Document xml_doc) {
-        // pass
-    }
+    abstract protected void xmlModelChanged(Document xml_doc);
 
     /**
      * Controls whether XML models are ignored or not.
@@ -247,15 +247,28 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
         mIgnoreXmlUpdate = ignore;
     }
 
+    /**
+     * Returns whether XML model events are ignored or not. This is the case
+     * when we are deliberately modifying the document in a way which does not
+     * change the semantics (such as formatting), or when we have already
+     * directly updated the model ourselves.
+     *
+     * @return true if XML events should be ignored
+     */
+    public boolean getIgnoreXmlUpdate() {
+        return mIgnoreXmlUpdate;
+    }
+
     // ---- Base Class Overrides, Interfaces Implemented ----
 
     @Override
-    public Object getAdapter(Class adapter) {
+    public Object getAdapter(@SuppressWarnings("rawtypes") Class adapter) {
         Object result = super.getAdapter(adapter);
 
         if (result != null && adapter.equals(IGotoMarker.class) ) {
             final IGotoMarker gotoMarker = (IGotoMarker) result;
             return new IGotoMarker() {
+                @Override
                 public void gotoMarker(IMarker marker) {
                     gotoMarker.gotoMarker(marker);
                     try {
@@ -274,6 +287,10 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
             };
         }
 
+        if (result == null && adapter == IContentOutlinePage.class) {
+            return getStructuredTextEditor().getAdapter(adapter);
+        }
+
         return result;
     }
 
@@ -289,7 +306,7 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
     /**
      * Creates the page for the Android Editors
      */
-    protected void createAndroidPages() {
+    public void createAndroidPages() {
         mIsCreatingPage = true;
         createFormPages();
         createTextEditor();
@@ -349,6 +366,21 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
             action = mTextEditor.getAction(ActionFactory.REDO.getId());
             bars.setGlobalActionHandler(ActionFactory.REDO.getId(), action);
 
+            bars.setGlobalActionHandler(ActionFactory.DELETE.getId(),
+                    mTextEditor.getAction(ActionFactory.DELETE.getId()));
+            bars.setGlobalActionHandler(ActionFactory.CUT.getId(),
+                    mTextEditor.getAction(ActionFactory.CUT.getId()));
+            bars.setGlobalActionHandler(ActionFactory.COPY.getId(),
+                    mTextEditor.getAction(ActionFactory.COPY.getId()));
+            bars.setGlobalActionHandler(ActionFactory.PASTE.getId(),
+                    mTextEditor.getAction(ActionFactory.PASTE.getId()));
+            bars.setGlobalActionHandler(ActionFactory.SELECT_ALL.getId(),
+                    mTextEditor.getAction(ActionFactory.SELECT_ALL.getId()));
+            bars.setGlobalActionHandler(ActionFactory.FIND.getId(),
+                    mTextEditor.getAction(ActionFactory.FIND.getId()));
+            bars.setGlobalActionHandler(IDEActionFactory.BOOKMARK.getId(),
+                    mTextEditor.getAction(IDEActionFactory.BOOKMARK.getId()));
+
             bars.updateActionBars();
         }
     }
@@ -358,7 +390,7 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
      * @param defaultPageId the id of the page to show. If <code>null</code> the editor attempts to
      * find the default page in the properties of the {@link IResource} object being edited.
      */
-    protected void selectDefaultPage(String defaultPageId) {
+    public void selectDefaultPage(String defaultPageId) {
         if (defaultPageId == null) {
             IFile file = getInputFile();
             if (file != null) {
@@ -417,7 +449,6 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
         }
     }
 
-
     /**
      * Notifies this multi-page editor that the page with the given id has been
      * activated. This method is called when the user selects a different tab.
@@ -446,18 +477,29 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
     }
 
     /**
+     * Returns true if the active page is the editor page
+     *
+     * @return true if the active page is the editor page
+     */
+    public boolean isEditorPageActive() {
+        return getActivePage() == mTextPageIndex;
+    }
+
+    /**
      * Notifies this listener that some resource changes
      * are happening, or have already happened.
      *
      * Closes all project files on project close.
      * @see IResourceChangeListener
      */
+    @Override
     public void resourceChanged(final IResourceChangeEvent event) {
         if (event.getType() == IResourceChangeEvent.PRE_CLOSE) {
             IFile file = getInputFile();
             if (file != null && file.getProject().equals(event.getResource())) {
                 final IEditorInput input = getEditorInput();
                 Display.getDefault().asyncExec(new Runnable() {
+                    @Override
                     public void run() {
                         // FIXME understand why this code is accessing the current window's pages,
                         // if that's *this* instance, we have a local pages member from the super
@@ -474,26 +516,9 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
     }
 
     /**
-     * Initializes the editor part with a site and input.
-     * <p/>
-     * Checks that the input is an instance of {@link IFileEditorInput}.
-     *
-     * @see FormEditor
-     */
-    @Override
-    public void init(IEditorSite site, IEditorInput editorInput) throws PartInitException {
-        if (!(editorInput instanceof IFileEditorInput))
-            throw new PartInitException("Invalid Input: Must be IFileEditorInput");
-        super.init(site, editorInput);
-    }
-
-    /**
      * Returns the {@link IFile} matching the editor's input or null.
-     * <p/>
-     * By construction, the editor input has to be an {@link IFileEditorInput} so it must
-     * have an associated {@link IFile}. Null can only be returned if this editor has no
-     * input somehow.
      */
+    @Nullable
     public IFile getInputFile() {
         IEditorInput input = getEditorInput();
         if (input instanceof IFileEditorInput) {
@@ -557,13 +582,38 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
         // The actual "save" operation is done by the Structured XML Editor
         getEditor(mTextPageIndex).doSave(monitor);
 
-        runLint();
+        // Check for errors on save, if enabled
+        if (AdtPrefs.getPrefs().isLintOnSave()) {
+            runLint();
+        }
     }
 
+    /**
+     * Tells the editor to start a Lint check.
+     * It's up to the caller to check whether this should be done depending on preferences.
+     * <p/>
+     * The default implementation is to call {@link #startLintJob()}.
+     *
+     * @return The Job started by {@link EclipseLintRunner} or null if no job was started.
+     */
     protected Job runLint() {
-        // Check for errors, if enabled
-        if (AdtPrefs.getPrefs().isLintOnSave()) {
-            return LintRunner.startLint(getInputFile(), getStructuredDocument(), false);
+        return startLintJob();
+    }
+
+    /**
+     * Utility method that creates a Job to run Lint on the current document.
+     * Does not wait for the job to finish - just returns immediately.
+     *
+     * @return a new job, or null
+     * @see EclipseLintRunner#startLint(java.util.List, IResource, IDocument,
+     *      boolean, boolean)
+     */
+    @Nullable
+    public Job startLintJob() {
+        IFile file = getInputFile();
+        if (file != null) {
+            return EclipseLintRunner.startLint(Collections.singletonList(file), file,
+                    getStructuredDocument(), false /*fatalOnly*/, false /*show*/);
         }
 
         return null;
@@ -633,6 +683,15 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
     @Override
     public boolean isSaveAsAllowed() {
         return false;
+    }
+
+    /**
+     * Returns the page index of the text editor (always the last page)
+
+     * @return the page index of the text editor (always the last page)
+     */
+    public int getTextPageIndex() {
+        return mTextPageIndex;
     }
 
     // ---- Local methods ----
@@ -780,7 +839,7 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
      */
     public final ISourceViewer getStructuredSourceViewer() {
         if (mTextEditor != null) {
-            // We can't access mEditor.getSourceViewer() because it is protected,
+            // We can't access mDelegate.getSourceViewer() because it is protected,
             // however getTextViewer simply returns the SourceViewer casted, so we
             // can use it instead.
             return mTextEditor.getTextViewer();
@@ -899,9 +958,12 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
      * the hooks should not perform edits on the model without acquiring
      * a lock first.
      */
-    protected void runEditHooks() {
+    public void runEditHooks() {
         if (!mIgnoreXmlUpdate) {
-            runLint();
+            // Check for errors, if enabled
+            if (AdtPrefs.getPrefs().isLintOnSave()) {
+                runLint();
+            }
         }
     }
 
@@ -972,23 +1034,21 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
                         model.changedModel();
 
                         if (AdtPrefs.getPrefs().getFormatGuiXml() && mFormatNode != null) {
-                            if (!mFormatNode.hasError()) {
-                                if (mFormatNode == getUiRootNode()) {
-                                    reformatDocument();
-                                } else {
-                                    Node node = mFormatNode.getXmlNode();
-                                    if (node instanceof IndexedRegion) {
-                                        IndexedRegion region = (IndexedRegion) node;
-                                        int begin = region.getStartOffset();
-                                        int end = region.getEndOffset();
+                            if (mFormatNode == getUiRootNode()) {
+                                reformatDocument();
+                            } else {
+                                Node node = mFormatNode.getXmlNode();
+                                if (node instanceof IndexedRegion) {
+                                    IndexedRegion region = (IndexedRegion) node;
+                                    int begin = region.getStartOffset();
+                                    int end = region.getEndOffset();
 
-                                        if (!mFormatChildren) {
-                                            // This will format just the attribute list
-                                            end = begin + 1;
-                                        }
-
-                                        reformatRegion(begin, end);
+                                    if (!mFormatChildren) {
+                                        // This will format just the attribute list
+                                        end = begin + 1;
                                     }
+
+                                    reformatRegion(begin, end);
                                 }
                             }
                             mFormatNode = null;
@@ -1113,7 +1173,7 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
     /**
      * Returns the XML {@link Document} or null if we can't get it
      */
-    protected final Document getXmlDocument(IStructuredModel model) {
+    public final Document getXmlDocument(IStructuredModel model) {
         if (model == null) {
             AdtPlugin.log(IStatus.WARNING, "Android Editor: No XML model for root node."); //$NON-NLS-1$
             return null;
@@ -1150,6 +1210,26 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
 
                 if (target != null) {
                     return currentSdk.getTargetData(target);
+                }
+            }
+        }
+
+        IEditorInput input = getEditorInput();
+        if (input instanceof IURIEditorInput) {
+            IURIEditorInput urlInput = (IURIEditorInput) input;
+            Sdk currentSdk = Sdk.getCurrent();
+            if (currentSdk != null) {
+                try {
+                    String path = AdtUtils.getFile(urlInput.getURI().toURL()).getPath();
+                    IAndroidTarget[] targets = currentSdk.getTargets();
+                    for (IAndroidTarget target : targets) {
+                        if (path.startsWith(target.getLocation())) {
+                            return currentSdk.getTargetData(target);
+                        }
+                    }
+                } catch (MalformedURLException e) {
+                    // File might be in some other weird random location we can't
+                    // handle: Just ignore these
                 }
             }
         }
@@ -1459,11 +1539,12 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
      * viewer
      *
      * @param viewer the source viewer to ensure the active editor is associated with
-     * @return the active editor provided it matches the given source viewer
+     * @return the active editor provided it matches the given source viewer or null.
      */
-    public static AndroidXmlEditor getAndroidXmlEditor(ITextViewer viewer) {
+    public static AndroidXmlEditor fromTextViewer(ITextViewer viewer) {
         IWorkbenchWindow wwin = PlatformUI.getWorkbench().getActiveWorkbenchWindow();
         if (wwin != null) {
+            // Try the active editor first.
             IWorkbenchPage page = wwin.getActivePage();
             if (page != null) {
                 IEditorPart editor = page.getActiveEditor();
@@ -1472,6 +1553,22 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
                         ((AndroidXmlEditor) editor).getStructuredSourceViewer();
                     if (ssviewer == viewer) {
                         return (AndroidXmlEditor) editor;
+                    }
+                }
+            }
+
+            // If that didn't work, try all the editors
+            for (IWorkbenchPage page2 : wwin.getPages()) {
+                if (page2 != null) {
+                    for (IEditorReference editorRef : page2.getEditorReferences()) {
+                        IEditorPart editor = editorRef.getEditor(false /*restore*/);
+                        if (editor instanceof AndroidXmlEditor) {
+                            ISourceViewer ssviewer =
+                                ((AndroidXmlEditor) editor).getStructuredSourceViewer();
+                            if (ssviewer == viewer) {
+                                return (AndroidXmlEditor) editor;
+                            }
+                        }
                     }
                 }
             }
@@ -1493,6 +1590,7 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
          * <p/>
          * This AndroidXmlEditor implementation of IModelChangedListener is empty.
          */
+        @Override
         public void modelAboutToBeChanged(IStructuredModel model) {
             // pass
         }
@@ -1504,6 +1602,7 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
          * <p/>
          * This AndroidXmlEditor implementation calls the xmlModelChanged callback.
          */
+        @Override
         public void modelChanged(IStructuredModel model) {
             if (mIgnoreXmlUpdate) {
                 return;
@@ -1518,6 +1617,7 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
          * <p/>
          * This AndroidXmlEditor implementation of IModelChangedListener is empty.
          */
+        @Override
         public void modelDirtyStateChanged(IStructuredModel model, boolean isDirty) {
             // pass
         }
@@ -1530,6 +1630,7 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
          * <p/>
          * This AndroidXmlEditor implementation of IModelChangedListener is empty.
          */
+        @Override
         public void modelResourceDeleted(IStructuredModel model) {
             // pass
         }
@@ -1541,6 +1642,7 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
          * <p/>
          * This AndroidXmlEditor implementation of IModelChangedListener is empty.
          */
+        @Override
         public void modelResourceMoved(IStructuredModel oldModel, IStructuredModel newModel) {
             // pass
         }
@@ -1548,6 +1650,7 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
         /**
          * This AndroidXmlEditor implementation of IModelChangedListener is empty.
          */
+        @Override
         public void modelAboutToBeReinitialized(IStructuredModel structuredModel) {
             // pass
         }
@@ -1555,6 +1658,7 @@ public abstract class AndroidXmlEditor extends FormEditor implements IResourceCh
         /**
          * This AndroidXmlEditor implementation of IModelChangedListener is empty.
          */
+        @Override
         public void modelReinitialized(IStructuredModel structuredModel) {
             // pass
         }

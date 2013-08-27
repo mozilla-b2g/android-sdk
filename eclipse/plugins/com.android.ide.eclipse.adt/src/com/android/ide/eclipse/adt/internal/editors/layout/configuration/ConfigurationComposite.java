@@ -16,9 +16,17 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.configuration;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_NS_NAME_PREFIX;
+import static com.android.AndroidConstants.FD_RES_LAYOUT;
+import static com.android.AndroidConstants.RES_QUALIFIER_SEP;
 import static com.android.ide.common.resources.ResourceResolver.PREFIX_ANDROID_STYLE;
+import static com.android.ide.common.resources.ResourceResolver.PREFIX_RESOURCE_REF;
+import static com.android.ide.common.resources.ResourceResolver.PREFIX_STYLE;
+import static com.android.tools.lint.detector.api.LintConstants.TOOLS_URI;
+import static com.android.util.XmlUtils.ANDROID_NS_NAME_PREFIX;
 
+import com.android.AndroidConstants;
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.api.Rect;
 import com.android.ide.common.rendering.api.ResourceValue;
 import com.android.ide.common.rendering.api.StyleResourceValue;
@@ -26,6 +34,7 @@ import com.android.ide.common.resources.ResourceFile;
 import com.android.ide.common.resources.ResourceFolder;
 import com.android.ide.common.resources.ResourceRepository;
 import com.android.ide.common.resources.configuration.DensityQualifier;
+import com.android.ide.common.resources.configuration.DeviceConfigHelper;
 import com.android.ide.common.resources.configuration.FolderConfiguration;
 import com.android.ide.common.resources.configuration.LanguageQualifier;
 import com.android.ide.common.resources.configuration.NightModeQualifier;
@@ -38,15 +47,14 @@ import com.android.ide.common.resources.configuration.UiModeQualifier;
 import com.android.ide.common.resources.configuration.VersionQualifier;
 import com.android.ide.common.sdk.LoadStatus;
 import com.android.ide.eclipse.adt.AdtPlugin;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.IconFactory;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
+import com.android.ide.eclipse.adt.internal.editors.layout.gle2.DomUtilities;
 import com.android.ide.eclipse.adt.internal.editors.manifest.ManifestInfo;
 import com.android.ide.eclipse.adt.internal.resources.ResourceHelper;
 import com.android.ide.eclipse.adt.internal.resources.manager.ProjectResources;
 import com.android.ide.eclipse.adt.internal.resources.manager.ResourceManager;
 import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetData;
-import com.android.ide.eclipse.adt.internal.sdk.LayoutDevice;
-import com.android.ide.eclipse.adt.internal.sdk.LayoutDevice.DeviceConfig;
-import com.android.ide.eclipse.adt.internal.sdk.LayoutDeviceManager;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.resources.Density;
 import com.android.resources.NightMode;
@@ -57,40 +65,63 @@ import com.android.resources.ScreenSize;
 import com.android.resources.UiMode;
 import com.android.sdklib.AndroidVersion;
 import com.android.sdklib.IAndroidTarget;
+import com.android.sdklib.devices.Device;
+import com.android.sdklib.devices.State;
+import com.android.sdklib.internal.avd.AvdInfo;
+import com.android.sdklib.internal.avd.AvdManager;
 import com.android.sdklib.repository.PkgProps;
 import com.android.sdklib.util.SparseIntArray;
 import com.android.util.Pair;
+import com.google.common.collect.Maps;
 
+import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.IResource;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.QualifiedName;
+import org.eclipse.jdt.ui.ISharedImages;
+import org.eclipse.jdt.ui.JavaUI;
+import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.events.SelectionAdapter;
 import org.eclipse.swt.events.SelectionEvent;
+import org.eclipse.swt.events.SelectionListener;
+import org.eclipse.swt.graphics.Image;
+import org.eclipse.swt.graphics.Point;
+import org.eclipse.swt.graphics.Rectangle;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
-import org.eclipse.swt.widgets.Button;
-import org.eclipse.swt.widgets.Combo;
 import org.eclipse.swt.widgets.Composite;
-import org.eclipse.swt.widgets.Label;
+import org.eclipse.swt.widgets.Event;
+import org.eclipse.swt.widgets.Listener;
+import org.eclipse.swt.widgets.Menu;
+import org.eclipse.swt.widgets.MenuItem;
+import org.eclipse.swt.widgets.ToolBar;
+import org.eclipse.swt.widgets.ToolItem;
 import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.IWorkbench;
 import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.IWorkbenchWindow;
+import org.eclipse.ui.PartInitException;
 import org.eclipse.ui.PlatformUI;
+import org.eclipse.wb.internal.core.nls.ui.FlagImagesRepository;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.SortedSet;
+import java.util.TreeMap;
 
 /**
  * A composite that displays the current configuration displayed in a Graphical Layout Editor.
@@ -117,9 +148,22 @@ import java.util.SortedSet;
  * - Target reload. This is when the target used by the project is the edited file has finished<br>
  *   loading.<br>
  */
-public class ConfigurationComposite extends Composite {
-    private final static String SEP = ":"; //$NON-NLS-1$
-    private final static String SEP_LOCALE = "-"; //$NON-NLS-1$
+public class ConfigurationComposite extends Composite implements SelectionListener {
+    public static final String ATTR_CONTEXT = "context";          //$NON-NLS-1$
+    private static final String ICON_SQUARE = "square";           //$NON-NLS-1$
+    private static final String ICON_LANDSCAPE = "landscape";     //$NON-NLS-1$
+    private static final String ICON_PORTRAIT = "portrait";       //$NON-NLS-1$
+    private static final String ICON_LANDSCAPE_FLIP = "flip_landscape";//$NON-NLS-1$
+    private static final String ICON_PORTRAIT_FLIP = "flip_portrait";//$NON-NLS-1$
+    private static final String ICON_DISPLAY = "display";         //$NON-NLS-1$
+    private static final String ICON_NEW_CONFIG = "newConfig";    //$NON-NLS-1$
+    private static final String ICON_GLOBE = "globe";             //$NON-NLS-1$
+    private static final String ICON_THEMES = "themes";           //$NON-NLS-1$
+    private static final String ICON_ACTIVITY = "activity";       //$NON-NLS-1$
+    private final static String SEP = ":";                        //$NON-NLS-1$
+    private final static String SEP_LOCALE = "-";                 //$NON-NLS-1$
+    private final static String MARKER_FRAMEWORK = "-";           //$NON-NLS-1$
+    private final static String MARKER_PROJECT = "+";           //$NON-NLS-1$
 
     /**
      * Setting name for project-wide setting controlling rendering target and locale which
@@ -135,36 +179,26 @@ public class ConfigurationComposite extends Composite {
     public final static QualifiedName NAME_CONFIG_STATE =
         new QualifiedName(AdtPlugin.PLUGIN_ID, "state");//$NON-NLS-1$
 
-    private final static String THEME_SEPARATOR = "----------"; //$NON-NLS-1$
-
     private final static int LOCALE_LANG = 0;
     private final static int LOCALE_REGION = 1;
 
-    private Label mCurrentLayoutLabel;
-    private Button mCreateButton;
-
-    private Combo mDeviceCombo;
-    private Combo mDeviceConfigCombo;
-    private Combo mLocaleCombo;
-    private Combo mUiModeCombo;
-    private Combo mNightCombo;
-    private Combo mThemeCombo;
-    private Combo mTargetCombo;
-
-    /**
-     * List of booleans, matching item for item the theme names in the mThemeCombo
-     * combobox, where each boolean represents whether the corresponding theme is a
-     * project theme
-     */
-    private List<Boolean> mIsProjectTheme = new ArrayList<Boolean>(40);
+    private ToolItem mDeviceCombo;
+    private ToolItem mThemeCombo;
+    private ToolItem mOrientationCombo;
+    private ToolItem mLocaleCombo;
+    private ToolItem mTargetCombo;
+    private ToolItem mConfigCombo;
+    private ToolItem mActivityCombo;
 
     /** updates are disabled if > 0 */
     private int mDisableUpdates = 0;
 
-    private List<LayoutDevice> mDeviceList;
+    private List<Device> mDeviceList = new ArrayList<Device>();
     private final List<IAndroidTarget> mTargetList = new ArrayList<IAndroidTarget>();
 
-    private final ArrayList<ResourceQualifier[] > mLocaleList =
+    private final List<String> mThemeList = new ArrayList<String>();
+
+    private final List<ResourceQualifier[] > mLocaleList =
         new ArrayList<ResourceQualifier[]>();
 
     private final ConfigState mState = new ConfigState();
@@ -212,7 +246,7 @@ public class ConfigurationComposite extends Composite {
 
         /**
          * Called when the current theme changes. The theme can be queried with
-         * {@link ConfigurationComposite#getTheme()}.
+         * {@link ConfigurationComposite#getThemeName()}.
          */
         void onThemeChange();
 
@@ -220,6 +254,13 @@ public class ConfigurationComposite extends Composite {
          * Called when the "Create" button is clicked.
          */
         void onCreate();
+
+        /**
+         * Called when an associated activity is picked
+         *
+         * @param fqcn the fully qualified class name for the associated activity context
+         */
+        void onSetActivity(String fqcn);
 
         /**
          * Called before the rendering target changes.
@@ -247,23 +288,33 @@ public class ConfigurationComposite extends Composite {
      * rendering to its original configuration.
      */
     private class ConfigState {
-        LayoutDevice device;
-        String configName;
+        Device device;
+        String stateName;
         ResourceQualifier[] locale;
         String theme;
+        // TODO: Need to know if it's the project theme or the framework theme!
         /** UI mode. Guaranteed to be non null */
         UiMode uiMode = UiMode.NORMAL;
         /** night mode. Guaranteed to be non null */
         NightMode night = NightMode.NOTNIGHT;
         /** the version being targeted for rendering */
         IAndroidTarget target;
+        String activity;
 
         String getData() {
             StringBuilder sb = new StringBuilder();
             if (device != null) {
                 sb.append(device.getName());
                 sb.append(SEP);
-                sb.append(configName);
+                if (stateName == null) {
+                    State state= getSelectedDeviceState();
+                    if (state != null) {
+                        stateName = state.getName();
+                    }
+                }
+                if (stateName != null) {
+                    sb.append(stateName);
+                }
                 sb.append(SEP);
                 if (isLocaleSpecificLayout() && locale != null) {
                     if (locale[0] != null && locale[1] != null) {
@@ -274,16 +325,34 @@ public class ConfigurationComposite extends Composite {
                     }
                 }
                 sb.append(SEP);
-                sb.append(theme);
+                // Need to escape the theme: if we write the full theme style, then
+                // we can end up with ":"'s in the string (as in @android:style/Theme) which
+                // can be mistaken for {@link #SEP}. Instead use {@link #MARKER_FRAMEWORK}.
+                if (theme != null) {
+                    String themeName = ResourceHelper.styleToTheme(theme);
+                    if (theme.startsWith(PREFIX_STYLE)) {
+                        sb.append(MARKER_PROJECT);
+                    } else if (theme.startsWith(PREFIX_ANDROID_STYLE)) {
+                        sb.append(MARKER_FRAMEWORK);
+                    }
+                    sb.append(themeName);
+                }
                 sb.append(SEP);
-                sb.append(uiMode.getResourceValue());
+                if (uiMode != null) {
+                    sb.append(uiMode.getResourceValue());
+                }
                 sb.append(SEP);
-                sb.append(night.getResourceValue());
+                if (night != null) {
+                    sb.append(night.getResourceValue());
+                }
                 sb.append(SEP);
 
                 // We used to store the render target here in R9. Leave a marker
                 // to ensure that we don't reuse this slot; add new extra fields after it.
                 sb.append(SEP);
+                if (activity != null) {
+                    sb.append(activity);
+                }
             }
 
             return sb.toString();
@@ -291,14 +360,20 @@ public class ConfigurationComposite extends Composite {
 
         boolean setData(String data) {
             String[] values = data.split(SEP);
-            if (values.length == 6 || values.length == 7) {
-                for (LayoutDevice d : mDeviceList) {
+            if (values.length >= 6 && values.length <= 8) {
+                for (Device d : mDeviceList) {
                     if (d.getName().equals(values[0])) {
                         device = d;
-                        FolderConfiguration config = device.getFolderConfigByName(values[1]);
+                        FolderConfiguration config = null;
+                        if (!values[1].isEmpty() && !values[1].equals("null")) { //$NON-NLS-1$
+                            stateName = values[1];
+                            config = DeviceConfigHelper.getFolderConfig(device, stateName);
+                        } else if (device.getAllStates().size() > 0) {
+                            State first = device.getAllStates().get(0);
+                            stateName = first.getName();
+                            config = DeviceConfigHelper.getFolderConfig(first);
+                        }
                         if (config != null) {
-                            configName = values[1];
-
                             // Load locale. Note that this can get overwritten by the
                             // project-wide settings read below.
                             locale = new ResourceQualifier[2];
@@ -312,7 +387,15 @@ public class ConfigurationComposite extends Composite {
                                 }
                             }
 
+                            // Decode the theme name: See {@link #getData}
                             theme = values[3];
+                            if (theme.startsWith(MARKER_FRAMEWORK)) {
+                                theme = PREFIX_ANDROID_STYLE
+                                        + theme.substring(MARKER_FRAMEWORK.length());
+                            } else if (theme.startsWith(MARKER_PROJECT)) {
+                                theme = PREFIX_STYLE + theme.substring(MARKER_PROJECT.length());
+                            }
+
                             uiMode = UiMode.getEnum(values[4]);
                             if (uiMode == null) {
                                 uiMode = UiMode.NORMAL;
@@ -333,6 +416,10 @@ public class ConfigurationComposite extends Composite {
                                 locale = pair.getFirst();
                             }
                             target = pair.getSecond();
+
+                            if (values.length == 8) {
+                                activity = values[7];
+                            }
 
                             return true;
                         }
@@ -397,133 +484,86 @@ public class ConfigurationComposite extends Composite {
     public ConfigurationComposite(IConfigListener listener,
             Composite parent, int style, String initialState) {
         super(parent, style);
+        setVisible(false); // Delayed until the targets are loaded
+
         mListener = listener;
         mInitialState = initialState;
+        setLayout(new GridLayout(1, false));
 
-        GridLayout gl;
-        GridData gd;
-        int cols = 7;  // device+config+dock+day+separator*2+theme
+        IconFactory icons = IconFactory.getInstance();
 
-        // ---- First line: editing config display, locale, theme, create-button
-        Composite labelParent = new Composite(this, SWT.NONE);
-        labelParent.setLayout(gl = new GridLayout(5, false));
-        gl.marginWidth = gl.marginHeight = 0;
-        gl.marginTop = 3;
-        labelParent.setLayoutData(gd = new GridData(GridData.FILL_HORIZONTAL));
-        gd.horizontalSpan = cols;
+        // TODO: Consider switching to a CoolBar instead
+        ToolBar toolBar = new ToolBar(this, SWT.WRAP | SWT.FLAT | SWT.RIGHT | SWT.HORIZONTAL);
+        toolBar.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 1, 1));
 
-        new Label(labelParent, SWT.NONE).setText("Editing config:");
-        mCurrentLayoutLabel = new Label(labelParent, SWT.NONE);
-        mCurrentLayoutLabel.setLayoutData(gd = new GridData(GridData.FILL_HORIZONTAL));
-        gd.widthHint = 50;
+        mConfigCombo = new ToolItem(toolBar, SWT.DROP_DOWN | SWT.BOLD);
+        mConfigCombo.setImage(null);
+        mConfigCombo.setToolTipText("Configuration to render this layout with in Eclipse");
 
-        mLocaleCombo = new Combo(labelParent, SWT.DROP_DOWN | SWT.READ_ONLY);
-        mLocaleCombo.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                onLocaleChange();
-            }
-        });
+        @SuppressWarnings("unused")
+        ToolItem separator2 = new ToolItem(toolBar, SWT.SEPARATOR);
 
-        // Layout bug workaround. Without this, in -some- scenarios the Locale combo box was
-        // coming up tiny. Setting a minimumWidth hint does not work either. We need to have
-        // 2 or more items in the locale combo box when the layout is first run. These items
-        // are removed as part of the locale initialization when the SDK is loaded.
-        mLocaleCombo.add("Locale"); //$NON-NLS-1$  // Dummy place holders
-        mLocaleCombo.add("Locale"); //$NON-NLS-1$
+        mDeviceCombo = new ToolItem(toolBar, SWT.DROP_DOWN);
+        mDeviceCombo.setImage(icons.getIcon(ICON_DISPLAY));
 
-        mTargetCombo = new Combo(labelParent, SWT.DROP_DOWN | SWT.READ_ONLY);
-        mTargetCombo.add("Android AOSP"); //$NON-NLS-1$  // Dummy place holders
-        mTargetCombo.add("Android AOSP"); //$NON-NLS-1$
-        mTargetCombo.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                onRenderingTargetChange();
-            }
-        });
+        @SuppressWarnings("unused")
+        ToolItem separator3 = new ToolItem(toolBar, SWT.SEPARATOR);
 
-        mCreateButton = new Button(labelParent, SWT.PUSH | SWT.FLAT);
-        mCreateButton.setText("Create...");
-        mCreateButton.setEnabled(false);
-        mCreateButton.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                if (mListener != null) {
-                    mListener.onCreate();
-                }
-            }
-        });
+        mOrientationCombo = new ToolItem(toolBar, SWT.DROP_DOWN);
+        mOrientationCombo.setImage(icons.getIcon(ICON_PORTRAIT));
+        mOrientationCombo.setToolTipText("Go to next state");
 
-        // ---- 2nd line: device/config/locale/theme Combos, create button.
+        @SuppressWarnings("unused")
+        ToolItem separator4 = new ToolItem(toolBar, SWT.SEPARATOR);
 
-        setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
-        setLayout(gl = new GridLayout(cols, false));
-        gl.marginHeight = 0;
-        gl.horizontalSpacing = 0;
+        mThemeCombo = new ToolItem(toolBar, SWT.DROP_DOWN);
+        mThemeCombo.setImage(icons.getIcon(ICON_THEMES));
 
-        mDeviceCombo = new Combo(this, SWT.DROP_DOWN | SWT.READ_ONLY);
-        mDeviceCombo.setLayoutData(new GridData(
-                GridData.HORIZONTAL_ALIGN_FILL | GridData.GRAB_HORIZONTAL));
-        mDeviceCombo.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                onDeviceChange(true /* recomputeLayout*/);
-            }
-        });
+        @SuppressWarnings("unused")
+        ToolItem separator5 = new ToolItem(toolBar, SWT.SEPARATOR);
 
-        mDeviceConfigCombo = new Combo(this, SWT.DROP_DOWN | SWT.READ_ONLY);
-        mDeviceConfigCombo.setLayoutData(new GridData(
-                GridData.HORIZONTAL_ALIGN_FILL | GridData.GRAB_HORIZONTAL));
-        mDeviceConfigCombo.addSelectionListener(new SelectionAdapter() {
-            @Override
-             public void widgetSelected(SelectionEvent e) {
-                onDeviceConfigChange();
-            }
-        });
+        mActivityCombo = new ToolItem(toolBar, SWT.DROP_DOWN);
+        mActivityCombo.setToolTipText("Associated activity or fragment providing context");
+        // The JDT class icon is lopsided, presumably because they've left room in the
+        // bottom right corner for badges (for static, final etc). Unfortunately, this
+        // means that the icon looks out of place when sitting close to the language globe
+        // icon, the theme icon, etc so that it looks vertically misaligned:
+        //mActivityCombo.setImage(JavaUI.getSharedImages().getImage(ISharedImages.IMG_OBJS_CLASS));
+        // ...so use one that is centered instead:
+        mActivityCombo.setImage(icons.getIcon(ICON_ACTIVITY));
 
-        // first separator
-        Label separator = new Label(this, SWT.SEPARATOR | SWT.VERTICAL);
-        separator.setLayoutData(gd = new GridData(
-                GridData.VERTICAL_ALIGN_FILL | GridData.GRAB_VERTICAL));
-        gd.heightHint = 0;
+        @SuppressWarnings("unused")
+        ToolItem separator6 = new ToolItem(toolBar, SWT.SEPARATOR);
 
-        mUiModeCombo = new Combo(this, SWT.DROP_DOWN | SWT.READ_ONLY);
-        mUiModeCombo.setLayoutData(new GridData(GridData.HORIZONTAL_ALIGN_FILL
-                | GridData.GRAB_HORIZONTAL));
-        for (UiMode mode : UiMode.values()) {
-            mUiModeCombo.add(mode.getLongDisplayValue());
+        //ToolBar rightToolBar = new ToolBar(this, SWT.WRAP | SWT.FLAT | SWT.RIGHT | SWT.HORIZONTAL);
+        //rightToolBar.setLayoutData(new GridData(SWT.LEFT, SWT.TOP, false, false, 1, 1));
+        ToolBar rightToolBar = toolBar;
+
+        mLocaleCombo = new ToolItem(rightToolBar, SWT.DROP_DOWN);
+        mLocaleCombo.setImage(icons.getIcon(ICON_GLOBE));
+        mLocaleCombo.setToolTipText("Locale to use when rendering layouts in Eclipse");
+
+        @SuppressWarnings("unused")
+        ToolItem separator7 = new ToolItem(rightToolBar, SWT.SEPARATOR);
+
+        mTargetCombo = new ToolItem(rightToolBar, SWT.DROP_DOWN);
+        mTargetCombo.setImage(AdtPlugin.getAndroidLogo());
+        mLocaleCombo.setToolTipText("Android version to use when rendering layouts in Eclipse");
+
+        addConfigurationMenuListener(mConfigCombo);
+        addActivityMenuListener(mActivityCombo);
+        addLocaleMenuListener(mLocaleCombo);
+        addDeviceMenuListener(mDeviceCombo);
+        addTargetMenuListener(mTargetCombo);
+        addThemeListener(mThemeCombo);
+        addOrientationMenuListener(mOrientationCombo);
+    }
+
+    private void updateActivity() {
+        if (mEditedFile != null) {
+            String preferred = getPreferredActivity(mEditedFile);
+            selectActivity(preferred);
         }
-        mUiModeCombo.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                onDockChange();
-            }
-        });
-
-        mNightCombo = new Combo(this, SWT.DROP_DOWN | SWT.READ_ONLY);
-        mNightCombo.setLayoutData(new GridData(GridData.HORIZONTAL_ALIGN_FILL
-                | GridData.GRAB_HORIZONTAL));
-        for (NightMode mode : NightMode.values()) {
-            mNightCombo.add(mode.getLongDisplayValue());
-        }
-        mNightCombo.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                onDayChange();
-            }
-        });
-
-        mThemeCombo = new Combo(this, SWT.READ_ONLY | SWT.DROP_DOWN);
-        mThemeCombo.setLayoutData(new GridData(
-                GridData.HORIZONTAL_ALIGN_FILL | GridData.GRAB_HORIZONTAL));
-        mThemeCombo.setEnabled(false);
-
-        mThemeCombo.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                onThemeChange();
-            }
-        });
     }
 
     // ---- Init and reset/reload methods ----
@@ -573,6 +613,8 @@ public class ConfigurationComposite extends Composite {
             // only attempt to do anything if the SDK and targets are loaded.
             LoadStatus sdkStatus = AdtPlugin.getDefault().getSdkLoadStatus();
             if (sdkStatus == LoadStatus.LOADED) {
+                setVisible(true);
+
                 LoadStatus targetStatus = Sdk.getCurrent().checkAndLoadTargetData(mProjectTarget,
                         null /*project*/);
 
@@ -587,6 +629,8 @@ public class ConfigurationComposite extends Composite {
 
                     // update the string showing the config value
                     updateConfigDisplay(mEditedConfig);
+
+                    updateActivity();
                 }
             }
         } finally {
@@ -680,13 +724,19 @@ public class ConfigurationComposite extends Composite {
                 }
 
                 if (targetStatus == LoadStatus.LOADED) {
+                    setVisible(true);
                     if (mResources == null) {
                         mResources = ResourceManager.getInstance().getProjectResources(iProject);
                     }
                     if (mEditedConfig == null) {
-                        ResourceFolder resFolder = mResources.getResourceFolder(
-                                (IFolder) mEditedFile.getParent());
-                        mEditedConfig = resFolder.getConfiguration();
+                        IFolder parent = (IFolder) mEditedFile.getParent();
+                        ResourceFolder resFolder = mResources.getResourceFolder(parent);
+                        if (resFolder != null) {
+                            mEditedConfig = resFolder.getConfiguration();
+                        } else {
+                            mEditedConfig = FolderConfiguration.getConfig(
+                                    parent.getName().split(RES_QUALIFIER_SEP));
+                        }
                     }
 
                     targetData = Sdk.getCurrent().getTargetData(mProjectTarget);
@@ -711,13 +761,11 @@ public class ConfigurationComposite extends Composite {
                     if (loadedConfigData) {
                         // first make sure we have the config to adapt
                         selectDevice(mState.device);
-                        fillConfigCombo(mState.configName);
+                        selectState(mState.stateName);
 
                         adaptConfigSelection(false /*needBestMatch*/);
 
-                        mUiModeCombo.select(UiMode.getIndex(mState.uiMode));
-                        mNightCombo.select(NightMode.getIndex(mState.night));
-                        mTargetCombo.select(mTargetList.indexOf(mState.target));
+                        selectTarget(mState.target);
 
                         targetData = Sdk.getCurrent().getTargetData(mState.target);
                     } else {
@@ -727,9 +775,15 @@ public class ConfigurationComposite extends Composite {
                         IAndroidTarget target = findDefaultRenderTarget();
                         if (target != null) {
                             targetData = Sdk.getCurrent().getTargetData(target);
-                            mTargetCombo.select(mTargetList.indexOf(target));
+                            selectTarget(target);
                         }
                     }
+
+                    // Update activity: This is done before updateThemes() since
+                    // the themes selection can depend on the currently selected activity
+                    // (e.g. when there are manifest registrations for the theme to use
+                    // for a given activity)
+                    updateActivity();
 
                     // Update themes. This is done after updating the devices above,
                     // since we want to look at the chosen device size to decide
@@ -752,6 +806,264 @@ public class ConfigurationComposite extends Composite {
         }
 
         return targetData;
+    }
+
+    private void selectActivity(@Nullable String fqcn) {
+        if (fqcn != null) {
+            mActivityCombo.setData(fqcn);
+            String label = getActivityLabel(fqcn, true);
+            mActivityCombo.setText(label);
+        } else {
+            mActivityCombo.setText("(Select)");
+        }
+        resizeToolBar();
+    }
+
+    @Nullable
+    private String getPreferredActivity(@NonNull IFile file) {
+        // Store/restore the activity context in the config state to help with
+        // performance if for some reason we can't write it into the XML file and to
+        // avoid having to open the model below
+        if (mState.activity != null) {
+            return mState.activity;
+        }
+
+        IProject project = file.getProject();
+
+        // Look up from XML file
+        Document document = DomUtilities.getDocument(file);
+        if (document != null) {
+            Element element = document.getDocumentElement();
+            if (element != null) {
+                String activity = element.getAttributeNS(TOOLS_URI, ATTR_CONTEXT);
+                if (activity != null && !activity.isEmpty()) {
+                    if (activity.startsWith(".") || activity.indexOf('.') == -1) { //$NON-NLS-1$
+                        ManifestInfo manifest = ManifestInfo.get(project);
+                        String pkg = manifest.getPackage();
+                        if (!pkg.isEmpty()) {
+                            if (activity.startsWith(".")) { //$NON-NLS-1$
+                                activity = pkg + activity;
+                            } else {
+                                activity = activity + "." + pkg;
+                            }
+                        }
+                    }
+
+                    mState.activity = activity;
+                    storeState();
+                    return activity;
+                }
+            }
+        }
+
+        // No, not available there: try to infer it from the code index
+        String includedIn = mListener != null ? mListener.getIncludedWithin() : null;
+
+        ManifestInfo manifest = ManifestInfo.get(project);
+        String pkg = manifest.getPackage();
+        String layoutName = ResourceHelper.getLayoutName(mEditedFile);
+
+        // If we are rendering a layout in included context, pick the theme
+        // from the outer layout instead
+        if (includedIn != null) {
+            layoutName = includedIn;
+        }
+
+        String activity = ManifestInfo.guessActivity(project, layoutName, pkg);
+
+        if (activity == null) {
+            List<String> activities = ManifestInfo.getProjectActivities(project);
+            if (activities.size() == 1) {
+                activity = activities.get(0);
+            }
+        }
+
+        if (activity != null) {
+            mState.activity = activity;
+            storeState();
+            return activity;
+        }
+
+        // TODO: Do anything else, such as pick the first activity found?
+        // Or just leave some default label instead?
+        // Also, figure out what to store in the mState so I don't keep trying
+
+        return null;
+    }
+
+    private void onSelectActivity() {
+        String activity = getSelectedActivity();
+        mState.activity = activity;
+        saveState();
+        storeState();
+
+        if (activity == null) {
+            return;
+        }
+
+        // See if there is a default theme assigned to this activity, and if so, use it
+        ManifestInfo manifest = ManifestInfo.get(mEditedFile.getProject());
+        Map<String, String> activityThemes = manifest.getActivityThemes();
+        String preferred = activityThemes.get(activity);
+        if (preferred != null) {
+            // Yes, switch to it
+            selectTheme(preferred);
+            onThemeChange();
+        }
+
+        // Persist in XML
+        if (mListener != null) {
+            mListener.onSetActivity(activity);
+        }
+    }
+
+
+    /** Update the toolbar whenever a label has changed, to not only
+     * cause the layout in the current toolbar to update, but to possibly
+     * wrap the toolbars and update the layout of the surrounding area.
+     */
+    private void resizeToolBar() {
+        Point size = getSize();
+        Point newSize = computeSize(size.x, SWT.DEFAULT, true);
+        setSize(newSize);
+        Composite parent = getParent();
+        parent.layout();
+        parent.redraw();
+    }
+
+    private String getActivityLabel(String fqcn, boolean brief) {
+        if (brief) {
+            String label = fqcn;
+            int packageIndex = label.lastIndexOf('.');
+            if (packageIndex != -1) {
+                label = label.substring(packageIndex + 1);
+            }
+            int innerClass = label.lastIndexOf('$');
+            if (innerClass != -1) {
+                label = label.substring(innerClass + 1);
+            }
+
+            // Also strip out the "Activity" or "Fragment" common suffix
+            // if this is a long name
+            if (label.endsWith("Activity") && label.length() > 8 + 12) { // 12 chars + 8 in suffix
+                label = label.substring(0, label.length() - 8);
+            } else if (label.endsWith("Fragment") && label.length() > 8 + 12) {
+                label = label.substring(0, label.length() - 8);
+            }
+
+            return label;
+        }
+
+        return fqcn;
+    }
+
+    String getSelectedActivity() {
+        return (String) mActivityCombo.getData();
+    }
+
+    private void selectTarget(IAndroidTarget target) {
+        mTargetCombo.setData(target);
+        String label = getRenderingTargetLabel(target, true);
+        mTargetCombo.setText(label);
+        resizeToolBar();
+    }
+
+    private static String getRenderingTargetLabel(IAndroidTarget target, boolean brief) {
+        if (target == null) {
+            return "<null>";
+        }
+
+        AndroidVersion version = target.getVersion();
+
+        if (brief) {
+            if (target.isPlatform()) {
+                return Integer.toString(version.getApiLevel());
+            } else {
+                return target.getName() + ':' + Integer.toString(version.getApiLevel());
+            }
+        }
+
+        String label = String.format("API %1$d: %2$s",
+                version.getApiLevel(),
+                target.getShortClasspathName());
+
+        return label;
+    }
+
+    private String getLocaleLabel(ResourceQualifier[] qualifiers, boolean brief) {
+        if (qualifiers == null) {
+            return null;
+        }
+
+        LanguageQualifier language = (LanguageQualifier) qualifiers[LOCALE_LANG];
+
+        if (language.hasFakeValue()) {
+            if (brief) {
+                // Just use the icon
+                return "";
+            }
+
+            boolean hasLocale = false;
+            ResourceRepository projectRes = mListener.getProjectResources();
+            if (projectRes != null) {
+                hasLocale = projectRes.getLanguages().size() > 0;
+            }
+
+            if (hasLocale) {
+                return "Other";
+            } else {
+                return "Any";
+            }
+        }
+
+        RegionQualifier region = (RegionQualifier) qualifiers[LOCALE_REGION];
+        if (region.hasFakeValue()) {
+            // TODO: Make the region string use "Other" instead of "Any" if
+            // there is more than one region for a given language
+            //if (regions.size() > 0) {
+            //    return String.format("%1$s / Other", language);
+            //} else {
+            //    return String.format("%1$s / Any", language);
+            //}
+            return language.getValue();
+        } else {
+            return String.format("%1$s / %2$s", language.getValue(), region.getValue());
+        }
+    }
+
+    private void selectLocale(ResourceQualifier[] qualifiers) {
+        mLocaleCombo.setData(qualifiers);
+        String label = getLocaleLabel(qualifiers, true);
+
+        mLocaleCombo.setText(label);
+
+        Image image = getFlagImage(qualifiers);
+        mLocaleCombo.setImage(image);
+
+        resizeToolBar();
+    }
+
+    private ResourceQualifier[] getSelectedLocale() {
+        return (ResourceQualifier[]) mLocaleCombo.getData();
+    }
+
+    private IAndroidTarget getSelectedTarget() {
+        if (!mTargetCombo.isDisposed()) {
+            return (IAndroidTarget) mTargetCombo.getData();
+        }
+
+        return null;
+    }
+
+    void selectTheme(String theme) {
+        assert theme.startsWith(PREFIX_STYLE) || theme.startsWith(PREFIX_ANDROID_STYLE) : theme;
+        mThemeCombo.setData(theme);
+        if (theme != null) {
+            mThemeCombo.setText(getThemeLabel(theme, true));
+        } else {
+            mThemeCombo.setText("(Set Theme)");
+        }
+        resizeToolBar();
     }
 
     /** Return the default render target to use, or null if no strong preference */
@@ -842,12 +1154,12 @@ public class ConfigurationComposite extends Composite {
 
     private static class ConfigMatch {
         final FolderConfiguration testConfig;
-        final LayoutDevice device;
+        final Device device;
         final String name;
         final ConfigBundle bundle;
 
-        public ConfigMatch(FolderConfiguration testConfig,
-                LayoutDevice device, String name, ConfigBundle bundle) {
+        public ConfigMatch(FolderConfiguration testConfig, Device device, String name,
+                ConfigBundle bundle) {
             this.testConfig = testConfig;
             this.device = device;
             this.name = name;
@@ -868,10 +1180,11 @@ public class ConfigurationComposite extends Composite {
      * the current config. This must only be true if the current config is compatible.
      */
     private void findAndSetCompatibleConfig(boolean favorCurrentConfig) {
-        // list of compatible device/config/locale
+        // list of compatible device/state/locale
         List<ConfigMatch> anyMatches = new ArrayList<ConfigMatch>();
 
-        // list of actual best match (ie the file is a best match for the device/config)
+        // list of actual best match (ie the file is a best match for the
+        // device/state)
         List<ConfigMatch> bestMatches = new ArrayList<ConfigMatch>();
 
         // get a locale that match the host locale roughly (may not be exact match on the region.)
@@ -916,27 +1229,30 @@ public class ConfigurationComposite extends Composite {
 
         addRenderTargetToBundles(configBundles);
 
-        for (LayoutDevice device : mDeviceList) {
-            for (DeviceConfig config : device.getConfigs()) {
+        for (Device device : mDeviceList) {
+            for (State state : device.getAllStates()) {
 
-                // loop on the list of config bundles to create full configurations.
+                // loop on the list of config bundles to create full
+                // configurations.
+                FolderConfiguration stateConfig = DeviceConfigHelper.getFolderConfig(state);
                 for (ConfigBundle bundle : configBundles) {
                     // create a new config with device config
                     FolderConfiguration testConfig = new FolderConfiguration();
-                    testConfig.set(config.getConfig());
+                    testConfig.set(stateConfig);
 
                     // add on top of it, the extra qualifiers from the bundle
                     testConfig.add(bundle.config);
 
                     if (mEditedConfig.isMatchFor(testConfig)) {
-                        // this is a basic match. record it in case we don't find a match
+                        // this is a basic match. record it in case we don't
+                        // find a match
                         // where the edited file is a best config.
-                        anyMatches.add(new ConfigMatch(testConfig, device, config.getName(),
-                                bundle));
+                        anyMatches
+                                .add(new ConfigMatch(testConfig, device, state.getName(), bundle));
 
                         if (isCurrentFileBestMatchFor(testConfig)) {
                             // this is what we want.
-                            bestMatches.add(new ConfigMatch(testConfig, device, config.getName(),
+                            bestMatches.add(new ConfigMatch(testConfig, device, state.getName(),
                                     bundle));
                         }
                     }
@@ -964,10 +1280,11 @@ public class ConfigurationComposite extends Composite {
                 // select the best device anyway.
                 ConfigMatch match = selectConfigMatch(anyMatches);
                 selectDevice(mState.device = match.device);
-                fillConfigCombo(match.name);
-                mLocaleCombo.select(match.bundle.localeIndex);
-                mUiModeCombo.select(match.bundle.dockModeIndex);
-                mNightCombo.select(match.bundle.nightModeIndex);
+                selectState(match.name);
+                selectLocale(mLocaleList.get(match.bundle.localeIndex));
+
+                mState.uiMode = UiMode.getByIndex(match.bundle.dockModeIndex);
+                mState.night = NightMode.getByIndex(match.bundle.nightModeIndex);
 
                 // TODO: display a better warning!
                 computeCurrentConfig();
@@ -981,16 +1298,16 @@ public class ConfigurationComposite extends Composite {
 
             } else {
                 // TODO: there is no device/config able to display the layout, create one.
-                // For the base config values, we'll take the first device and config,
+                // For the base config values, we'll take the first device and state,
                 // and replace whatever qualifier required by the layout file.
             }
         } else {
             ConfigMatch match = selectConfigMatch(bestMatches);
             selectDevice(mState.device = match.device);
-            fillConfigCombo(match.name);
-            mLocaleCombo.select(match.bundle.localeIndex);
-            mUiModeCombo.select(match.bundle.dockModeIndex);
-            mNightCombo.select(match.bundle.nightModeIndex);
+            selectState(match.name);
+            selectLocale(mLocaleList.get(match.bundle.localeIndex));
+            mState.uiMode = UiMode.getByIndex(match.bundle.dockModeIndex);
+            mState.night = NightMode.getByIndex(match.bundle.nightModeIndex);
         }
     }
 
@@ -998,6 +1315,7 @@ public class ConfigurationComposite extends Composite {
      * Note: this comparator imposes orderings that are inconsistent with equals.
      */
     private static class TabletConfigComparator implements Comparator<ConfigMatch> {
+        @Override
         public int compare(ConfigMatch o1, ConfigMatch o2) {
             ScreenSize ss1 = o1.testConfig.getScreenSizeQualifier().getValue();
             ScreenSize ss2 = o2.testConfig.getScreenSizeQualifier().getValue();
@@ -1049,6 +1367,7 @@ public class ConfigurationComposite extends Composite {
             mDensitySort.put(Density.LOW.getDpiValue(),    4);
         }
 
+        @Override
         public int compare(ConfigMatch o1, ConfigMatch o2) {
             int dpi1 = Density.DEFAULT_DENSITY;
             if (o1.testConfig.getDensityQualifier() != null) {
@@ -1106,12 +1425,12 @@ public class ConfigurationComposite extends Composite {
         IWorkbenchWindow activeWorkbenchWindow = workbench.getActiveWorkbenchWindow();
         IWorkbenchPage page = activeWorkbenchWindow.getActivePage();
         IEditorPart activeEditor = page.getActiveEditor();
-        if (activeEditor instanceof LayoutEditor
+        LayoutEditorDelegate delegate = LayoutEditorDelegate.fromEditor(activeEditor);
+        if (delegate != null
                 && mEditedFile != null
                 // (Only do this when the two files are in the same project)
-                && ((LayoutEditor) activeEditor).getProject() == mEditedFile.getProject()) {
-            LayoutEditor editor = (LayoutEditor) activeEditor;
-            FolderConfiguration configuration = editor.getGraphicalEditor().getConfiguration();
+                && delegate.getEditor().getProject() == mEditedFile.getProject()) {
+            FolderConfiguration configuration = delegate.getGraphicalEditor().getConfiguration();
             if (configuration != null) {
                 for (ConfigMatch match : matches) {
                     if (configuration.equals(match.testConfig)) {
@@ -1187,10 +1506,9 @@ public class ConfigurationComposite extends Composite {
         // check the device config (ie sans locale)
         boolean needConfigChange = true; // if still true, we need to find another config.
         boolean currentConfigIsCompatible = false;
-        int configIndex = mDeviceConfigCombo.getSelectionIndex();
-        if (configIndex != -1) {
-            String configName = mDeviceConfigCombo.getItem(configIndex);
-            FolderConfiguration currentConfig = mState.device.getFolderConfigByName(configName);
+        State selectedState = getSelectedDeviceState();
+        if (selectedState != null) {
+            FolderConfiguration currentConfig = DeviceConfigHelper.getFolderConfig(selectedState);
             if (currentConfig != null && mEditedConfig.isMatchFor(currentConfig)) {
                 currentConfigIsCompatible = true; // current config is compatible
                 if (needBestMatch == false || isCurrentFileBestMatchFor(currentConfig)) {
@@ -1200,15 +1518,15 @@ public class ConfigurationComposite extends Composite {
         }
 
         if (needConfigChange) {
-            // if the current config/locale isn't a correct match, then
-            // look for another config/locale in the same device.
+            // if the current state/locale isn't a correct match, then
+            // look for another state/locale in the same device.
             FolderConfiguration testConfig = new FolderConfiguration();
 
             // first look in the current device.
             String matchName = null;
             int localeIndex = -1;
-            mainloop: for (DeviceConfig config : mState.device.getConfigs()) {
-                testConfig.set(config.getConfig());
+            mainloop: for (State state : mState.device.getAllStates()) {
+                testConfig.set(DeviceConfigHelper.getFolderConfig(state));
 
                 // loop on the locales.
                 for (int i = 0 ; i < mLocaleList.size() ; i++) {
@@ -1220,7 +1538,7 @@ public class ConfigurationComposite extends Composite {
 
                     if (mEditedConfig.isMatchFor(testConfig) &&
                             isCurrentFileBestMatchFor(testConfig)) {
-                        matchName = config.getName();
+                        matchName = state.getName();
                         localeIndex = i;
                         break mainloop;
                     }
@@ -1228,11 +1546,12 @@ public class ConfigurationComposite extends Composite {
             }
 
             if (matchName != null) {
-                selectConfig(matchName);
-                mLocaleCombo.select(localeIndex);
+                selectState(matchName);
+                selectLocale(mLocaleList.get(localeIndex));
             } else {
-                // no match in current device with any config/locale
-                // attempt to find another device that can display this particular config.
+                // no match in current device with any state/locale
+                // attempt to find another device that can display this
+                // particular state.
                 findAndSetCompatibleConfig(currentConfigIsCompatible);
             }
         }
@@ -1252,80 +1571,47 @@ public class ConfigurationComposite extends Composite {
         // The only trick is that the region could be null in the fileConfig but in our
         // list of locales, this is represented as a RegionQualifier with value of
         // FAKE_LOCALE_VALUE.
-        final int count = mLocaleList.size();
-        for (int i = 0 ; i < count ; i++) {
-            ResourceQualifier[] locale = mLocaleList.get(i);
-
-            // the language qualifier in the locale list is never null.
-            if (locale[LOCALE_LANG].equals(language)) {
-                // region comparison is more complex, as the region could be null.
-                if (region == null) {
-                    if (RegionQualifier.FAKE_REGION_VALUE.equals(
-                            ((RegionQualifier)locale[LOCALE_REGION]).getValue())) {
-                        // match!
-                        if (mLocaleCombo.getSelectionIndex() != i) {
-                            mLocaleCombo.select(i);
-                            changed = true;
-                        }
-                        break;
-                    }
-                } else if (region.equals(locale[LOCALE_REGION])) {
-                    // match!
-                    if (mLocaleCombo.getSelectionIndex() != i) {
-                        mLocaleCombo.select(i);
-                        changed = true;
-                    }
-                    break;
-                }
-            }
+        ResourceQualifier[] selectedLocale = getSelectedLocale();
+        //changed = prevLanguage != language || region != prevRegion;
+        if (selectedLocale != null) {
+            ResourceQualifier prevLanguage = selectedLocale[LOCALE_LANG];
+            ResourceQualifier prevRegion = selectedLocale[LOCALE_REGION];
+            changed = !prevLanguage.equals(language) || !prevRegion.equals(region);
         }
+
+        selectLocale(new ResourceQualifier[] { language, region});
 
         return changed;
     }
 
     private void updateConfigDisplay(FolderConfiguration fileConfig) {
-        String current = fileConfig.toDisplayString();
-        String layoutLabel = current != null ? current : "(Default)";
-        mCurrentLayoutLabel.setText(layoutLabel);
-        mCurrentLayoutLabel.setToolTipText(layoutLabel);
+        // Label currently hidden
+        //String current = fileConfig.toDisplayString();
+        //String current = fileConfig.getFolderName(ResourceFolderType.LAYOUT);
+        String current = mEditedFile.getParent().getName();
+        if (current.equals(AndroidConstants.FD_RES_LAYOUT)) {
+            current = "default";
+        }
+
+        // Pretty things up a bit
+        //if (current == null || current.equals("default")) {
+        //    current = "Default Configuration";
+        //}
+        mConfigCombo.setText(current);
+        resizeToolBar();
     }
 
     private void saveState() {
         if (mDisableUpdates == 0) {
-            int index = mDeviceConfigCombo.getSelectionIndex();
-            if (index != -1) {
-                mState.configName = mDeviceConfigCombo.getItem(index);
-            } else {
-                mState.configName = null;
-            }
+            State state = getSelectedDeviceState();
+            String stateName = state != null ? state.getName() : null;
+            mState.stateName = stateName;
 
             // since the locales are relative to the project, only keeping the index is enough
-            index = mLocaleCombo.getSelectionIndex();
-            if (index != -1) {
-                mState.locale = mLocaleList.get(index);
-            } else {
-                mState.locale = null;
-            }
-
-            index = mThemeCombo.getSelectionIndex();
-            if (index != -1) {
-                mState.theme = mThemeCombo.getItem(index);
-            }
-
-            index = mUiModeCombo.getSelectionIndex();
-            if (index != -1) {
-                mState.uiMode = UiMode.getByIndex(index);
-            }
-
-            index = mNightCombo.getSelectionIndex();
-            if (index != -1) {
-                mState.night = NightMode.getByIndex(index);
-            }
-
-            index = mTargetCombo.getSelectionIndex();
-            if (index != -1) {
-                mState.target = mTargetList.get(index);
-            }
+            mState.locale = getSelectedLocale();
+            mState.theme = getSelectedTheme();
+            mState.target = getRenderingTarget();
+            mState.activity = getSelectedActivity();
         }
     }
 
@@ -1334,6 +1620,510 @@ public class ConfigurationComposite extends Composite {
      */
     public void storeState() {
         AdtPlugin.setFileProperty(mEditedFile, NAME_CONFIG_STATE, mState.getData());
+    }
+
+    private void addLocaleMenuListener(final ToolItem combo) {
+        Listener menuListener = new Listener() {
+            @Override
+            public void handleEvent(Event event) {
+                Menu menu = new Menu(ConfigurationComposite.this.getShell(), SWT.POP_UP);
+                ResourceQualifier[] current = getSelectedLocale();
+
+                for (final ResourceQualifier[] qualifiers : mLocaleList) {
+                    String title = getLocaleLabel(qualifiers, false);
+                    MenuItem item = new MenuItem(menu, SWT.CHECK);
+                    item.setText(title);
+                    Image image = getFlagImage(qualifiers);
+                    item.setImage(image);
+
+                    boolean selected = current == qualifiers;
+                    if (selected) {
+                        item.setSelection(true);
+                    }
+
+                    item.addSelectionListener(new SelectionAdapter() {
+                        @Override
+                        public void widgetSelected(SelectionEvent e) {
+                            selectLocale(qualifiers);
+                            onLocaleChange();
+                        }
+                    });
+                }
+
+                Rectangle bounds = combo.getBounds();
+                Point location = new Point(bounds.x, bounds.y + bounds.height);
+                location = combo.getParent().toDisplay(location);
+                menu.setLocation(location.x, location.y);
+                menu.setVisible(true);
+            }
+        };
+        combo.addListener(SWT.Selection, menuListener);
+    }
+
+    private Map<String, String> mCountryToLanguage;
+
+    private String getCountry(String language, String region) {
+        if (RegionQualifier.FAKE_REGION_VALUE.equals(region)) {
+            region = "";
+        }
+
+        String country = region;
+        if (country.isEmpty()) {
+            // Special cases
+            if (language.equals("ar")) {        //$NON-NLS-1$
+                country = "AE";                 //$NON-NLS-1$
+            } else if (language.equals("zh")) { //$NON-NLS-1$
+                country = "CN";                 //$NON-NLS-1$
+            } else if (language.equals("en")) { //$NON-NLS-1$
+                country = "US";                 //$NON-NLS-1$
+            } else if (language.equals("fa")) { //$NON-NLS-1$
+                country = "IR";                 //$NON-NLS-1$
+            }
+        }
+
+        if (country.isEmpty()) {
+            if (mCountryToLanguage == null) {
+                Locale[] locales = Locale.getAvailableLocales();
+                mCountryToLanguage = Maps.newHashMapWithExpectedSize(locales.length);
+                Map<String, Locale> localeMap = Maps.newHashMapWithExpectedSize(locales.length);
+                for (int i = 0; i < locales.length; i++) {
+                    Locale locale = locales[i];
+                    String localeLanguage = locale.getLanguage();
+                    String localeCountry = locale.getCountry();
+                    if (!localeCountry.isEmpty()) {
+                        localeCountry = localeCountry.toLowerCase(Locale.US);
+                        Locale old = localeMap.get(localeLanguage);
+                        if (old != null) {
+                            // For Italian for example it has both a locale with country = Italy
+                            // and one with country = Switzerland, so prefer the one where the
+                            // language code matches the country.
+                            if (!localeLanguage.equals(localeCountry)) {
+                                continue;
+                            }
+                        }
+                        mCountryToLanguage.put(localeLanguage, localeCountry);
+                        localeMap.put(localeLanguage, locale);
+                    }
+                }
+            }
+
+            country = mCountryToLanguage.get(language);
+        }
+
+        return country;
+    }
+
+    @NonNull
+    private Image getFlagImage(@NonNull ResourceQualifier[] qualifiers) {
+        Image image = null;
+        assert qualifiers.length == 2;
+        String language = ((LanguageQualifier) qualifiers[LOCALE_LANG]).getValue();
+        String region = ((RegionQualifier) qualifiers[LOCALE_REGION]).getValue();
+        if (LanguageQualifier.FAKE_LANG_VALUE.equals(language)) {
+            return IconFactory.getInstance().getIcon(ICON_GLOBE);
+        } else {
+            String country = getCountry(language, region);
+            if (country != null) {
+                image = FlagImagesRepository.getFlagImage(country, language);
+            }
+            if (image == null) {
+                image = FlagImagesRepository.getEmptyFlagImage();
+            }
+
+            return image;
+        }
+    }
+
+    private String getDeviceLabel(Device device, boolean brief) {
+        if(device == null) {
+            return "";
+        }
+        String name = device.getName();
+
+        if (brief) {
+            // Produce a really brief summary of the device name, suitable for
+            // use in the narrow space available in the toolbar for example
+            int nexus = name.indexOf("Nexus"); //$NON-NLS-1$
+            if (nexus != -1) {
+                int begin = name.indexOf('(');
+                if (begin != -1) {
+                    begin++;
+                    int end = name.indexOf(')', begin);
+                    if (end != -1) {
+                        return name.substring(begin, end).trim();
+                    }
+                }
+            }
+        }
+
+        return name;
+    }
+
+    private void addDeviceMenuListener(final ToolItem combo) {
+        Listener menuListener = new Listener() {
+            @Override
+            public void handleEvent(Event event) {
+                Device current = getSelectedDevice();
+                Menu menu = new Menu(ConfigurationComposite.this.getShell(), SWT.POP_UP);
+
+                AvdManager avdManager = Sdk.getCurrent().getAvdManager();
+                AvdInfo[] avds = avdManager.getValidAvds();
+                boolean separatorNeeded = false;
+                for (AvdInfo avd : avds) {
+                    for (final Device d : mDeviceList) {
+                        if (d.getManufacturer().equals(avd.getDeviceManufacturer())
+                                && d.getName().equals(avd.getDeviceName())) {
+                            separatorNeeded = true;
+                            MenuItem item = new MenuItem(menu, SWT.CHECK);
+                            item.setText(avd.getName());
+                            item.setSelection(current == d);
+
+                            item.addSelectionListener(new SelectionAdapter() {
+
+                                @Override
+                                public void widgetSelected(SelectionEvent e) {
+                                    selectDevice(d);
+                                    onDeviceChange(true /*recomputeLayout*/);
+                                }
+                            });
+                        }
+                    }
+                }
+
+                if (separatorNeeded) {
+                    @SuppressWarnings("unused")
+                    MenuItem separator = new MenuItem(menu, SWT.SEPARATOR);
+                }
+
+                // Group the devices by manufacturer, then put them in the menu
+                if (!mDeviceList.isEmpty()) {
+                    Map<String, List<Device>> manufacturers = new TreeMap<String, List<Device>>();
+                    for (Device device : mDeviceList) {
+                        List<Device> devices;
+                        if(manufacturers.containsKey(device.getManufacturer())) {
+                            devices = manufacturers.get(device.getManufacturer());
+                        } else {
+                            devices = new ArrayList<Device>();
+                            manufacturers.put(device.getManufacturer(), devices);
+                        }
+                        devices.add(device);
+                    }
+                    for (List<Device> devices : manufacturers.values()) {
+                        MenuItem item = new MenuItem(menu, SWT.CASCADE);
+                        item.setText(devices.get(0).getManufacturer());
+                        Menu manufacturerMenu = new Menu(menu);
+                        item.setMenu(manufacturerMenu);
+                        for (final Device d : devices) {
+                            MenuItem deviceItem = new MenuItem(manufacturerMenu, SWT.CHECK);
+                            deviceItem.setText(d.getName());
+                            deviceItem.setSelection(current == d);
+
+                            deviceItem.addSelectionListener(new SelectionAdapter() {
+
+                                @Override
+                                public void widgetSelected(SelectionEvent e) {
+                                    selectDevice(d);
+                                    onDeviceChange(true /*recomputeLayout*/);
+                                }
+                            });
+                        }
+                    }
+
+                }
+
+                // TODO - how do I dispose of this?
+
+                Rectangle bounds = combo.getBounds();
+                Point location = new Point(bounds.x, bounds.y + bounds.height);
+                location = combo.getParent().toDisplay(location);
+                menu.setLocation(location.x, location.y);
+                menu.setVisible(true);
+            }
+        };
+        combo.addListener(SWT.Selection, menuListener);
+    }
+
+    private void addTargetMenuListener(final ToolItem combo) {
+        Listener menuListener = new Listener() {
+            @Override
+            public void handleEvent(Event event) {
+                Menu menu = new Menu(ConfigurationComposite.this.getShell(), SWT.POP_UP);
+                IAndroidTarget current = getSelectedTarget();
+
+                for (final IAndroidTarget target : mTargetList) {
+                    String title = getRenderingTargetLabel(target, false);
+                    MenuItem item = new MenuItem(menu, SWT.CHECK);
+                    item.setText(title);
+
+                    boolean selected = current == target;
+                    if (selected) {
+                        item.setSelection(true);
+                    }
+
+                    item.addSelectionListener(new SelectionAdapter() {
+                        @Override
+                        public void widgetSelected(SelectionEvent e) {
+                            selectTarget(target);
+                            onRenderingTargetChange();
+                        }
+                    });
+                }
+
+                Rectangle bounds = combo.getBounds();
+                Point location = new Point(bounds.x, bounds.y + bounds.height);
+                location = combo.getParent().toDisplay(location);
+                menu.setLocation(location.x, location.y);
+                menu.setVisible(true);
+            }
+        };
+        combo.addListener(SWT.Selection, menuListener);
+    }
+
+    private void addThemeListener(final ToolItem combo) {
+        Listener menuListener = new Listener() {
+            @Override
+            public void handleEvent(Event event) {
+                ThemeMenuAction.showThemeMenu(ConfigurationComposite.this, combo, mThemeList);
+            }
+        };
+        combo.addListener(SWT.Selection, menuListener);
+    }
+
+    private void addOrientationMenuListener(final ToolItem combo) {
+        Listener menuListener = new Listener() {
+            @Override
+            public void handleEvent(Event event) {
+                 if (event.detail == SWT.ARROW) {
+                     OrientationMenuAction.showMenu(ConfigurationComposite.this, combo);
+                 } else {
+                     gotoNextState();
+                 }
+            }
+        };
+        combo.addListener(SWT.Selection, menuListener);
+    }
+
+    /** Move to the next device state, changing the icon if it changes orientation */
+    private void gotoNextState() {
+        State state = getSelectedDeviceState();
+        State flipped = getNextDeviceState(state);
+        if (flipped != state) {
+            selectDeviceState(flipped);
+            onDeviceConfigChange();
+        }
+    }
+
+    /** Get the next cyclical state after the given state */
+    @Nullable
+    State getNextDeviceState(State state) {
+        Device device = getSelectedDevice();
+        List<State> states = device.getAllStates();
+        for (int i = 0; i < states.size(); i++) {
+            if (states.get(i) == state) {
+                return states.get((i + 1) % states.size());
+            }
+        }
+
+        return null;
+    }
+
+    protected String getThemeLabel(String theme, boolean brief) {
+        theme = ResourceHelper.styleToTheme(theme);
+
+        if (brief) {
+            int index = theme.lastIndexOf('.');
+            if (index < theme.length() - 1) {
+                return theme.substring(index + 1);
+            }
+        }
+        return theme;
+    }
+
+    private void addActivityMenuListener(final ToolItem combo) {
+        Listener menuListener = new Listener() {
+            @Override
+            public void handleEvent(Event event) {
+                // TODO: Allow using fragments here as well?
+                Menu menu = new Menu(ConfigurationComposite.this.getShell(), SWT.POP_UP);
+                ISharedImages sharedImages = JavaUI.getSharedImages();
+                String current = getSelectedActivity();
+
+                if (current != null) {
+                    MenuItem item = new MenuItem(menu, SWT.PUSH);
+                    String label = getActivityLabel(current, true);;
+                    item.setText( String.format("Open %1$s...", label));
+                    Image image = sharedImages.getImage(ISharedImages.IMG_OBJS_CUNIT);
+                    item.setImage(image);
+
+                    item.addSelectionListener(new SelectionAdapter() {
+                        @Override
+                        public void widgetSelected(SelectionEvent e) {
+                            String fqcn = getSelectedActivity();
+                            AdtPlugin.openJavaClass(mEditedFile.getProject(), fqcn);
+                        }
+                    });
+
+                    @SuppressWarnings("unused")
+                    MenuItem separator = new MenuItem(menu, SWT.SEPARATOR);
+                }
+
+                IProject project = mEditedFile.getProject();
+                Image image = sharedImages.getImage(ISharedImages.IMG_OBJS_CLASS);
+
+                // Add activities found to be relevant to this layout
+                String layoutName = ResourceHelper.getLayoutName(mEditedFile);
+                String pkg = ManifestInfo.get(project).getPackage();
+                List<String> preferred = ManifestInfo.guessActivities(project, layoutName, pkg);
+                current = addActivities(menu, current, image, preferred);
+
+                // Add all activities
+                List<String> activities = ManifestInfo.getProjectActivities(project);
+                if (preferred.size() > 0) {
+                    // Filter out the activities we've already listed above
+                    List<String> filtered = new ArrayList<String>(activities.size());
+                    Set<String> remove = new HashSet<String>(preferred);
+                    for (String fqcn : activities) {
+                        if (!remove.contains(fqcn)) {
+                            filtered.add(fqcn);
+                        }
+                    }
+                    activities = filtered;
+                }
+
+                if (activities.size() > 0) {
+                    if (preferred.size() > 0) {
+                        @SuppressWarnings("unused")
+                        MenuItem separator = new MenuItem(menu, SWT.SEPARATOR);
+                    }
+
+                    addActivities(menu, current, image, activities);
+                }
+
+                Rectangle bounds = combo.getBounds();
+                Point location = new Point(bounds.x, bounds.y + bounds.height);
+                location = combo.getParent().toDisplay(location);
+                menu.setLocation(location.x, location.y);
+                menu.setVisible(true);
+            }
+
+            private String addActivities(Menu menu, String current, Image image,
+                    List<String> activities) {
+                for (final String fqcn : activities) {
+                    String title = getActivityLabel(fqcn, false);
+                    MenuItem item = new MenuItem(menu, SWT.CHECK);
+                    item.setText(title);
+                    item.setImage(image);
+
+                    boolean selected = title.equals(current);
+                    if (selected) {
+                        item.setSelection(true);
+                        current = null; // Only show the first occurrence as selected
+                        // such that we don't show it selected again in the full activity list
+                    }
+
+                    item.addSelectionListener(new SelectionAdapter() {
+                        @Override
+                        public void widgetSelected(SelectionEvent e) {
+                            selectActivity(fqcn);
+                            onSelectActivity();
+                        }
+                    });
+                }
+
+                return current;
+            }
+        };
+        combo.addListener(SWT.Selection, menuListener);
+    }
+
+    private void addConfigurationMenuListener(final ToolItem combo) {
+        Listener menuListener = new Listener() {
+            @Override
+            public void handleEvent(Event event) {
+                Menu menu = new Menu(ConfigurationComposite.this.getShell(), SWT.POP_UP);
+
+                // Compute the set of layout files defining this layout resource
+                String name = mEditedFile.getName();
+                IContainer resFolder = mEditedFile.getParent().getParent();
+                List<IFile> variations = new ArrayList<IFile>();
+                try {
+                    for (IResource resource : resFolder.members()) {
+                        if (resource.getName().startsWith(FD_RES_LAYOUT)
+                                && resource instanceof IContainer) {
+                            IContainer layoutFolder = (IContainer) resource;
+                            IResource variation = layoutFolder.findMember(name);
+                            if (variation instanceof IFile) {
+                                variations.add((IFile) variation);
+                            }
+                        }
+                    }
+                } catch (CoreException e1) {
+                    // TODO Auto-generated catch block
+                    e1.printStackTrace();
+                }
+
+                ResourceManager manager = ResourceManager.getInstance();
+                for (final IFile resource : variations) {
+                    MenuItem item = new MenuItem(menu, SWT.CHECK);
+
+                    IFolder parent = (IFolder) resource.getParent();
+                    ResourceFolder parentResource = manager.getResourceFolder(parent);
+                    FolderConfiguration configuration = parentResource.getConfiguration();
+                    String title = configuration.toDisplayString();
+                    item.setText(title);
+
+                    boolean selected = mEditedFile.equals(resource);
+                    if (selected) {
+                        item.setSelection(true);
+                    }
+
+                    item.addSelectionListener(new SelectionAdapter() {
+                        @Override
+                        public void widgetSelected(SelectionEvent e) {
+                            ConfigurationComposite.this.getDisplay().asyncExec(new Runnable() {
+                                @Override
+                                public void run() {
+                                    try {
+                                        AdtPlugin.openFile(resource, null, false);
+                                    } catch (PartInitException ex) {
+                                        AdtPlugin.log(ex, null);
+                                    }
+                                }
+                            });
+                        }
+                    });
+                }
+
+                if (!mEditedConfig.equals(mCurrentConfig)) {
+                    if (variations.size() > 0) {
+                        @SuppressWarnings("unused")
+                        MenuItem separator = new MenuItem(menu, SWT.SEPARATOR);
+                    }
+
+                    // Add action for creating a new configuration
+                    MenuItem item = new MenuItem(menu, SWT.CHECK);
+                    item.setText("Create New...");
+                    item.setImage(IconFactory.getInstance().getIcon(ICON_NEW_CONFIG));
+                    //item.setToolTipText("Duplicate: Create new configuration for this layout");
+
+                    item.addSelectionListener(new SelectionAdapter() {
+                        @Override
+                        public void widgetSelected(SelectionEvent e) {
+                            if (mListener != null) {
+                                mListener.onCreate();
+                            }
+                        }
+                    });
+                }
+
+                Rectangle bounds = combo.getBounds();
+                Point location = new Point(bounds.x, bounds.y + bounds.height);
+                location = combo.getParent().toDisplay(location);
+                menu.setLocation(location.x, location.y);
+                menu.setVisible(true);
+            }
+        };
+        combo.addListener(SWT.Selection, menuListener);
     }
 
     /**
@@ -1348,12 +2138,9 @@ public class ConfigurationComposite extends Composite {
         mDisableUpdates++;
 
         try {
-            // Reset the combo
-            mLocaleCombo.removeAll();
             mLocaleList.clear();
 
             SortedSet<String> languages = null;
-            boolean hasLocale = false;
 
             // get the languages from the project.
             ResourceRepository projectRes = mListener.getProjectResources();
@@ -1364,39 +2151,22 @@ public class ConfigurationComposite extends Composite {
                 languages = projectRes.getLanguages();
 
                 for (String language : languages) {
-                    hasLocale = true;
-
                     LanguageQualifier langQual = new LanguageQualifier(language);
 
                     // find the matching regions and add them
                     SortedSet<String> regions = projectRes.getRegions(language);
                     for (String region : regions) {
-                        mLocaleCombo.add(
-                                String.format("%1$s / %2$s", language, region));
                         RegionQualifier regionQual = new RegionQualifier(region);
                         mLocaleList.add(new ResourceQualifier[] { langQual, regionQual });
                     }
 
                     // now the entry for the other regions the language alone
-                    if (regions.size() > 0) {
-                        mLocaleCombo.add(String.format("%1$s / Other", language));
-                    } else {
-                        mLocaleCombo.add(String.format("%1$s / Any", language));
-                    }
                     // create a region qualifier that will never be matched by qualified resources.
                     mLocaleList.add(new ResourceQualifier[] {
                             langQual,
                             new RegionQualifier(RegionQualifier.FAKE_REGION_VALUE)
                     });
                 }
-            }
-
-            // add a locale not present in the project resources. This will let the dev
-            // tests his/her default values.
-            if (hasLocale) {
-                mLocaleCombo.add("Other");
-            } else {
-                mLocaleCombo.add("Any locale");
             }
 
             // create language/region qualifier that will never be matched by qualified resources.
@@ -1411,10 +2181,9 @@ public class ConfigurationComposite extends Composite {
                 setLocaleCombo(mState.locale[LOCALE_LANG],
                         mState.locale[LOCALE_REGION]);
             } else {
-                mLocaleCombo.select(0);
+                //mLocaleCombo.select(0);
+                selectLocale(mLocaleList.get(0));
             }
-
-            mThemeCombo.getParent().layout();
         } finally {
             mDisableUpdates--;
         }
@@ -1465,111 +2234,18 @@ public class ConfigurationComposite extends Composite {
         mDisableUpdates++;
 
         try {
-            // Reset the combo
-            mThemeCombo.removeAll();
-            mIsProjectTheme.clear();
-
-            ArrayList<String> themes = new ArrayList<String>();
-            String includedIn = mListener.getIncludedWithin();
-
-            // First list any themes that are declared by the manifest
             if (mEditedFile != null) {
-                IProject project = mEditedFile.getProject();
-                ManifestInfo manifest = ManifestInfo.get(project);
-
-                // Look up the screen size for the current configuration
-                ScreenSize screenSize = null;
-                if (mState.device != null) {
-                    List<DeviceConfig> configs = mState.device.getConfigs();
-                    for (DeviceConfig config : configs) {
-                        ScreenSizeQualifier qualifier =
-                            config.getConfig().getScreenSizeQualifier();
-                        screenSize = qualifier.getValue();
-                        break;
-                    }
+                if (mState.theme == null || mState.theme.isEmpty()
+                        || mListener.getIncludedWithin() != null) {
+                    mState.theme = null;
+                    getPreferredTheme();
                 }
-                // Look up the default/fallback theme to use for this project (which
-                // depends on the screen size when no particular theme is specified
-                // in the manifest)
-                String defaultTheme = manifest.getDefaultTheme(mState.target, screenSize);
-
-                Map<String, String> activityThemes = manifest.getActivityThemes();
-                String pkg = manifest.getPackage();
-                String preferred = null;
-                boolean isIncluded = includedIn != null;
-                if (mState.theme == null || isIncluded) {
-                    String layoutName = ResourceHelper.getLayoutName(mEditedFile);
-
-                    // If we are rendering a layout in included context, pick the theme
-                    // from the outer layout instead
-                    if (includedIn != null) {
-                        layoutName = includedIn;
-                    }
-
-                    String activity = ManifestInfo.guessActivity(project, layoutName, pkg);
-                    if (activity != null) {
-                        preferred = activityThemes.get(activity);
-                    }
-                    if (preferred == null) {
-                        preferred = defaultTheme;
-                    }
-                    String preferredTheme = ResourceHelper.styleToTheme(preferred);
-                    if (includedIn == null) {
-                        mState.theme = preferredTheme;
-                    }
-                    boolean isProjectTheme = !preferred.startsWith(PREFIX_ANDROID_STYLE);
-                    mThemeCombo.add(preferredTheme);
-                    mIsProjectTheme.add(Boolean.valueOf(isProjectTheme));
-
-                    mThemeCombo.add(THEME_SEPARATOR);
-                    mIsProjectTheme.add(Boolean.FALSE);
-                }
-
-                // Create a sorted list of unique themes referenced in the manifest
-                // (sort alphabetically, but place the preferred theme at the
-                // top of the list)
-                Set<String> themeSet = new HashSet<String>(activityThemes.values());
-                themeSet.add(defaultTheme);
-                List<String> themeList = new ArrayList<String>(themeSet);
-                final String first = preferred;
-                Collections.sort(themeList, new Comparator<String>() {
-                    public int compare(String s1, String s2) {
-                        if (s1 == first) {
-                            return -1;
-                        } else if (s1 == first) {
-                            return 1;
-                        } else {
-                            return s1.compareTo(s2);
-                        }
-                    }
-                });
-
-                if (themeList.size() > 1 ||
-                        (themeList.size() == 1 && (preferred == null ||
-                                !preferred.equals(themeList.get(0))))) {
-                    for (String style : themeList) {
-                        String theme = ResourceHelper.styleToTheme(style);
-
-                        // Initialize the chosen theme to the first item
-                        // in the used theme list (that's what would be chosen
-                        // anyway) such that we stop attempting to look up
-                        // the associated activity (during initialization,
-                        // this method can be called repeatedly.)
-                        if (mState.theme == null) {
-                            mState.theme = theme;
-                        }
-
-                        boolean isProjectTheme = !style.startsWith(PREFIX_ANDROID_STYLE);
-                        mThemeCombo.add(theme);
-                        mIsProjectTheme.add(Boolean.valueOf(isProjectTheme));
-                    }
-                    mThemeCombo.add(THEME_SEPARATOR);
-                    mIsProjectTheme.add(Boolean.FALSE);
-                }
+                assert mState.theme != null;
             }
 
-            // now get the themes and languages from the project.
-            int projectThemeCount = 0;
+            mThemeList.clear();
+
+            ArrayList<String> themes = new ArrayList<String>();
             ResourceRepository projectRes = mListener.getProjectResources();
             // in cases where the opened file is not linked to a project, this could be null.
             if (projectRes != null) {
@@ -1586,20 +2262,22 @@ public class ConfigurationComposite extends Composite {
                         // collect the themes out of all the styles, ie styles that extend,
                         // directly or indirectly a platform theme.
                         for (ResourceValue value : styleMap.values()) {
-                            if (isTheme(value, styleMap)) {
-                                themes.add(value.getName());
+                            if (isTheme(value, styleMap, null)) {
+                                String theme = value.getName();
+                                themes.add(theme);
                             }
                         }
 
                         Collections.sort(themes);
 
                         for (String theme : themes) {
-                            mThemeCombo.add(theme);
-                            mIsProjectTheme.add(Boolean.TRUE);
+                            if (!theme.startsWith(PREFIX_RESOURCE_REF)) {
+                                theme = PREFIX_STYLE + theme;
+                            }
+                            mThemeList.add(theme);
                         }
                     }
                 }
-                projectThemeCount = themes.size();
                 themes.clear();
             }
 
@@ -1613,11 +2291,10 @@ public class ConfigurationComposite extends Composite {
                     // get the styles.
                     Map<String, ResourceValue> styles = frameworResources.get(ResourceType.STYLE);
 
-
                     // collect the themes out of all the styles.
                     for (ResourceValue value : styles.values()) {
                         String name = value.getName();
-                        if (name.startsWith("Theme.") || name.equals("Theme")) {
+                        if (name.startsWith("Theme.") || name.equals("Theme")) { //$NON-NLS-1$ //$NON-NLS-2$
                             themes.add(value.getName());
                         }
                     }
@@ -1625,50 +2302,89 @@ public class ConfigurationComposite extends Composite {
                     // sort them and add them to the combo
                     Collections.sort(themes);
 
-                    if (projectThemeCount > 0 && themes.size() > 0) {
-                        mThemeCombo.add(THEME_SEPARATOR);
-                        mIsProjectTheme.add(Boolean.FALSE);
-                    }
-
                     for (String theme : themes) {
-                        mThemeCombo.add(theme);
-                        mIsProjectTheme.add(Boolean.FALSE);
+                        if (!theme.startsWith(PREFIX_RESOURCE_REF)) {
+                            theme = PREFIX_ANDROID_STYLE + theme;
+                        }
+                        mThemeList.add(theme);
                     }
 
                     themes.clear();
                 }
             }
 
-            // try to reselect the previous theme.
-            boolean needDefaultSelection = true;
-
-            if (mState.theme != null && includedIn == null) {
-                final int count = mThemeCombo.getItemCount();
-                for (int i = 0 ; i < count ; i++) {
-                    if (mState.theme.equals(mThemeCombo.getItem(i))) {
-                        mThemeCombo.select(i);
-                        needDefaultSelection = false;
-                        mThemeCombo.setEnabled(true);
+            // Migration: In the past we didn't store the style prefix in the settings;
+            // this meant we might lose track of whether the theme is a project style
+            // or a framework style. For now we need to migrate. Search through the
+            // theme list until we have a match
+            if (!mState.theme.startsWith(PREFIX_RESOURCE_REF)) {
+                String projectStyle = PREFIX_STYLE + mState.theme;
+                String frameworkStyle = PREFIX_ANDROID_STYLE + mState.theme;
+                for (String theme : mThemeList) {
+                    if (theme.equals(projectStyle)) {
+                        mState.theme = projectStyle;
+                        break;
+                    } else if (theme.equals(frameworkStyle)) {
+                        mState.theme = frameworkStyle;
                         break;
                     }
                 }
             }
 
-            if (needDefaultSelection) {
-                if (mThemeCombo.getItemCount() > 0) {
-                    mThemeCombo.select(0);
-                    mThemeCombo.setEnabled(true);
-                } else {
-                    mThemeCombo.setEnabled(false);
-                }
-            }
+            // TODO: Handle the case where you have a theme persisted that isn't available??
+            // We could look up mState.theme and make sure it appears in the list! And if not,
+            // picking one.
 
-            mThemeCombo.getParent().layout();
+            selectTheme(mState.theme);
         } finally {
             mDisableUpdates--;
         }
+    }
 
-        assert mIsProjectTheme.size() == mThemeCombo.getItemCount();
+    /** Returns the preferred theme, or null */
+    @Nullable
+    String getPreferredTheme() {
+        if (mListener == null) {
+            return null;
+        }
+
+        IProject project = mEditedFile.getProject();
+        ManifestInfo manifest = ManifestInfo.get(project);
+
+        // Look up the screen size for the current state
+        ScreenSize screenSize = null;
+        if (mState.device != null) {
+            List<State> states = mState.device.getAllStates();
+            for (State state : states) {
+                ScreenSizeQualifier qualifier =
+                    DeviceConfigHelper.getFolderConfig(state).getScreenSizeQualifier();
+                screenSize = qualifier.getValue();
+                break;
+            }
+        }
+
+        // Look up the default/fallback theme to use for this project (which
+        // depends on the screen size when no particular theme is specified
+        // in the manifest)
+        String defaultTheme = manifest.getDefaultTheme(mState.target, screenSize);
+
+        String preferred = defaultTheme;
+        if (mState.theme == null) {
+            // If we are rendering a layout in included context, pick the theme
+            // from the outer layout instead
+
+            String activity = getSelectedActivity();
+            if (activity != null) {
+                Map<String, String> activityThemes = manifest.getActivityThemes();
+                preferred = activityThemes.get(activity);
+            }
+            if (preferred == null) {
+                preferred = defaultTheme;
+            }
+            mState.theme = preferred;
+        }
+
+        return preferred;
     }
 
     // ---- getters for the config selection values ----
@@ -1709,7 +2425,12 @@ public class ConfigurationComposite extends Composite {
      */
     public float getXDpi() {
         if (mState.device != null) {
-            float dpi = mState.device.getXDpi();
+
+            State currState = mState.device.getState(mState.stateName);
+            if (currState == null) {
+                currState = mState.device.getDefaultState();
+            }
+            float dpi = (float) currState.getHardware().getScreen().getXdpi();
             if (Float.isNaN(dpi) == false) {
                 return dpi;
             }
@@ -1724,7 +2445,12 @@ public class ConfigurationComposite extends Composite {
      */
     public float getYDpi() {
         if (mState.device != null) {
-            float dpi = mState.device.getYDpi();
+
+            State currState = mState.device.getState(mState.stateName);
+            if (currState == null) {
+                currState = mState.device.getDefaultState();
+            }
+            float dpi = (float) currState.getHardware().getScreen().getYdpi();
             if (Float.isNaN(dpi) == false) {
                 return dpi;
             }
@@ -1769,13 +2495,19 @@ public class ConfigurationComposite extends Composite {
      *
      * @return the theme name, or null
      */
-    public String getTheme() {
-        int themeIndex = mThemeCombo.getSelectionIndex();
-        if (themeIndex != -1) {
-            return mThemeCombo.getItem(themeIndex);
+    @Nullable
+    public String getThemeName() {
+        String theme = getSelectedTheme();
+        if (theme != null) {
+            theme = ResourceHelper.styleToTheme(theme);
         }
 
-        return null;
+        return theme;
+    }
+
+    @Nullable
+    String getSelectedTheme() {
+        return (String) mThemeCombo.getData();
     }
 
     /**
@@ -1784,9 +2516,9 @@ public class ConfigurationComposite extends Composite {
      * @return the device name, or null
      */
     public String getDevice() {
-        int deviceIndex = mDeviceCombo.getSelectionIndex();
-        if (deviceIndex != -1) {
-            return mDeviceCombo.getItem(deviceIndex);
+        Device device = getSelectedDevice();
+        if (device != null) {
+            return device.getName();
         }
 
         return null;
@@ -1794,137 +2526,174 @@ public class ConfigurationComposite extends Composite {
 
     /**
      * Returns whether the current theme selection is a project theme.
-     * <p/>The returned value is meaningless if {@link #getTheme()} returns <code>null</code>.
+     * <p/>The returned value is meaningless if {@link #getThemeName()} returns <code>null</code>.
      * @return true for project theme, false for framework theme
      */
     public boolean isProjectTheme() {
-        return mIsProjectTheme.get(mThemeCombo.getSelectionIndex()).booleanValue();
-    }
+        String theme = getSelectedTheme();
+        if (theme != null) {
+            assert theme.startsWith(PREFIX_STYLE) || theme.startsWith(PREFIX_ANDROID_STYLE);
 
-    public IAndroidTarget getRenderingTarget() {
-        int index = mTargetCombo.getSelectionIndex();
-        if (index >= 0) {
-            return mTargetList.get(index);
+            return ResourceHelper.isProjectStyle(theme);
         }
 
-        return null;
+        return false;
+    }
+
+    @Nullable
+    public IAndroidTarget getRenderingTarget() {
+        return getSelectedTarget();
     }
 
     /**
      * Loads the list of {@link IAndroidTarget} and inits the UI with it.
      */
     private void initTargets() {
-        mTargetCombo.removeAll();
         mTargetList.clear();
 
         Sdk currentSdk = Sdk.getCurrent();
         if (currentSdk != null) {
             IAndroidTarget[] targets = currentSdk.getTargets();
-            int match = -1;
+            IAndroidTarget match = null;
             for (int i = 0 ; i < targets.length; i++) {
                 // FIXME: add check based on project minSdkVersion
                 if (targets[i].hasRenderingLibrary()) {
-                    mTargetCombo.add(targets[i].getShortClasspathName());
                     mTargetList.add(targets[i]);
 
                     if (mRenderingTarget != null) {
                         // use equals because the rendering could be from a previous SDK, so
                         // it may not be the same instance.
                         if (mRenderingTarget.equals(targets[i])) {
-                            match = mTargetList.indexOf(targets[i]);
+                            match = targets[i];
                         }
                     } else if (mProjectTarget == targets[i]) {
-                        match = mTargetList.indexOf(targets[i]);
+                        match = targets[i];
                     }
                 }
             }
 
-            mTargetCombo.setEnabled(mTargetList.size() > 1);
-            if (match == -1) {
-                mTargetCombo.deselectAll();
+            if (match == null) {
+                selectTarget(null);
 
                 // the rendering target is the same as the project.
                 mRenderingTarget = mProjectTarget;
             } else {
-                mTargetCombo.select(match);
+                selectTarget(match);
 
                 // set the rendering target to the new object.
-                mRenderingTarget = mTargetList.get(match);
+                mRenderingTarget = match;
             }
         }
     }
 
     /**
-     * Loads the list of {@link LayoutDevice} and inits the UI with it.
+     * Loads the list of {@link Device}s and inits the UI with it.
      */
     private void initDevices() {
-        mDeviceList = null;
-
         Sdk sdk = Sdk.getCurrent();
         if (sdk != null) {
-            LayoutDeviceManager manager = sdk.getLayoutDeviceManager();
-            mDeviceList = manager.getCombinedList();
+            mDeviceList = sdk.getDevices();
+        } else {
+            mDeviceList = new ArrayList<Device>();
         }
-
-
-        // remove older devices if applicable
-        mDeviceCombo.removeAll();
-        mDeviceConfigCombo.removeAll();
 
         // fill with the devices
-        if (mDeviceList != null) {
-            for (LayoutDevice device : mDeviceList) {
-                mDeviceCombo.add(device.getName());
-            }
-            mDeviceCombo.select(0);
+        if (!mDeviceList.isEmpty()) {
+            Device first = mDeviceList.get(0);
+            selectDevice(first);
+            List<State> states = first.getAllStates();
+            selectDeviceState(states.get(0));
+        } else {
+            selectDevice(null);
+        }
+    }
 
-            if (mDeviceList.size() > 0) {
-                List<DeviceConfig> configs = mDeviceList.get(0).getConfigs();
-                for (DeviceConfig config : configs) {
-                    mDeviceConfigCombo.add(config.getName());
-                }
-                mDeviceConfigCombo.select(0);
-                if (configs.size() == 1) {
-                    mDeviceConfigCombo.setEnabled(false);
-                }
-            }
+    Image getOrientationIcon(ScreenOrientation orientation, boolean flip) {
+        IconFactory icons = IconFactory.getInstance();
+        switch (orientation) {
+            case LANDSCAPE:
+                return icons.getIcon(flip ? ICON_LANDSCAPE_FLIP : ICON_LANDSCAPE);
+            case SQUARE:
+                return icons.getIcon(ICON_SQUARE);
+            case PORTRAIT:
+            default:
+                return icons.getIcon(flip ? ICON_PORTRAIT_FLIP : ICON_PORTRAIT);
+        }
+    }
+
+    ImageDescriptor getOrientationImage(ScreenOrientation orientation, boolean flip) {
+        IconFactory icons = IconFactory.getInstance();
+        switch (orientation) {
+            case LANDSCAPE:
+                return icons.getImageDescriptor(flip ? ICON_LANDSCAPE_FLIP : ICON_LANDSCAPE);
+            case SQUARE:
+                return icons.getImageDescriptor(ICON_SQUARE);
+            case PORTRAIT:
+            default:
+                return icons.getImageDescriptor(flip ? ICON_PORTRAIT_FLIP : ICON_PORTRAIT);
+        }
+    }
+
+    @NonNull
+    ScreenOrientation getOrientation(State state) {
+        FolderConfiguration config = DeviceConfigHelper.getFolderConfig(state);
+        ScreenOrientation orientation = null;
+        if (config != null && config.getScreenOrientationQualifier() != null) {
+            orientation = config.getScreenOrientationQualifier().getValue();
         }
 
-        // add the custom item
-        mDeviceCombo.add("Custom...");
+        if (orientation == null) {
+            orientation = ScreenOrientation.PORTRAIT;
+        }
+
+        return orientation;
+    }
+
+    void selectDeviceState(@Nullable State state) {
+        mOrientationCombo.setData(state);
+
+        State nextState = getNextDeviceState(state);
+        mOrientationCombo.setImage(getOrientationIcon(getOrientation(state),
+                nextState != state));
+    }
+
+    State getSelectedDeviceState() {
+        return (State) mOrientationCombo.getData();
     }
 
     /**
-     * Selects a given {@link LayoutDevice} in the device combo, if it is found.
+     * Selects a given {@link Device} in the device combo, if it is found.
      * @param device the device to select
      * @return true if the device was found.
      */
-    private boolean selectDevice(LayoutDevice device) {
-        final int count = mDeviceList.size();
-        for (int i = 0 ; i < count ; i++) {
-            // since device comes from mDeviceList, we can use the == operator.
-            if (device == mDeviceList.get(i)) {
-                mDeviceCombo.select(i);
-                return true;
-            }
+    private boolean selectDevice(@Nullable Device device) {
+        mDeviceCombo.setData(device);
+        if (device != null) {
+            mDeviceCombo.setText(getDeviceLabel(device, true));
+        } else {
+            mDeviceCombo.setText("Device");
         }
+        resizeToolBar();
 
         return false;
     }
 
+    @Nullable
+    Device getSelectedDevice() {
+        return (Device) mDeviceCombo.getData();
+    }
+
     /**
-     * Selects a config by name.
-     * @param name the name of the config to select.
+     * Selects a state by name.
+     * @param name the name of the state to select.
      */
-    private void selectConfig(String name) {
-        final int count = mDeviceConfigCombo.getItemCount();
-        for (int i = 0 ; i < count ; i++) {
-            String item = mDeviceConfigCombo.getItem(i);
-            if (name.equals(item)) {
-                mDeviceConfigCombo.select(i);
-                return;
-            }
+    private void selectState(String name) {
+        Device device = getSelectedDevice();
+        State state = null;
+        if (device != null) {
+            state = device.getState(name);
         }
+        selectDeviceState(state);
     }
 
     /**
@@ -1940,33 +2709,16 @@ public class ConfigurationComposite extends Composite {
 
         String newConfigName = null;
 
-        int deviceIndex = mDeviceCombo.getSelectionIndex();
-        if (deviceIndex != -1) {
-            // check if the user is asking for the custom item
-            if (deviceIndex == mDeviceCombo.getItemCount() - 1) {
-                onCustomDeviceConfig();
-                return;
-            }
-
+        State prevState = getSelectedDeviceState();
+        Device device = getSelectedDevice();
+        if (mState.device != null && prevState != null && device != null) {
             // get the previous config, so that we can look for a close match
-            if (mState.device != null) {
-                int index = mDeviceConfigCombo.getSelectionIndex();
-                if (index != -1) {
-                    FolderConfiguration oldConfig = mState.device.getFolderConfigByName(
-                            mDeviceConfigCombo.getItem(index));
-
-                    LayoutDevice newDevice = mDeviceList.get(deviceIndex);
-
-                    newConfigName = getClosestMatch(oldConfig, newDevice.getConfigs());
-                }
-            }
-
-            mState.device = mDeviceList.get(deviceIndex);
-        } else {
-            mState.device = null;
+            FolderConfiguration oldConfig = DeviceConfigHelper.getFolderConfig(prevState);
+            newConfigName = getClosestMatch(oldConfig, device.getAllStates());
         }
+        mState.device = device;
 
-        fillConfigCombo(newConfigName);
+        selectState(newConfigName);
 
         computeCurrentConfig();
 
@@ -1976,80 +2728,37 @@ public class ConfigurationComposite extends Composite {
     }
 
     /**
-     * Handles a user request for the {@link ConfigManagerDialog}.
-     */
-    private void onCustomDeviceConfig() {
-        ConfigManagerDialog dialog = new ConfigManagerDialog(getShell());
-        dialog.open();
-
-        // save the user devices
-        Sdk.getCurrent().getLayoutDeviceManager().save();
-
-        // Update the UI with no triggered event
-        mDisableUpdates++;
-
-        try {
-            LayoutDevice oldCurrent = mState.device;
-
-            // but first, update the device combo
-            initDevices();
-
-            // attempts to reselect the current device.
-            if (selectDevice(oldCurrent)) {
-                // current device still exists.
-                // reselect the config
-                selectConfig(mState.configName);
-
-                // reset the UI as if it was just a replacement file, since we can keep
-                // the current device (and possibly config).
-                adaptConfigSelection(false /*needBestMatch*/);
-
-            } else {
-                // find a new device/config to match the current file.
-                findAndSetCompatibleConfig(false /*favorCurrentConfig*/);
-            }
-        } finally {
-            mDisableUpdates--;
-        }
-
-        // recompute the current config
-        computeCurrentConfig();
-
-        // force a redraw
-        onDeviceChange(true /*recomputeLayout*/);
-    }
-
-    /**
-     * Attempts to find a close config among a list
+     * Attempts to find a close state among a list
      * @param oldConfig the reference config.
-     * @param configs the list of config to search through
-     * @return the name of the closest config match, or possibly null if no configs are compatible
-     * (this can only happen if the configs don't have a single qualifier that is the same).
+     * @param states the list of states to search through
+     * @return the name of the closest state match, or possibly null if no states are compatible
+     * (this can only happen if the states don't have a single qualifier that is the same).
      */
-    private String getClosestMatch(FolderConfiguration oldConfig, List<DeviceConfig> configs) {
+    private String getClosestMatch(FolderConfiguration oldConfig, List<State> states) {
 
-        // create 2 lists as we're going to go through one and put the candidates in the other.
-        ArrayList<DeviceConfig> list1 = new ArrayList<DeviceConfig>();
-        ArrayList<DeviceConfig> list2 = new ArrayList<DeviceConfig>();
+        // create 2 lists as we're going to go through one and put the
+        // candidates in the other.
+        ArrayList<State> list1 = new ArrayList<State>();
+        ArrayList<State> list2 = new ArrayList<State>();
 
-        list1.addAll(configs);
+        list1.addAll(states);
 
         final int count = FolderConfiguration.getQualifierCount();
         for (int i = 0 ; i < count ; i++) {
-            // compute the new candidate list by only taking configs that have
-            // the same i-th qualifier as the old config
-            for (DeviceConfig c : list1) {
+            // compute the new candidate list by only taking states that have
+            // the same i-th qualifier as the old state
+            for (State s : list1) {
                 ResourceQualifier oldQualifier = oldConfig.getQualifier(i);
 
-                FolderConfiguration folderConfig = c.getConfig();
+                FolderConfiguration folderConfig = DeviceConfigHelper.getFolderConfig(s);
                 ResourceQualifier newQualifier = folderConfig.getQualifier(i);
 
                 if (oldQualifier == null) {
                     if (newQualifier == null) {
-                        list2.add(c);
+                        list2.add(s);
                     }
                 } else if (oldQualifier.equals(newQualifier)) {
-                    list2.add(c);
+                    list2.add(s);
                 }
             }
 
@@ -2059,9 +2768,9 @@ public class ConfigurationComposite extends Composite {
                 return list2.get(0).getName();
             }
 
-            // if the list is empty, then all the new configs failed. It is considered ok, and
+            // if the list is empty, then all the new states failed. It is considered ok, and
             // we move to the next qualifier anyway. This way, if a qualifier is different for
-            // all new configs it is simply ignored.
+            // all new states it is simply ignored.
             if (list2.size() != 0) {
                 // move the candidates back into list1.
                 list1.clear();
@@ -2071,7 +2780,7 @@ public class ConfigurationComposite extends Composite {
         }
 
         // the only way to reach this point is if there's an exact match.
-        // (if there are more than one, then there's a duplicate config and it doesn't matter,
+        // (if there are more than one, then there's a duplicate state and it doesn't matter,
         // we take the first one).
         if (list1.size() > 0) {
             return list1.get(0).getName();
@@ -2081,34 +2790,9 @@ public class ConfigurationComposite extends Composite {
     }
 
     /**
-     * fills the config combo with new values based on {@link #mState}.device.
-     * @param refName an optional name. if set the selection will match this name (if found)
-     */
-    private void fillConfigCombo(String refName) {
-        mDeviceConfigCombo.removeAll();
-
-        if (mState.device != null) {
-            int selectionIndex = 0;
-            int i = 0;
-
-            for (DeviceConfig config : mState.device.getConfigs()) {
-                mDeviceConfigCombo.add(config.getName());
-
-                if (config.getName().equals(refName)) {
-                    selectionIndex = i;
-                }
-                i++;
-            }
-
-            mDeviceConfigCombo.select(selectionIndex);
-            mDeviceConfigCombo.setEnabled(mState.device.getConfigs().size() > 1);
-        }
-    }
-
-    /**
      * Called when the device config selection changes.
      */
-    private void onDeviceConfigChange() {
+    void onDeviceConfigChange() {
         // because changing the content of a combo triggers a change event, respect the
         // mDisableUpdates flag
         if (mDisableUpdates > 0) {
@@ -2139,18 +2823,6 @@ public class ConfigurationComposite extends Composite {
         saveRenderState();
     }
 
-    private void onDockChange() {
-        if (computeCurrentConfig() &&  mListener != null) {
-            mListener.onConfigurationChange();
-        }
-    }
-
-    private void onDayChange() {
-        if (computeCurrentConfig() &&  mListener != null) {
-            mListener.onConfigurationChange();
-        }
-    }
-
     /**
      * Call back for api level combo selection
      */
@@ -2167,8 +2839,7 @@ public class ConfigurationComposite extends Composite {
             mListener.onRenderingTargetPreChange(mRenderingTarget);
         }
 
-        int index = mTargetCombo.getSelectionIndex();
-        mRenderingTarget = mTargetList.get(index);
+        mRenderingTarget = getRenderingTarget();
 
         boolean computeOk = computeCurrentConfig();
 
@@ -2202,54 +2873,43 @@ public class ConfigurationComposite extends Composite {
         saveState();
 
         if (mState.device != null) {
-            // get the device config from the device/config combos.
-            int configIndex = mDeviceConfigCombo.getSelectionIndex();
-            String name = mDeviceConfigCombo.getItem(configIndex);
-            FolderConfiguration config = mState.device.getFolderConfigByName(name);
+            // get the device config from the device/state combos.
+            FolderConfiguration config =
+                DeviceConfigHelper.getFolderConfig(getSelectedDeviceState());
 
             // replace the config with the one from the device
             mCurrentConfig.set(config);
 
             // replace the locale qualifiers with the one coming from the locale combo
-            int index = mLocaleCombo.getSelectionIndex();
-            if (index != -1) {
-                ResourceQualifier[] localeQualifiers = mLocaleList.get(index);
-
+            ResourceQualifier[] localeQualifiers = getSelectedLocale();
+            if (localeQualifiers != null) {
                 mCurrentConfig.setLanguageQualifier(
                         (LanguageQualifier)localeQualifiers[LOCALE_LANG]);
                 mCurrentConfig.setRegionQualifier(
                         (RegionQualifier)localeQualifiers[LOCALE_REGION]);
             }
 
-            index = mUiModeCombo.getSelectionIndex();
-            if (index == -1) {
-                index = 0; // no selection = 0
+            // Replace the UiMode with the selected one, if one is selected
+            UiMode uiMode = getSelectedUiMode();
+            if (uiMode != null) {
+                mCurrentConfig.setUiModeQualifier(new UiModeQualifier(uiMode));
             }
-            mCurrentConfig.setUiModeQualifier(new UiModeQualifier(UiMode.getByIndex(index)));
 
-            index = mNightCombo.getSelectionIndex();
-            if (index == -1) {
-                index = 0; // no selection = 0
+            // Replace the NightMode with the selected one, if one is selected
+            NightMode night = getSelectedNightMode();
+            if (night != null) {
+                mCurrentConfig.setNightModeQualifier(new NightModeQualifier(night));
             }
-            mCurrentConfig.setNightModeQualifier(
-                    new NightModeQualifier(NightMode.getByIndex(index)));
 
             // replace the API level by the selection of the combo
-            index = mTargetCombo.getSelectionIndex();
-            if (index == -1) {
-                index = mTargetList.indexOf(mProjectTarget);
+            IAndroidTarget target = getRenderingTarget();
+            if (target == null) {
+                target = mProjectTarget;
             }
-            if (index != -1) {
-                IAndroidTarget target = mTargetList.get(index);
-
-                if (target != null) {
-                    mCurrentConfig.setVersionQualifier(
-                            new VersionQualifier(target.getVersion().getApiLevel()));
-                }
+            if (target != null) {
+                mCurrentConfig.setVersionQualifier(
+                        new VersionQualifier(target.getVersion().getApiLevel()));
             }
-
-            // update the create button.
-            checkCreateEnable();
 
             return true;
         }
@@ -2257,20 +2917,12 @@ public class ConfigurationComposite extends Composite {
         return false;
     }
 
-    private void onThemeChange() {
+    void onThemeChange() {
         saveState();
 
-        int themeIndex = mThemeCombo.getSelectionIndex();
-        if (themeIndex != -1) {
-            String theme = mThemeCombo.getItem(themeIndex);
-
-            if (theme.equals(THEME_SEPARATOR)) {
-                mThemeCombo.select(0);
-            }
-
-            if (mListener != null) {
-                mListener.onThemeChange();
-            }
+        String theme = getSelectedTheme();
+        if (theme != null && mListener != null) {
+            mListener.onThemeChange();
         }
     }
 
@@ -2279,9 +2931,12 @@ public class ConfigurationComposite extends Composite {
      * This is done by making sure the parent is a theme.
      * @param value the style to check
      * @param styleMap the map of styles for the current project. Key is the style name.
+     * @param seen the map of styles we have already processed (or null if not yet
+     *          initialized). Only the keys are significant (since there is no IdentityHashSet).
      * @return True if the given <var>style</var> is a theme.
      */
-    private boolean isTheme(ResourceValue value, Map<String, ResourceValue> styleMap) {
+    private boolean isTheme(ResourceValue value, Map<String, ResourceValue> styleMap,
+            IdentityHashMap<ResourceValue, Boolean> seen) {
         if (value instanceof StyleResourceValue) {
             StyleResourceValue style = (StyleResourceValue)value;
 
@@ -2322,20 +2977,23 @@ public class ConfigurationComposite extends Composite {
                     // if it's a project style, we check this is a theme.
                     ResourceValue parentValue = styleMap.get(parentStyle);
 
-                    // also prevent stackoverflow in case the dev mistakenly declared
-                    // the parent of the style as the style itfself.
+                    // also prevent stack overflow in case the dev mistakenly declared
+                    // the parent of the style as the style itself.
                     if (parentValue != null && parentValue.equals(value) == false) {
-                        return isTheme(parentValue, styleMap);
+                        if (seen == null) {
+                            seen = new IdentityHashMap<ResourceValue, Boolean>();
+                            seen.put(value, Boolean.TRUE);
+                        } else if (seen.containsKey(parentValue)) {
+                            return false;
+                        }
+                        seen.put(parentValue, Boolean.TRUE);
+                        return isTheme(parentValue, styleMap, seen);
                     }
                 }
             }
         }
 
         return false;
-    }
-
-    private void checkCreateEnable() {
-        mCreateButton.setEnabled(mEditedConfig.equals(mCurrentConfig) == false);
     }
 
     /**
@@ -2419,9 +3077,8 @@ public class ConfigurationComposite extends Composite {
         // Sync render target
         IAndroidTarget target = pair.getSecond();
         if (target != null) {
-            int targetIndex = mTargetList.indexOf(target);
-            if (targetIndex != mTargetCombo.getSelectionIndex()) {
-                mTargetCombo.select(targetIndex);
+            if (getRenderingTarget() != target) {
+                selectTarget(target);
                 renderTargetChanged = true;
             }
         }
@@ -2438,8 +3095,7 @@ public class ConfigurationComposite extends Composite {
             if (mListener != null && mRenderingTarget != null) {
                 mListener.onRenderingTargetPreChange(mRenderingTarget);
             }
-            int targetIndex = mTargetCombo.getSelectionIndex();
-            mRenderingTarget = mTargetList.get(targetIndex);
+            mRenderingTarget = target;
         }
 
         // Compute the new configuration; we want to do this both for locale changes
@@ -2541,10 +3197,8 @@ public class ConfigurationComposite extends Composite {
     private void saveRenderState() {
         IProject project = mEditedFile.getProject();
         try {
-            int index = mLocaleCombo.getSelectionIndex();
-            ResourceQualifier[] locale = mLocaleList.get(index);
-            index = mTargetCombo.getSelectionIndex();
-            IAndroidTarget target = mTargetList.get(index);
+            ResourceQualifier[] locale = getSelectedLocale();
+            IAndroidTarget target = getRenderingTarget();
 
             // Generate a persistent string from locale+target
             StringBuilder sb = new StringBuilder();
@@ -2566,6 +3220,51 @@ public class ConfigurationComposite extends Composite {
             project.setPersistentProperty(NAME_RENDER_STATE, data);
         } catch (CoreException e) {
             AdtPlugin.log(e, null);
+        }
+    }
+
+    // ---- Implements SelectionListener ----
+
+    @Override
+    public void widgetSelected(SelectionEvent e) {
+        if (mDisableUpdates > 0) {
+            return;
+        }
+
+        final Object source = e.getSource();
+        if (source == mOrientationCombo) {
+            gotoNextState();
+        }
+    }
+
+    @Override
+    public void widgetDefaultSelected(SelectionEvent e) {
+    }
+
+    /** Returns the file whose rendering is being configured by this configuration composite */
+    IFile getEditedFile() {
+        return mEditedFile;
+    }
+
+    UiMode getSelectedUiMode() {
+        return mState.uiMode;
+    }
+
+    NightMode getSelectedNightMode() {
+        return mState.night;
+    }
+
+    void selectNightMode(NightMode night) {
+        mState.night = night;
+        if (computeCurrentConfig() && mListener != null) {
+            mListener.onConfigurationChange();
+        }
+    }
+
+    void selectUiMode(UiMode uiMode) {
+        mState.uiMode = uiMode;
+        if (computeCurrentConfig() && mListener != null) {
+            mListener.onConfigurationChange();
         }
     }
 }

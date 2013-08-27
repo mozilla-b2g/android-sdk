@@ -16,11 +16,13 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_HEIGHT;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_WIDTH;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_TEXT;
 import static com.android.ide.common.layout.LayoutConstants.VALUE_WRAP_CONTENT;
+import static com.android.util.XmlUtils.ANDROID_URI;
+import static com.android.util.XmlUtils.XMLNS_ANDROID;
+import static com.android.util.XmlUtils.XMLNS_URI;
 
 import com.android.ide.common.api.InsertType;
 import com.android.ide.common.api.Rect;
@@ -35,8 +37,7 @@ import com.android.ide.eclipse.adt.internal.editors.IconFactory;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.DescriptorsUtils;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.DocumentDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
-import com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.configuration.ConfigurationComposite;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.CustomViewDescriptorService;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.ViewElementDescriptor;
@@ -46,8 +47,6 @@ import com.android.ide.eclipse.adt.internal.editors.layout.gre.PaletteMetadataDe
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.ViewMetadataRepository;
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.ViewMetadataRepository.RenderMode;
 import com.android.ide.eclipse.adt.internal.editors.layout.uimodel.UiViewElementNode;
-import com.android.ide.eclipse.adt.internal.editors.ui.DecorComposite;
-import com.android.ide.eclipse.adt.internal.editors.ui.IDecorContent;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiDocumentNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
@@ -58,6 +57,7 @@ import com.android.util.Pair;
 
 import org.eclipse.jface.action.Action;
 import org.eclipse.jface.action.IAction;
+import org.eclipse.jface.action.IToolBarManager;
 import org.eclipse.jface.action.MenuManager;
 import org.eclipse.jface.action.Separator;
 import org.eclipse.jface.resource.ImageDescriptor;
@@ -94,6 +94,7 @@ import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Menu;
 import org.eclipse.swt.widgets.ToolBar;
 import org.eclipse.swt.widgets.ToolItem;
+import org.eclipse.wb.internal.core.editor.structure.IPage;
 import org.w3c.dom.Attr;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -108,10 +109,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
-import javax.xml.parsers.ParserConfigurationException;
 
 /**
  * A palette control for the {@link GraphicalEditorPart}.
@@ -131,33 +128,41 @@ import javax.xml.parsers.ParserConfigurationException;
 public class PaletteControl extends Composite {
 
     /**
-     * Wrapper to create a {@link PaletteControl} into a {@link DecorComposite}.
+     * Wrapper to create a {@link PaletteControl}
      */
-    public static class PaletteDecor implements IDecorContent {
+    static class PalettePage implements IPage {
         private final GraphicalEditorPart mEditorPart;
         private PaletteControl mControl;
 
-        public PaletteDecor(GraphicalEditorPart editor) {
+        PalettePage(GraphicalEditorPart editor) {
             mEditorPart = editor;
         }
 
-        public String getTitle() {
-            return "Palette";
-        }
-
-        public Image getImage() {
-            return IconFactory.getInstance().getIcon("editor_palette");  //$NON-NLS-1$
-        }
-
+        @Override
         public void createControl(Composite parent) {
             mControl = new PaletteControl(parent, mEditorPart);
         }
 
+        @Override
         public Control getControl() {
             return mControl;
         }
 
-        public void createToolbarItems(final ToolBar toolbar) {
+        @Override
+        public void dispose() {
+            mControl.dispose();
+        }
+
+        @Override
+        public void setToolBar(IToolBarManager toolBarManager) {
+        }
+
+        /**
+         * Add tool bar items to the given toolbar
+         *
+         * @param toolbar the toolbar to add items into
+         */
+        void createToolbarItems(final ToolBar toolbar) {
             final ToolItem popupMenuItem = new ToolItem(toolbar, SWT.PUSH);
             popupMenuItem.setToolTipText("View Menu");
             popupMenuItem.setImage(IconFactory.getInstance().getIcon("view_menu"));
@@ -171,6 +176,11 @@ public class PaletteControl extends Composite {
                     mControl.showMenu(point.x, point.y);
                 }
             });
+        }
+
+        @Override
+        public void setFocus() {
+            mControl.setFocus();
         }
     }
 
@@ -366,7 +376,7 @@ public class PaletteControl extends Composite {
      */
     public void reloadPalette(IAndroidTarget target) {
         ConfigurationComposite configuration = mEditor.getConfigurationComposite();
-        String theme = configuration.getTheme();
+        String theme = configuration.getThemeName();
         String device = configuration.getDevice();
         AndroidTargetData targetData =
             target != null ? Sdk.getCurrent().getTargetData(target) : null;
@@ -484,8 +494,10 @@ public class PaletteControl extends Composite {
                     if (mPaletteMode.isPreview() && mBackground != null) {
                         wrapper.setBackground(mBackground);
                     }
-                    composite = super.createChildContainer(wrapper, header,
-                            style | SWT.NO_BACKGROUND);
+                    composite = super.createChildContainer(wrapper, header, style);
+                    if (mPaletteMode.isPreview() && mBackground != null) {
+                        composite.setBackground(mBackground);
+                    }
                     composite.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true, 1, 1));
 
                     Button refreshButton = new Button(wrapper, SWT.PUSH | SWT.FLAT);
@@ -663,6 +675,7 @@ public class PaletteControl extends Composite {
         source.setTransfer(new Transfer[] { SimpleXmlTransfer.getInstance() });
         source.addDragListener(new DescDragSourceListener(desc));
         item.addDisposeListener(new DisposeListener() {
+            @Override
             public void widgetDisposed(DisposeEvent e) {
                 source.dispose();
             }
@@ -699,6 +712,7 @@ public class PaletteControl extends Composite {
             return style;
         }
 
+        @Override
         public void mouseEnter(MouseEvent e) {
             if (!mMouseIn) {
                 mMouseIn = true;
@@ -706,6 +720,7 @@ public class PaletteControl extends Composite {
             }
         }
 
+        @Override
         public void mouseExit(MouseEvent e) {
             if (mMouseIn) {
                 mMouseIn = false;
@@ -713,6 +728,7 @@ public class PaletteControl extends Composite {
             }
         }
 
+        @Override
         public void mouseHover(MouseEvent e) {
             // pass
         }
@@ -730,6 +746,7 @@ public class PaletteControl extends Composite {
             mDesc = desc;
         }
 
+        @Override
         public void dragStart(DragSourceEvent e) {
             // See if we can find out the bounds of this element from a preview image.
             // Preview images are created before the drag source listener is notified
@@ -777,6 +794,7 @@ public class PaletteControl extends Composite {
             e.doit = true;
         }
 
+        @Override
         public void dragSetData(DragSourceEvent e) {
             // Provide the data for the drop when requested by the other side.
             if (SimpleXmlTransfer.getInstance().isSupportedType(e.dataType)) {
@@ -784,6 +802,7 @@ public class PaletteControl extends Composite {
             }
         }
 
+        @Override
         public void dragFinished(DragSourceEvent e) {
             // Unregister the dragged data.
             GlobalCanvasDragInfo.getInstance().stopDrag();
@@ -892,27 +911,17 @@ public class PaletteControl extends Composite {
             }
 
             // Create blank XML document
-            Document document = null;
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            try {
-                factory.setNamespaceAware(true);
-                factory.setValidating(false);
-                DocumentBuilder builder = factory.newDocumentBuilder();
-                document = builder.newDocument();
-            } catch (ParserConfigurationException e) {
-                return null;
-            }
+            Document document = DomUtilities.createEmptyDocument();
 
             // Insert our target view's XML into it as a node
             GraphicalEditorPart editor = getEditor();
-            LayoutEditor layoutEditor = editor.getLayoutEditor();
+            LayoutEditorDelegate layoutEditorDelegate = editor.getEditorDelegate();
 
             String viewName = mDesc.getXmlLocalName();
             Element element = document.createElement(viewName);
 
             // Set up a proper name space
-            Attr attr = document.createAttributeNS(XmlnsAttributeDescriptor.XMLNS_URI,
-                    "xmlns:android"); //$NON-NLS-1$
+            Attr attr = document.createAttributeNS(XMLNS_URI, XMLNS_ANDROID);
             attr.setValue(ANDROID_URI);
             element.getAttributes().setNamedItemNS(attr);
 
@@ -935,7 +944,7 @@ public class PaletteControl extends Composite {
             document.appendChild(element);
 
             // Construct UI model from XML
-            AndroidTargetData data = layoutEditor.getTargetData();
+            AndroidTargetData data = layoutEditorDelegate.getEditor().getTargetData();
             DocumentDescriptor documentDescriptor;
             if (data == null) {
                 documentDescriptor = new DocumentDescriptor("temp", null/*children*/);//$NON-NLS-1$
@@ -943,7 +952,7 @@ public class PaletteControl extends Composite {
                 documentDescriptor = data.getLayoutDescriptors().getDescriptor();
             }
             UiDocumentNode model = (UiDocumentNode) documentDescriptor.createUiNode();
-            model.setEditor(layoutEditor);
+            model.setEditor(layoutEditorDelegate.getEditor());
             model.setUnknownDescriptorProvider(editor.getModel().getUnknownDescriptorProvider());
             model.loadFromXmlNode(document);
 
@@ -960,12 +969,15 @@ public class PaletteControl extends Composite {
 
                 // Applying create hooks as part of palette render should
                 // not trigger model updates
-                layoutEditor.setIgnoreXmlUpdate(true);
+                layoutEditorDelegate.getEditor().setIgnoreXmlUpdate(true);
                 try {
-                    canvas.getRulesEngine().callCreateHooks(layoutEditor,
+                    canvas.getRulesEngine().callCreateHooks(layoutEditorDelegate.getEditor(),
                             null, childNode, InsertType.CREATE_PREVIEW);
+                    childNode.applyPendingChanges();
+                } catch (Throwable t) {
+                    AdtPlugin.log(t, "Failed calling creation hooks for widget %1$s", viewName);
                 } finally {
-                    layoutEditor.setIgnoreXmlUpdate(false);
+                    layoutEditorDelegate.getEditor().setIgnoreXmlUpdate(false);
                 }
             }
 
@@ -1189,6 +1201,7 @@ public class PaletteControl extends Composite {
 
     private void addMenu(Control control) {
         control.addMenuDetectListener(new MenuDetectListener() {
+            @Override
             public void menuDetected(MenuDetectEvent e) {
                 showMenu(e.x, e.y);
             }
@@ -1243,6 +1256,7 @@ public class PaletteControl extends Composite {
             this.mParent = parent;
         }
 
+        @Override
         public void viewsUpdated(Collection<String> customViews,
                 Collection<String> thirdPartyViews) {
             addCustomItems(mParent);

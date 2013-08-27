@@ -49,7 +49,7 @@ public class ValidateAddonXmlTest extends TestCase {
     /**
      * Helper method that returns a validator for our Addon XSD
      *
-     * @param version The versoion number, in range {@code 1..NS_LATEST_VERSION}
+     * @param version The version number, in range {@code 1..NS_LATEST_VERSION}
      * @param handler A {@link CaptureErrorHandler}. If null the default will be used,
      *   which will most likely print errors to stderr.
      */
@@ -80,7 +80,7 @@ public class ValidateAddonXmlTest extends TestCase {
 
     // --- Tests ------------
 
-    /** Validates that NS_LATEST_VERSION points to the max avaialble XSD schema. */
+    /** Validates that NS_LATEST_VERSION points to the max available XSD schema. */
     public void testAddonLatestVersionNumber() throws Exception {
         CaptureErrorHandler handler = new CaptureErrorHandler();
 
@@ -120,7 +120,7 @@ public class ValidateAddonXmlTest extends TestCase {
         handler.verify();
     }
 
-    /** Validate a valid sample using namespace version 2 using an InputStream */
+    /** Validate a valid sample using namespace version 3 using an InputStream */
     public void testValidateLocalAddonFile3() throws Exception {
         InputStream xmlStream = this.getClass().getResourceAsStream(
                     "/com/android/sdklib/testdata/addon_sample_3.xml");
@@ -128,6 +128,18 @@ public class ValidateAddonXmlTest extends TestCase {
 
         CaptureErrorHandler handler = new CaptureErrorHandler();
         Validator validator = getAddonValidator(3, handler);
+        validator.validate(source);
+        handler.verify();
+    }
+
+    /** Validate a valid sample using namespace version 4 using an InputStream */
+    public void testValidateLocalAddonFile4() throws Exception {
+        InputStream xmlStream = this.getClass().getResourceAsStream(
+                    "/com/android/sdklib/testdata/addon_sample_4.xml");
+        Source source = new StreamSource(xmlStream);
+
+        CaptureErrorHandler handler = new CaptureErrorHandler();
+        Validator validator = getAddonValidator(4, handler);
         validator.validate(source);
         handler.verify();
     }
@@ -148,7 +160,9 @@ public class ValidateAddonXmlTest extends TestCase {
             OPEN_TAG_ADDON +
             "<r:license id=\"lic1\"> some license </r:license> " +
             "<r:add-on> <r:uses-license ref=\"lic1\" /> <r:revision>1</r:revision> " +
-            "<r:name>AddonName</r:name> <r:vendor>AddonVendor</r:vendor> <r:api-level>42</r:api-level> " +
+            "<r:name-id>AddonName</r:name-id> <r:name-display>The Addon Name</r:name-display> " +
+            "<r:vendor-id>AddonVendor</r:vendor-id> <r:vendor-display>The Addon Vendor</r:vendor-display> " +
+            "<r:api-level>42</r:api-level> " +
             "<r:codename>Addons do not support codenames</r:codenames> " +
             "<r:libs><r:lib><r:name>com.example.LibName</r:name></r:lib></r:libs> " +
             "<r:archives> <r:archive os=\"any\"> <r:size>1</r:size> <r:checksum>2822ae37115ebf13412bbef91339ee0d9454525e</r:checksum> " +
@@ -164,6 +178,31 @@ public class ValidateAddonXmlTest extends TestCase {
         } catch (SAXParseException e) {
             // We expect a parse error referring to this grammar rule
             assertRegex("cvc-complex-type.2.4.a: Invalid content was found starting with element 'r:codename'.*",
+                    e.getMessage());
+            return;
+        }
+        // If we get here, the validator has not failed as we expected it to.
+        fail();
+    }
+
+    /** A document with a slash in an extra path. */
+    public void testExtraPathWithSlash() throws Exception {
+        String document = "<?xml version=\"1.0\"?>" +
+            OPEN_TAG_ADDON +
+            "<r:extra> <r:revision>1</r:revision> <r:path>path/cannot\\contain\\segments</r:path> " +
+            "<r:archives> <r:archive os=\"any\"> <r:size>1</r:size> <r:checksum>2822ae37115ebf13412bbef91339ee0d9454525e</r:checksum> " +
+            "<r:url>url</r:url> </r:archive> </r:archives> </r:extra>" +
+            CLOSE_TAG_ADDON;
+
+        Source source = new StreamSource(new StringReader(document));
+
+        // don't capture the validator errors, we want it to fail and catch the exception
+        Validator validator = getAddonValidator(SdkAddonConstants.NS_LATEST_VERSION, null);
+        try {
+            validator.validate(source);
+        } catch (SAXParseException e) {
+            // We expect a parse error referring to this grammar rule
+            assertRegex("cvc-pattern-valid: Value 'path/cannot\\\\contain\\\\segments' is not facet-valid with respect to pattern.*",
                     e.getMessage());
             return;
         }

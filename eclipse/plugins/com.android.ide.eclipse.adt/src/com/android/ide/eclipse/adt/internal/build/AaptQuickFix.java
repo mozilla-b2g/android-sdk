@@ -16,13 +16,14 @@
 
 package com.android.ide.eclipse.adt.internal.build;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
+import static com.android.util.XmlUtils.ANDROID_URI;
+import static com.android.util.XmlUtils.XMLNS_ANDROID;
+import static com.android.util.XmlUtils.XMLNS_URI;
 
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.AdtUtils;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
-import com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor;
 import com.android.ide.eclipse.adt.internal.resources.ResourceHelper;
 import com.android.resources.ResourceType;
 import com.android.util.Pair;
@@ -84,6 +85,7 @@ public class AaptQuickFix implements IMarkerResolutionGenerator2, IQuickAssistPr
 
     // ---- Implements IMarkerResolution2 ----
 
+    @Override
     public boolean hasResolutions(IMarker marker) {
         String message = null;
         try {
@@ -97,6 +99,7 @@ public class AaptQuickFix implements IMarkerResolutionGenerator2, IQuickAssistPr
                         || message.contains(getUnboundErrorMessage()));
     }
 
+    @Override
     public IMarkerResolution[] getResolutions(IMarker marker) {
         IResource markerResource = marker.getResource();
         IProject project = markerResource.getProject();
@@ -137,14 +140,17 @@ public class AaptQuickFix implements IMarkerResolutionGenerator2, IQuickAssistPr
 
     // ---- Implements IQuickAssistProcessor ----
 
+    @Override
     public boolean canAssist(IQuickAssistInvocationContext invocationContext) {
         return true;
     }
 
+    @Override
     public boolean canFix(Annotation annotation) {
         return true;
     }
 
+    @Override
     public ICompletionProposal[] computeQuickAssistProposals(
             IQuickAssistInvocationContext invocationContext) {
 
@@ -159,9 +165,12 @@ public class AaptQuickFix implements IMarkerResolutionGenerator2, IQuickAssistPr
         // we'll make sure that that editor has the same sourceViewer such that
         // we are indeed looking at the right file:
         ISourceViewer sourceViewer = invocationContext.getSourceViewer();
-        AndroidXmlEditor editor = AndroidXmlEditor.getAndroidXmlEditor(sourceViewer);
+        AndroidXmlEditor editor = AndroidXmlEditor.fromTextViewer(sourceViewer);
         if (editor != null) {
             IFile file = editor.getInputFile();
+            if (file == null) {
+                return null;
+            }
             IDocument document = sourceViewer.getDocument();
             List<IMarker> markers = AdtUtils.findMarkersOnLine(AdtConstants.MARKER_AAPT_COMPILE,
                     file, document, invocationContext.getOffset());
@@ -195,6 +204,7 @@ public class AaptQuickFix implements IMarkerResolutionGenerator2, IQuickAssistPr
         return null;
     }
 
+    @Override
     public String getErrorMessage() {
         return null;
     }
@@ -246,8 +256,7 @@ public class AaptQuickFix implements IMarkerResolutionGenerator2, IQuickAssistPr
                 IDOMModel domModel = (IDOMModel) model;
                 Document document = domModel.getDocument();
                 Element element = document.getDocumentElement();
-                Attr attr = document.createAttributeNS(XmlnsAttributeDescriptor.XMLNS_URI,
-                        "xmlns:android"); //$NON-NLS-1$
+                Attr attr = document.createAttributeNS(XMLNS_URI, XMLNS_ANDROID);
                 attr.setValue(ANDROID_URI);
                 element.getAttributes().setNamedItemNS(attr);
                 return (IndexedRegion) attr;
@@ -258,26 +267,32 @@ public class AaptQuickFix implements IMarkerResolutionGenerator2, IQuickAssistPr
 
         // ---- Implements ICompletionProposal ----
 
+        @Override
         public void apply(IDocument document) {
             perform(document);
         }
 
+        @Override
         public String getAdditionalProposalInfo() {
             return "Adds an Android namespace declaratiopn to the root element.";
         }
 
+        @Override
         public IContextInformation getContextInformation() {
             return null;
         }
 
+        @Override
         public String getDisplayString() {
             return "Insert namespace binding";
         }
 
+        @Override
         public Image getImage() {
             return AdtPlugin.getAndroidLogo();
         }
 
+        @Override
         public Point getSelection(IDocument doc) {
             return null;
         }
@@ -285,10 +300,12 @@ public class AaptQuickFix implements IMarkerResolutionGenerator2, IQuickAssistPr
 
         // ---- Implements MarkerResolution2 ----
 
+        @Override
         public String getLabel() {
             return getDisplayString();
         }
 
+        @Override
         public void run(IMarker marker) {
             try {
                 AdtPlugin.openFile(mFile, null);
@@ -308,6 +325,7 @@ public class AaptQuickFix implements IMarkerResolutionGenerator2, IQuickAssistPr
             }
         }
 
+        @Override
         public String getDescription() {
             return getAdditionalProposalInfo();
         }
@@ -357,41 +375,50 @@ public class AaptQuickFix implements IMarkerResolutionGenerator2, IQuickAssistPr
 
         // ---- Implements ICompletionProposal ----
 
+        @Override
         public void apply(IDocument document) {
             perform();
         }
 
+        @Override
         public String getAdditionalProposalInfo() {
             return "Creates an XML file entry for the given missing resource "
                     + "and opens it in the editor.";
         }
 
+        @Override
         public IContextInformation getContextInformation() {
             return null;
         }
 
+        @Override
         public String getDisplayString() {
             return String.format("Create resource %1$s", mResource);
         }
 
+        @Override
         public Image getImage() {
             return AdtPlugin.getAndroidLogo();
         }
 
+        @Override
         public Point getSelection(IDocument document) {
             return null;
         }
 
         // ---- Implements MarkerResolution2 ----
 
+        @Override
         public String getLabel() {
             return getDisplayString();
         }
 
+        @Override
         public void run(IMarker marker) {
             perform();
         }
 
+        @Override
         public String getDescription() {
             return getAdditionalProposalInfo();
         }

@@ -19,6 +19,7 @@ package com.android.ide.eclipse.adt.internal.launch.junit.runtime;
 import com.android.ddmlib.AdbCommandRejectedException;
 import com.android.ddmlib.ShellCommandUnresponsiveException;
 import com.android.ddmlib.TimeoutException;
+import com.android.ddmlib.testrunner.IRemoteAndroidTestRunner.TestSize;
 import com.android.ddmlib.testrunner.ITestRunListener;
 import com.android.ddmlib.testrunner.RemoteAndroidTestRunner;
 import com.android.ddmlib.testrunner.TestIdentifier;
@@ -103,6 +104,11 @@ public class RemoteAdtTestRunner extends RemoteTestRunner {
 
         if (mLaunchInfo.getTestPackage() != null) {
             runner.setTestPackageName(mLaunchInfo.getTestPackage());
+        }
+
+        TestSize size = mLaunchInfo.getTestSize();
+        if (size != null) {
+            runner.setTestSize(size);
         }
 
         // set log only to first collect test case info, so Eclipse has correct test case count/
@@ -198,6 +204,7 @@ public class RemoteAdtTestRunner extends RemoteTestRunner {
      */
     private class TestRunListener implements ITestRunListener {
 
+        @Override
         public void testEnded(TestIdentifier test, Map<String, String> ignoredTestMetrics) {
             mExecution.getListener().notifyTestEnded(new TestCaseReference(test));
         }
@@ -205,6 +212,7 @@ public class RemoteAdtTestRunner extends RemoteTestRunner {
         /* (non-Javadoc)
          * @see com.android.ddmlib.testrunner.ITestRunListener#testFailed(com.android.ddmlib.testrunner.ITestRunListener.TestFailure, com.android.ddmlib.testrunner.TestIdentifier, java.lang.String)
          */
+        @Override
         public void testFailed(TestFailure status, TestIdentifier test, String trace) {
             String statusString;
             if (status == TestFailure.ERROR) {
@@ -221,6 +229,7 @@ public class RemoteAdtTestRunner extends RemoteTestRunner {
         /* (non-Javadoc)
          * @see com.android.ddmlib.testrunner.ITestRunListener#testRunEnded(long, Map<String, String>)
          */
+        @Override
         public void testRunEnded(long elapsedTime, Map<String, String> runMetrics) {
             notifyTestRunEnded(elapsedTime);
             AdtPlugin.printToConsole(mLaunchInfo.getProject(),
@@ -230,6 +239,7 @@ public class RemoteAdtTestRunner extends RemoteTestRunner {
         /* (non-Javadoc)
          * @see com.android.ddmlib.testrunner.ITestRunListener#testRunFailed(java.lang.String)
          */
+        @Override
         public void testRunFailed(String errorMessage) {
             reportError(errorMessage);
         }
@@ -237,6 +247,7 @@ public class RemoteAdtTestRunner extends RemoteTestRunner {
         /* (non-Javadoc)
          * @see com.android.ddmlib.testrunner.ITestRunListener#testRunStarted(int)
          */
+        @Override
         public void testRunStarted(String runName, int testCount) {
             // ignore
         }
@@ -244,6 +255,7 @@ public class RemoteAdtTestRunner extends RemoteTestRunner {
         /* (non-Javadoc)
          * @see com.android.ddmlib.testrunner.ITestRunListener#testRunStopped(long)
          */
+        @Override
         public void testRunStopped(long elapsedTime) {
             notifyTestRunStopped(elapsedTime);
             AdtPlugin.printToConsole(mLaunchInfo.getProject(),
@@ -253,6 +265,7 @@ public class RemoteAdtTestRunner extends RemoteTestRunner {
         /* (non-Javadoc)
          * @see com.android.ddmlib.testrunner.ITestRunListener#testStarted(com.android.ddmlib.testrunner.TestIdentifier)
          */
+        @Override
         public void testStarted(TestIdentifier test) {
             TestCaseReference testId = new TestCaseReference(test);
             mExecution.getListener().notifyTestStarted(testId);

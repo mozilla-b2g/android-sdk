@@ -53,8 +53,7 @@ final class PlatformTarget implements IAndroidTarget {
      *
      * @param sdkOsPath the root folder of the SDK
      * @param platformOSPath the root folder of the platform component
-     * @param apiLevel the API Level
-     * @param codeName the codename. can be null.
+     * @param apiVersion the API Level + codename.
      * @param versionName the version name of the platform.
      * @param revision the revision of the platform component.
      * @param layoutlibVersion The {@link LayoutlibVersion}. May be null.
@@ -65,8 +64,7 @@ final class PlatformTarget implements IAndroidTarget {
     PlatformTarget(
             String sdkOsPath,
             String platformOSPath,
-            int apiLevel,
-            String codeName,
+            AndroidVersion apiVersion,
             String versionName,
             int revision,
             LayoutlibVersion layoutlibVersion,
@@ -77,7 +75,7 @@ final class PlatformTarget implements IAndroidTarget {
         }
         mRootFolderOsPath = platformOSPath;
         mProperties = Collections.unmodifiableMap(properties);
-        mVersion = new AndroidVersion(apiLevel, codeName);
+        mVersion = apiVersion;
         mVersionName = versionName;
         mRevision = revision;
         mLayoutlibVersion = layoutlibVersion;
@@ -139,6 +137,7 @@ final class PlatformTarget implements IAndroidTarget {
         return mLayoutlibVersion;
     }
 
+    @Override
     public ISystemImage getSystemImage(String abiType) {
         for (ISystemImage sysImg : mSystemImages) {
             if (sysImg.getAbiType().equals(abiType)) {
@@ -148,10 +147,12 @@ final class PlatformTarget implements IAndroidTarget {
         return null;
     }
 
+    @Override
     public ISystemImage[] getSystemImages() {
         return mSystemImages;
     }
 
+    @Override
     public String getLocation() {
         return mRootFolderOsPath;
     }
@@ -163,22 +164,27 @@ final class PlatformTarget implements IAndroidTarget {
      *
      * @see com.android.sdklib.IAndroidTarget#getVendor()
      */
+    @Override
     public String getVendor() {
         return PLATFORM_VENDOR;
     }
 
+    @Override
     public String getName() {
         return mName;
     }
 
+    @Override
     public String getFullName() {
         return mName;
     }
 
+    @Override
     public String getClasspathName() {
         return mName;
     }
 
+    @Override
     public String getShortClasspathName() {
         return mName;
     }
@@ -190,30 +196,37 @@ final class PlatformTarget implements IAndroidTarget {
      *
      * @see com.android.sdklib.IAndroidTarget#getDescription()
      */
+    @Override
     public String getDescription() {
         return String.format("Standard Android platform %s", mVersionName);
     }
 
+    @Override
     public AndroidVersion getVersion() {
         return mVersion;
     }
 
+    @Override
     public String getVersionName() {
         return mVersionName;
     }
 
+    @Override
     public int getRevision() {
         return mRevision;
     }
 
+    @Override
     public boolean isPlatform() {
         return true;
     }
 
+    @Override
     public IAndroidTarget getParent() {
         return null;
     }
 
+    @Override
     public String getPath(int pathId) {
         return mPaths.get(pathId);
     }
@@ -221,15 +234,18 @@ final class PlatformTarget implements IAndroidTarget {
     /**
      * Returns whether the target is able to render layouts. This is always true for platforms.
      */
+    @Override
     public boolean hasRenderingLibrary() {
         return true;
     }
 
 
+    @Override
     public String[] getSkins() {
         return mSkins;
     }
 
+    @Override
     public String getDefaultSkin() {
         // only one skin? easy.
         if (mSkins.length == 1) {
@@ -257,6 +273,7 @@ final class PlatformTarget implements IAndroidTarget {
      * {@inheritDoc}
      * @see com.android.sdklib.IAndroidTarget#getOptionalLibraries()
      */
+    @Override
     public IOptionalLibrary[] getOptionalLibraries() {
         return null;
     }
@@ -267,6 +284,7 @@ final class PlatformTarget implements IAndroidTarget {
      * TODO change the fixed library list to be build-dependent later.
      * {@inheritDoc}
      */
+    @Override
     public String[] getPlatformLibraries() {
         return new String[] { SdkConstants.ANDROID_TEST_RUNNER_LIB };
     }
@@ -275,10 +293,12 @@ final class PlatformTarget implements IAndroidTarget {
      * The platform has no USB Vendor Id: always return {@link IAndroidTarget#NO_USB_ID}.
      * {@inheritDoc}
      */
+    @Override
     public int getUsbVendorId() {
         return NO_USB_ID;
     }
 
+    @Override
     public boolean canRunOn(IAndroidTarget target) {
         // basic test
         if (target == this) {
@@ -296,6 +316,7 @@ final class PlatformTarget implements IAndroidTarget {
         return target.getVersion().getApiLevel() >= mVersion.getApiLevel();
     }
 
+    @Override
     public String hashString() {
         return String.format(PLATFORM_HASH, mVersion.getApiString());
     }
@@ -322,6 +343,7 @@ final class PlatformTarget implements IAndroidTarget {
      * (non-Javadoc)
      * @see java.lang.Comparable#compareTo(java.lang.Object)
      */
+    @Override
     public int compareTo(IAndroidTarget target) {
         // quick check.
         if (this == target) {
@@ -357,10 +379,12 @@ final class PlatformTarget implements IAndroidTarget {
                 getRevision());
     }
 
+    @Override
     public String getProperty(String name) {
         return mProperties.get(name);
     }
 
+    @Override
     public Integer getProperty(String name, Integer defaultValue) {
         try {
             String value = getProperty(name);
@@ -374,6 +398,7 @@ final class PlatformTarget implements IAndroidTarget {
         return defaultValue;
     }
 
+    @Override
     public Boolean getProperty(String name, Boolean defaultValue) {
         String value = getProperty(name);
         if (value != null) {
@@ -383,6 +408,7 @@ final class PlatformTarget implements IAndroidTarget {
         return defaultValue;
     }
 
+    @Override
     public Map<String, String> getProperties() {
         return mProperties; // mProperties is unmodifiable.
     }

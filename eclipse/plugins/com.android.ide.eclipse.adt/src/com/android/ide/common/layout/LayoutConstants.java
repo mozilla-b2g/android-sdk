@@ -18,8 +18,6 @@ package com.android.ide.common.layout;
 
 import static com.android.ide.eclipse.adt.AdtConstants.ANDROID_PKG;
 
-import com.android.sdklib.SdkConstants;
-
 /**
  * A bunch of constants that map to either:
  * <ul>
@@ -82,6 +80,12 @@ public class LayoutConstants {
     public static final String ATTR_LAYOUT_MARGIN_RIGHT = "layout_marginRight";    //$NON-NLS-1$
     public static final String ATTR_LAYOUT_MARGIN_TOP = "layout_marginTop";        //$NON-NLS-1$
     public static final String ATTR_LAYOUT_MARGIN_BOTTOM = "layout_marginBottom";  //$NON-NLS-1$
+
+    // TextView
+    public static final String ATTR_DRAWABLE_RIGHT = "drawableRight";              //$NON-NLS-1$
+    public static final String ATTR_DRAWABLE_LEFT = "drawableLeft";                //$NON-NLS-1$
+    public static final String ATTR_DRAWABLE_BOTTOM = "drawableBottom";            //$NON-NLS-1$
+    public static final String ATTR_DRAWABLE_TOP = "drawableTop";                  //$NON-NLS-1$
 
     // RelativeLayout layout params:
     public static final String ATTR_LAYOUT_ALIGN_LEFT = "layout_alignLeft";        //$NON-NLS-1$
@@ -151,21 +155,11 @@ public class LayoutConstants {
     public static final String GRAVITY_VALUE_CENTER_VERTICAL = "center_vertical";     //$NON-NLS-1$
     public static final String GRAVITY_VALUE_FILL = "fill";                           //$NON-NLS-1$
 
-    /** The default prefix used for the {@link #ANDROID_URI} name space */
-    public static final String ANDROID_NS_NAME = "android"; //$NON-NLS-1$
-    /** The default prefix used for the {@link #ANDROID_URI} name space including the colon  */
-    public static final String ANDROID_NS_NAME_PREFIX = "android:"; //$NON-NLS-1$
-
-    /**
-     * Namespace for the Android resource XML, i.e.
-     * "http://schemas.android.com/apk/res/android"
-     */
-    public static final String ANDROID_URI = SdkConstants.NS_RESOURCES;
-
     /**
      * The top level android package as a prefix, "android.".
      */
     public static final String ANDROID_PKG_PREFIX = ANDROID_PKG + '.';
+    public static final String ANDROID_SUPPORT_PKG_PREFIX = ANDROID_PKG_PREFIX + "support."; //$NON-NLS-1$
 
     /** The android.view. package prefix */
     public static final String ANDROID_VIEW_PKG = ANDROID_PKG_PREFIX + "view."; //$NON-NLS-1$
@@ -190,6 +184,7 @@ public class LayoutConstants {
 
     /** The fully qualified class name of a RelativeLayout view */
     public static final String FQCN_GRID_LAYOUT = "android.widget.GridLayout"; //$NON-NLS-1$
+    public static final String FQCN_GRID_LAYOUT_V7 = "android.support.v7.widget.GridLayout"; //$NON-NLS-1$
 
     /** The fully qualified class name of a FrameLayout view */
     public static final String FQCN_FRAME_LAYOUT = "android.widget.FrameLayout"; //$NON-NLS-1$
@@ -241,6 +236,13 @@ public class LayoutConstants {
 
     /** The fully qualified class name of a Space */
     public static final String FQCN_SPACE = "android.widget.Space"; //$NON-NLS-1$
+    public static final String FQCN_SPACE_V7 = "android.support.v7.widget.Space"; //$NON-NLS-1$
+
+    /** The fully qualified class name of a TextView view */
+    public static final String FQCN_TEXT_VIEW = "android.widget.TextView"; //$NON-NLS-1$
+
+    /** The fully qualified class name of an ImageView view */
+    public static final String FQCN_IMAGE_VIEW = "android.widget.ImageView"; //$NON-NLS-1$
 
     public static final String ATTR_SRC = "src"; //$NON-NLS-1$
 
@@ -251,6 +253,7 @@ public class LayoutConstants {
     public static final String ATTR_WEIGHT_SUM = "weightSum"; //$NON-NLS-1$
     public static final String ATTR_BASELINE_ALIGNED = "baselineAligned"; //$NON-NLS-1$
     public static String ATTR_ORIENTATION = "orientation"; //$NON-NLS-1$
+    public static String ATTR_EMS = "ems"; //$NON-NLS-1$
 
     public static String VALUE_HORIZONTAL = "horizontal"; //$NON-NLS-1$
 

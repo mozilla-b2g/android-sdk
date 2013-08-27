@@ -16,18 +16,22 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
+import static com.android.ide.common.layout.LayoutConstants.ATTR_COLUMN_COUNT;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_COLUMN;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_COLUMN_SPAN;
+import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_GRAVITY;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ROW;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_ROW_SPAN;
-import static com.android.ide.common.layout.LayoutConstants.ATTR_ORIENTATION;
+import static com.android.ide.common.layout.LayoutConstants.ATTR_ROW_COUNT;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_SRC;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_TEXT;
 import static com.android.ide.common.layout.LayoutConstants.DRAWABLE_PREFIX;
+import static com.android.ide.common.layout.LayoutConstants.GRID_LAYOUT;
 import static com.android.ide.common.layout.LayoutConstants.LAYOUT_PREFIX;
-import static com.android.ide.common.layout.LayoutConstants.LINEAR_LAYOUT;
-import static com.android.ide.common.layout.LayoutConstants.VALUE_VERTICAL;
+import static com.android.tools.lint.detector.api.LintConstants.AUTO_URI;
+import static com.android.tools.lint.detector.api.LintConstants.URI_PREFIX;
+import static com.android.util.XmlUtils.ANDROID_URI;
+import static org.eclipse.jface.viewers.StyledString.COUNTER_STYLER;
 import static org.eclipse.jface.viewers.StyledString.QUALIFIER_STYLER;
 
 import com.android.annotations.VisibleForTesting;
@@ -36,39 +40,49 @@ import com.android.ide.common.api.InsertType;
 import com.android.ide.common.layout.BaseLayoutRule;
 import com.android.ide.common.layout.GridLayoutRule;
 import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.ide.eclipse.adt.AdtUtils;
 import com.android.ide.eclipse.adt.internal.editors.IconFactory;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.DescriptorsUtils;
-import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.IncludeFinder.Reference;
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.NodeProxy;
+import com.android.ide.eclipse.adt.internal.editors.layout.properties.PropertySheetPage;
 import com.android.ide.eclipse.adt.internal.editors.layout.uimodel.UiViewElementNode;
-import com.android.ide.eclipse.adt.internal.editors.ui.ErrorImageComposite;
+import com.android.ide.eclipse.adt.internal.editors.manifest.ManifestInfo;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
+import com.android.ide.eclipse.adt.internal.sdk.ProjectState;
+import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.util.Pair;
 
+import org.eclipse.core.resources.IMarker;
+import org.eclipse.core.resources.IProject;
 import org.eclipse.jface.action.Action;
 import org.eclipse.jface.action.ActionContributionItem;
 import org.eclipse.jface.action.IAction;
 import org.eclipse.jface.action.IContributionItem;
 import org.eclipse.jface.action.IMenuListener;
 import org.eclipse.jface.action.IMenuManager;
+import org.eclipse.jface.action.IToolBarManager;
 import org.eclipse.jface.action.MenuManager;
 import org.eclipse.jface.action.Separator;
+import org.eclipse.jface.preference.JFacePreferences;
 import org.eclipse.jface.viewers.DoubleClickEvent;
 import org.eclipse.jface.viewers.IDoubleClickListener;
 import org.eclipse.jface.viewers.IElementComparer;
 import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jface.viewers.ITreeContentProvider;
 import org.eclipse.jface.viewers.ITreeSelection;
+import org.eclipse.jface.viewers.SelectionChangedEvent;
 import org.eclipse.jface.viewers.StyledCellLabelProvider;
 import org.eclipse.jface.viewers.StyledString;
+import org.eclipse.jface.viewers.StyledString.Styler;
 import org.eclipse.jface.viewers.TreePath;
 import org.eclipse.jface.viewers.TreeSelection;
 import org.eclipse.jface.viewers.TreeViewer;
 import org.eclipse.jface.viewers.Viewer;
 import org.eclipse.jface.viewers.ViewerCell;
+import org.eclipse.swt.SWT;
 import org.eclipse.swt.dnd.DND;
 import org.eclipse.swt.dnd.Transfer;
 import org.eclipse.swt.events.DisposeEvent;
@@ -77,19 +91,32 @@ import org.eclipse.swt.events.KeyEvent;
 import org.eclipse.swt.events.KeyListener;
 import org.eclipse.swt.events.MenuDetectEvent;
 import org.eclipse.swt.events.MenuDetectListener;
+import org.eclipse.swt.events.MouseEvent;
+import org.eclipse.swt.events.MouseListener;
+import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.Image;
+import org.eclipse.swt.graphics.Point;
+import org.eclipse.swt.graphics.Rectangle;
+import org.eclipse.swt.layout.FillLayout;
 import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Control;
+import org.eclipse.swt.widgets.Display;
+import org.eclipse.swt.widgets.Event;
+import org.eclipse.swt.widgets.Label;
+import org.eclipse.swt.widgets.Listener;
+import org.eclipse.swt.widgets.Shell;
+import org.eclipse.swt.widgets.Text;
 import org.eclipse.swt.widgets.Tree;
 import org.eclipse.swt.widgets.TreeItem;
 import org.eclipse.ui.IActionBars;
+import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.INullSelectionListener;
-import org.eclipse.ui.IPageLayout;
-import org.eclipse.ui.ISelectionListener;
-import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.IWorkbenchPart;
-import org.eclipse.ui.PartInitException;
 import org.eclipse.ui.actions.ActionFactory;
 import org.eclipse.ui.views.contentoutline.ContentOutlinePage;
+import org.eclipse.wb.core.controls.SelfOrientingSashForm;
+import org.eclipse.wb.internal.core.editor.structure.IPage;
+import org.eclipse.wb.internal.core.editor.structure.PageSiteComposite;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 
@@ -101,7 +128,7 @@ import java.util.Set;
 /**
  * An outline page for the layout canvas view.
  * <p/>
- * The page is created by {@link LayoutEditor#getAdapter(Class)}. This means
+ * The page is created by {@link LayoutEditorDelegate#delegateGetAdapter(Class)}. This means
  * we have *one* instance of the outline page per open canvas editor.
  * <p/>
  * It sets itself as a listener on the site's selection service in order to be
@@ -111,7 +138,7 @@ import java.util.Set;
  * (on which both the layout editor part and the property sheet page listen.)
  */
 public class OutlinePage extends ContentOutlinePage
-    implements ISelectionListener, INullSelectionListener {
+    implements INullSelectionListener, IPage {
 
     /** Label which separates outline text from additional attributes like text prefix or url */
     private static final String LABEL_SEPARATOR = " - ";
@@ -135,6 +162,14 @@ public class OutlinePage extends ContentOutlinePage
      * The actions delegate to the current GraphicalEditorPart.
      */
     private MenuManager mMenuManager;
+
+    private Composite mControl;
+    private PropertySheetPage mPropertySheet;
+    private PageSiteComposite mPropertySheetComposite;
+    private boolean mShowPropertySheet;
+    private boolean mShowHeader;
+    private boolean mIgnoreSelection;
+    private boolean mActive = true;
 
     /** Action to Select All in the tree */
     private final Action mTreeSelectAllAction = new Action() {
@@ -190,13 +225,164 @@ public class OutlinePage extends ContentOutlinePage
         }
     };
 
+    /**
+     * Creates a new {@link OutlinePage} associated with the given editor
+     *
+     * @param graphicalEditorPart the editor associated with this outline
+     */
     public OutlinePage(GraphicalEditorPart graphicalEditorPart) {
         super();
         mGraphicalEditorPart = graphicalEditorPart;
     }
 
     @Override
+    public Control getControl() {
+        // We've injected some controls between the root of the outline page
+        // and the tree control, so return the actual root (a sash form) rather
+        // than the superclass' implementation which returns the tree. If we don't
+        // do this, various checks in the outline page which checks that getControl().getParent()
+        // is the outline window itself will ignore this page.
+        return mControl;
+    }
+
+    void setActive(boolean active) {
+        if (active != mActive) {
+            mActive = active;
+
+            // Outlines are by default active when they are created; this is intended
+            // for deactivating a hidden outline and later reactivating it
+            assert mControl != null;
+            if (active) {
+                getSite().getPage().addSelectionListener(this);
+                setModel(mGraphicalEditorPart.getCanvasControl().getViewHierarchy().getRoot());
+            } else {
+                getSite().getPage().removeSelectionListener(this);
+                mRootWrapper.setRoot(null);
+                if (mPropertySheet != null) {
+                    mPropertySheet.selectionChanged(null, TreeSelection.EMPTY);
+                }
+            }
+        }
+    }
+
+    /** Refresh all the icon state */
+    public void refreshIcons() {
+        TreeViewer treeViewer = getTreeViewer();
+        if (treeViewer != null) {
+            Tree tree = treeViewer.getTree();
+            if (tree != null && !tree.isDisposed()) {
+                treeViewer.refresh();
+            }
+        }
+    }
+
+    /**
+     * Set whether the outline should be shown in the header
+     *
+     * @param show whether a header should be shown
+     */
+    public void setShowHeader(boolean show) {
+        mShowHeader = show;
+    }
+
+    /**
+     * Set whether the property sheet should be shown within this outline
+     *
+     * @param show whether the property sheet should show
+     */
+    public void setShowPropertySheet(boolean show) {
+        if (show != mShowPropertySheet) {
+            mShowPropertySheet = show;
+            if (mControl == null) {
+                return;
+            }
+
+            if (show && mPropertySheet == null) {
+                createPropertySheet();
+            } else if (!show) {
+                mPropertySheetComposite.dispose();
+                mPropertySheetComposite = null;
+                mPropertySheet.dispose();
+                mPropertySheet = null;
+            }
+
+            mControl.layout();
+        }
+    }
+
+    @Override
     public void createControl(Composite parent) {
+        mControl = new SelfOrientingSashForm(parent, SWT.VERTICAL);
+
+        if (mShowHeader) {
+            PageSiteComposite mOutlineComposite = new PageSiteComposite(mControl, SWT.BORDER);
+            mOutlineComposite.setTitleText("Outline");
+            mOutlineComposite.setTitleImage(IconFactory.getInstance().getIcon("components_view"));
+            mOutlineComposite.setPage(new IPage() {
+                @Override
+                public void createControl(Composite outlineParent) {
+                    createOutline(outlineParent);
+                }
+
+                @Override
+                public void dispose() {
+                }
+
+                @Override
+                public Control getControl() {
+                    return getTreeViewer().getTree();
+                }
+
+                @Override
+                public void setToolBar(IToolBarManager toolBarManager) {
+                    makeContributions(null, toolBarManager, null);
+                    toolBarManager.update(false);
+                }
+
+                @Override
+                public void setFocus() {
+                    getControl().setFocus();
+                }
+            });
+        } else {
+            createOutline(mControl);
+        }
+
+        if (mShowPropertySheet) {
+            createPropertySheet();
+        }
+    }
+
+    private void createOutline(Composite parent) {
+        if (AdtUtils.isEclipse4()) {
+            // This is a workaround for the focus behavior in Eclipse 4 where
+            // the framework ends up calling setFocus() on the first widget in the outline
+            // AFTER a mouse click has been received. Specifically, if the user clicks in
+            // the embedded property sheet to for example give a Text property editor focus,
+            // then after the mouse click, the Outline window activation event is processed,
+            // and this event causes setFocus() to be called first on the PageBookView (which
+            // ends up calling setFocus on the first control, normally the TreeViewer), and
+            // then on the Page itself. We're dealing with the page setFocus() in the override
+            // of that method in the class, such that it does nothing.
+            // However, we have to also disable the setFocus on the first control in the
+            // outline page. To deal with that, we create our *own* first control in the
+            // outline, and make its setFocus() a no-op. We also make it invisible, since we
+            // don't actually want anything but the tree viewer showing in the outline.
+            Text text = new Text(parent, SWT.NONE) {
+                @Override
+                public boolean setFocus() {
+                    // Focus no-op
+                    return true;
+                }
+
+                @Override
+                protected void checkSubclass() {
+                    // Disable the check that prevents subclassing of SWT components
+                }
+            };
+            text.setVisible(false);
+        }
+
         super.createControl(parent);
 
         TreeViewer tv = getTreeViewer();
@@ -204,6 +390,7 @@ public class OutlinePage extends ContentOutlinePage
         tv.setContentProvider(new ContentProvider());
         tv.setLabelProvider(new LabelProvider());
         tv.setInput(mRootWrapper);
+        tv.expandToLevel(mRootWrapper.getRoot(), 2);
 
         int supportedOperations = DND.DROP_COPY | DND.DROP_MOVE;
         Transfer[] transfers = new Transfer[] {
@@ -217,6 +404,7 @@ public class OutlinePage extends ContentOutlinePage
         // change each time the canvas is reloaded. OTOH layoutlib gives us
         // constant UiView keys which we can use to perform tree item comparisons.
         tv.setComparer(new IElementComparer() {
+            @Override
             public int hashCode(Object element) {
                 if (element instanceof CanvasViewInfo) {
                     UiViewElementNode key = ((CanvasViewInfo) element).getUiViewNode();
@@ -230,6 +418,7 @@ public class OutlinePage extends ContentOutlinePage
                 return 0;
             }
 
+            @Override
             public boolean equals(Object a, Object b) {
                 if (a instanceof CanvasViewInfo && b instanceof CanvasViewInfo) {
                     UiViewElementNode keyA = ((CanvasViewInfo) a).getUiViewNode();
@@ -245,13 +434,27 @@ public class OutlinePage extends ContentOutlinePage
             }
         });
         tv.addDoubleClickListener(new IDoubleClickListener() {
+            @Override
             public void doubleClick(DoubleClickEvent event) {
+                // This used to open the property view, but now that properties are docked
+                // let's use it for something else -- such as showing the editor source
+                /*
                 // Front properties panel; its selection is already linked
                 IWorkbenchPage page = getSite().getPage();
                 try {
                     page.showView(IPageLayout.ID_PROP_SHEET, null, IWorkbenchPage.VIEW_ACTIVATE);
                 } catch (PartInitException e) {
                     AdtPlugin.log(e, "Could not activate property sheet");
+                }
+                */
+
+                TreeItem[] selection = getTreeViewer().getTree().getSelection();
+                if (selection.length > 0) {
+                    CanvasViewInfo vi = getViewInfo(selection[0].getData());
+                    if (vi != null) {
+                        LayoutCanvas canvas = mGraphicalEditorPart.getCanvasControl();
+                        canvas.show(vi);
+                    }
                 }
             }
         });
@@ -262,6 +465,7 @@ public class OutlinePage extends ContentOutlinePage
         getSite().getPage().addSelectionListener(this);
         getControl().addDisposeListener(new DisposeListener() {
 
+            @Override
             public void widgetDisposed(DisposeEvent e) {
                 dispose();
             }
@@ -270,6 +474,7 @@ public class OutlinePage extends ContentOutlinePage
         Tree tree = tv.getTree();
         tree.addKeyListener(new KeyListener() {
 
+            @Override
             public void keyPressed(KeyEvent e) {
                 if (e.character == '-') {
                     if (mMoveUpAction.isEnabled()) {
@@ -282,9 +487,52 @@ public class OutlinePage extends ContentOutlinePage
                 }
             }
 
+            @Override
             public void keyReleased(KeyEvent e) {
             }
         });
+
+        setupTooltip();
+    }
+
+    /**
+     * This flag is true when the mouse button is being pressed somewhere inside
+     * the property sheet
+     */
+    private boolean mPressInPropSheet;
+
+    private void createPropertySheet() {
+        mPropertySheetComposite = new PageSiteComposite(mControl, SWT.BORDER);
+        mPropertySheetComposite.setTitleText("Properties");
+        mPropertySheetComposite.setTitleImage(IconFactory.getInstance().getIcon("properties_view"));
+        mPropertySheet = new PropertySheetPage(mGraphicalEditorPart);
+        mPropertySheetComposite.setPage(mPropertySheet);
+        if (AdtUtils.isEclipse4()) {
+            mPropertySheet.getControl().addMouseListener(new MouseListener() {
+                @Override
+                public void mouseDown(MouseEvent e) {
+                    mPressInPropSheet = true;
+                }
+
+                @Override
+                public void mouseUp(MouseEvent e) {
+                    mPressInPropSheet = false;
+                }
+
+                @Override
+                public void mouseDoubleClick(MouseEvent e) {
+                }
+            });
+        }
+    }
+
+    @Override
+    public void setFocus() {
+        // Only call setFocus on the tree viewer if the mouse click isn't in the property
+        // sheet area
+        if (!mPressInPropSheet) {
+            super.setFocus();
+        }
     }
 
     @Override
@@ -293,6 +541,10 @@ public class OutlinePage extends ContentOutlinePage
 
         getSite().getPage().removeSelectionListener(this);
         super.dispose();
+        if (mPropertySheet != null) {
+            mPropertySheet.dispose();
+            mPropertySheet = null;
+        }
     }
 
     /**
@@ -301,10 +553,14 @@ public class OutlinePage extends ContentOutlinePage
      * @param rootViewInfo The root of the view info hierarchy. Can be null.
      */
     public void setModel(CanvasViewInfo rootViewInfo) {
+        if (!mActive) {
+            return;
+        }
+
         mRootWrapper.setRoot(rootViewInfo);
 
         TreeViewer tv = getTreeViewer();
-        if (tv != null) {
+        if (tv != null && !tv.getTree().isDisposed()) {
             Object[] expanded = tv.getExpandedElements();
             tv.refresh();
             tv.setExpandedElements(expanded);
@@ -334,6 +590,9 @@ public class OutlinePage extends ContentOutlinePage
         if (selection == null) {
             selection = TreeSelection.EMPTY;
         }
+        if (selection.equals(TreeSelection.EMPTY)) {
+            return;
+        }
 
         super.setSelection(selection);
 
@@ -349,14 +608,46 @@ public class OutlinePage extends ContentOutlinePage
         }
     }
 
+    @Override
+    protected void fireSelectionChanged(ISelection selection) {
+        super.fireSelectionChanged(selection);
+        if (mPropertySheet != null && !mIgnoreSelection) {
+            mPropertySheet.selectionChanged(null, selection);
+        }
+    }
+
     /**
      * Listens to a workbench selection.
-     * Only listen on selection coming from {@link LayoutEditor}, which avoid
+     * Only listen on selection coming from {@link LayoutEditorDelegate}, which avoid
      * picking up our own selections.
      */
+    @Override
     public void selectionChanged(IWorkbenchPart part, ISelection selection) {
-        if (part instanceof LayoutEditor) {
-            setSelection(selection);
+        if (mIgnoreSelection) {
+            return;
+        }
+
+        if (part instanceof IEditorPart) {
+            LayoutEditorDelegate delegate = LayoutEditorDelegate.fromEditor((IEditorPart) part);
+            if (delegate != null) {
+                try {
+                    mIgnoreSelection = true;
+                    setSelection(selection);
+
+                    if (mPropertySheet != null) {
+                        mPropertySheet.selectionChanged(part, selection);
+                    }
+                } finally {
+                    mIgnoreSelection = false;
+                }
+            }
+        }
+    }
+
+    @Override
+    public void selectionChanged(SelectionChangedEvent event) {
+        if (!mIgnoreSelection) {
+            super.selectionChanged(event);
         }
     }
 
@@ -406,6 +697,7 @@ public class OutlinePage extends ContentOutlinePage
      */
     private static class ContentProvider implements ITreeContentProvider {
 
+        @Override
         public Object[] getChildren(Object element) {
             if (element instanceof RootWrapper) {
                 CanvasViewInfo root = ((RootWrapper)element).getRoot();
@@ -422,6 +714,7 @@ public class OutlinePage extends ContentOutlinePage
             return new Object[0];
         }
 
+        @Override
         public Object getParent(Object element) {
             if (element instanceof CanvasViewInfo) {
                 return ((CanvasViewInfo) element).getParent();
@@ -429,6 +722,7 @@ public class OutlinePage extends ContentOutlinePage
             return null;
         }
 
+        @Override
         public boolean hasChildren(Object element) {
             if (element instanceof CanvasViewInfo) {
                 List<CanvasViewInfo> children = ((CanvasViewInfo) element).getChildren();
@@ -443,14 +737,17 @@ public class OutlinePage extends ContentOutlinePage
          * Returns the root element.
          * Semantically, the root element is the single top-level XML element of the XML layout.
          */
+        @Override
         public Object[] getElements(Object inputElement) {
             return getChildren(inputElement);
         }
 
+        @Override
         public void dispose() {
             // pass
         }
 
+        @Override
         public void inputChanged(Viewer viewer, Object oldInput, Object newInput) {
             // pass
         }
@@ -472,32 +769,9 @@ public class OutlinePage extends ContentOutlinePage
                 element = ((CanvasViewInfo) element).getUiViewNode();
             }
 
-            if (element instanceof UiElementNode) {
-                UiElementNode node = (UiElementNode) element;
-                ElementDescriptor desc = node.getDescriptor();
-                if (desc != null) {
-                    Image img = null;
-                    // Special case for the common case of vertical linear layouts:
-                    // show vertical linear icon (the default icon shows horizontal orientation)
-                    if (desc.getUiName().equals(LINEAR_LAYOUT)) {
-                        Element e = (Element) node.getXmlNode();
-                        if (VALUE_VERTICAL.equals(e.getAttributeNS(ANDROID_URI,
-                                ATTR_ORIENTATION))) {
-                            IconFactory factory = IconFactory.getInstance();
-                            img = factory.getIcon("VerticalLinearLayout"); //$NON-NLS-1$
-                        }
-                    }
-                    if (img == null) {
-                        img = desc.getGenericIcon();
-                    }
-                    if (img != null) {
-                        if (node.hasError()) {
-                            return new ErrorImageComposite(img).createImage();
-                        } else {
-                            return img;
-                        }
-                    }
-                }
+            if (element instanceof UiViewElementNode) {
+                UiViewElementNode v = (UiViewElementNode) element;
+                return v.getIcon();
             }
 
             return AdtPlugin.getAndroidLogo();
@@ -527,21 +801,63 @@ public class OutlinePage extends ContentOutlinePage
                     Element e = (Element) xmlNode;
 
                     // Temporary diagnostics code when developing GridLayout
-                    if (GridLayoutRule.sDebugGridLayout && e.getParentNode() != null
-                            && e.getParentNode().getNodeName() != null) {
-                        if (e.getParentNode().getNodeName().equals("GridLayout")) { //$NON-NLS-1$
+                    if (GridLayoutRule.sDebugGridLayout) {
+
+                        String namespace;
+                        if (e.getNodeName().equals(GRID_LAYOUT) ||
+                                e.getParentNode() != null
+                                && e.getParentNode().getNodeName().equals(GRID_LAYOUT)) {
+                            namespace = ANDROID_URI;
+                        } else {
+                            // Else: probably a v7 gridlayout
+                            IProject project = mGraphicalEditorPart.getProject();
+                            ProjectState projectState = Sdk.getProjectState(project);
+                            if (projectState != null && projectState.isLibrary()) {
+                                namespace = AUTO_URI;
+                            } else {
+                                ManifestInfo info = ManifestInfo.get(project);
+                                namespace = URI_PREFIX + info.getPackage();
+                            }
+                        }
+
+                        if (e.getNodeName() != null && e.getNodeName().endsWith(GRID_LAYOUT)) {
+                            // Attach rowCount/columnCount info
+                            String rowCount = e.getAttributeNS(namespace, ATTR_ROW_COUNT);
+                            if (rowCount.length() == 0) {
+                                rowCount = "?";
+                            }
+                            String columnCount = e.getAttributeNS(namespace, ATTR_COLUMN_COUNT);
+                            if (columnCount.length() == 0) {
+                                columnCount = "?";
+                            }
+
+                            styledString.append(" - columnCount=", QUALIFIER_STYLER);
+                            styledString.append(columnCount, QUALIFIER_STYLER);
+                            styledString.append(", rowCount=", QUALIFIER_STYLER);
+                            styledString.append(rowCount, QUALIFIER_STYLER);
+                        } else if (e.getParentNode() != null
+                            && e.getParentNode().getNodeName() != null
+                            && e.getParentNode().getNodeName().endsWith(GRID_LAYOUT)) {
                             // Attach row/column info
-                            styledString.append(" - cell (", QUALIFIER_STYLER);
-                            String row = e.getAttributeNS(ANDROID_URI, ATTR_LAYOUT_ROW);
+                            String row = e.getAttributeNS(namespace, ATTR_LAYOUT_ROW);
                             if (row.length() == 0) {
                                 row = "?";
                             }
-                            String column = e.getAttributeNS(ANDROID_URI, ATTR_LAYOUT_COLUMN);
+                            Styler colStyle = QUALIFIER_STYLER;
+                            String column = e.getAttributeNS(namespace, ATTR_LAYOUT_COLUMN);
                             if (column.length() == 0) {
                                 column = "?";
+                            } else {
+                                String colCount = ((Element) e.getParentNode()).getAttributeNS(
+                                        namespace, ATTR_COLUMN_COUNT);
+                                if (colCount.length() > 0 && Integer.parseInt(colCount) <=
+                                        Integer.parseInt(column)) {
+                                    colStyle = StyledString.createColorRegistryStyler(
+                                        JFacePreferences.ERROR_COLOR, null);
+                                }
                             }
-                            String rowSpan = e.getAttributeNS(ANDROID_URI, ATTR_LAYOUT_ROW_SPAN);
-                            String columnSpan = e.getAttributeNS(ANDROID_URI,
+                            String rowSpan = e.getAttributeNS(namespace, ATTR_LAYOUT_ROW_SPAN);
+                            String columnSpan = e.getAttributeNS(namespace,
                                     ATTR_LAYOUT_COLUMN_SPAN);
                             if (rowSpan.length() == 0) {
                                 rowSpan = "1";
@@ -550,14 +866,24 @@ public class OutlinePage extends ContentOutlinePage
                                 columnSpan = "1";
                             }
 
+                            styledString.append(" - cell (row=", QUALIFIER_STYLER);
                             styledString.append(row, QUALIFIER_STYLER);
                             styledString.append(',', QUALIFIER_STYLER);
-                            styledString.append(column, QUALIFIER_STYLER);
-                            styledString.append("), span=(", QUALIFIER_STYLER);
+                            styledString.append("col=", colStyle);
+                            styledString.append(column, colStyle);
+                            styledString.append(')', colStyle);
+                            styledString.append(", span=(", QUALIFIER_STYLER);
                             styledString.append(columnSpan, QUALIFIER_STYLER);
                             styledString.append(',', QUALIFIER_STYLER);
                             styledString.append(rowSpan, QUALIFIER_STYLER);
                             styledString.append(')', QUALIFIER_STYLER);
+
+                            String gravity = e.getAttributeNS(namespace, ATTR_LAYOUT_GRAVITY);
+                            if (gravity != null && gravity.length() > 0) {
+                                styledString.append(" : ", COUNTER_STYLER);
+                                styledString.append(gravity, COUNTER_STYLER);
+                            }
+
                         }
                     }
 
@@ -572,10 +898,14 @@ public class OutlinePage extends ContentOutlinePage
                                     text = resolved;
                                 }
                             }
-                            styledString.append(LABEL_SEPARATOR, QUALIFIER_STYLER);
-                            styledString.append('"', QUALIFIER_STYLER);
-                            styledString.append(truncate(text, styledString), QUALIFIER_STYLER);
-                            styledString.append('"', QUALIFIER_STYLER);
+                            if (styledString.length() < LABEL_MAX_WIDTH - LABEL_SEPARATOR.length()
+                                    - 2) {
+                                styledString.append(LABEL_SEPARATOR, QUALIFIER_STYLER);
+
+                                styledString.append('"', QUALIFIER_STYLER);
+                                styledString.append(truncate(text, styledString), QUALIFIER_STYLER);
+                                styledString.append('"', QUALIFIER_STYLER);
+                            }
                         }
                     } else if (e.hasAttributeNS(ANDROID_URI, ATTR_SRC)) {
                         // Show ImageView source attributes etc
@@ -657,6 +987,7 @@ public class OutlinePage extends ContentOutlinePage
         mMenuManager.add(new DelegateAction(prefix + ActionFactory.DELETE.getId()));
 
         mMenuManager.addMenuListener(new IMenuListener() {
+            @Override
             public void menuAboutToShow(IMenuManager manager) {
                 // Update all actions to match their LayoutCanvas counterparts
                 for (IContributionItem contrib : manager.getItems()) {
@@ -671,14 +1002,15 @@ public class OutlinePage extends ContentOutlinePage
         });
 
         new DynamicContextMenu(
-                mGraphicalEditorPart.getLayoutEditor(),
+                mGraphicalEditorPart.getEditorDelegate(),
                 mGraphicalEditorPart.getCanvasControl(),
                 mMenuManager);
 
-        getControl().setMenu(mMenuManager.createContextMenu(getControl()));
+        getTreeViewer().getTree().setMenu(mMenuManager.createContextMenu(getControl()));
 
         // Update Move Up/Move Down state only when the menu is opened
-        getControl().addMenuDetectListener(new MenuDetectListener() {
+        getTreeViewer().getTree().addMenuDetectListener(new MenuDetectListener() {
+            @Override
             public void menuDetected(MenuDetectEvent e) {
                 mMenuManager.update(IAction.ENABLED);
             }
@@ -829,7 +1161,8 @@ public class OutlinePage extends ContentOutlinePage
 
                     String label = MoveGesture.computeUndoLabel(targetNode,
                             elements, DND.DROP_MOVE);
-                    canvas.getLayoutEditor().wrapUndoEditXmlModel(label, new Runnable() {
+                    canvas.getEditorDelegate().getEditor().wrapUndoEditXmlModel(label, new Runnable() {
+                        @Override
                         public void run() {
                             InsertType insertType = InsertType.MOVE_INTO;
                             if (dragSelection.get(0).getNode().getParent() == targetNode) {
@@ -997,5 +1330,110 @@ public class OutlinePage extends ContentOutlinePage
         }
 
         return text;
+    }
+
+    @Override
+    public void setToolBar(IToolBarManager toolBarManager) {
+        makeContributions(null, toolBarManager, null);
+        toolBarManager.update(false);
+    }
+
+    /**
+     * Sets up a custom tooltip when hovering over tree items. It currently displays the error
+     * message for the lint warning associated with each node, if any (and only if the hover
+     * is over the icon portion).
+     */
+    private void setupTooltip() {
+        final Tree tree = getTreeViewer().getTree();
+
+        // This is based on SWT Snippet 125
+        final Listener listener = new Listener() {
+            Shell mTip = null;
+            Label mLabel  = null;
+
+            @Override
+            public void handleEvent(Event event) {
+                switch(event.type) {
+                case SWT.Dispose:
+                case SWT.KeyDown:
+                case SWT.MouseExit:
+                case SWT.MouseDown:
+                case SWT.MouseMove:
+                    if (mTip != null) {
+                        mTip.dispose();
+                        mTip = null;
+                        mLabel = null;
+                    }
+                    break;
+                case SWT.MouseHover:
+                    if (mTip != null) {
+                        mTip.dispose();
+                        mTip = null;
+                        mLabel = null;
+                    }
+
+                    String tooltip = null;
+
+                    TreeItem item = tree.getItem(new Point(event.x, event.y));
+                    if (item != null) {
+                        Rectangle rect = item.getBounds(0);
+                        if (event.x - rect.x > 16) { // 16: Standard width of our outline icons
+                            return;
+                        }
+
+                        Object data = item.getData();
+                        if (data != null && data instanceof CanvasViewInfo) {
+                            LayoutEditorDelegate editor = mGraphicalEditorPart.getEditorDelegate();
+                            CanvasViewInfo vi = (CanvasViewInfo) data;
+                            IMarker marker = editor.getIssueForNode(vi.getUiViewNode());
+                            if (marker != null) {
+                                tooltip = marker.getAttribute(IMarker.MESSAGE, null);
+                            }
+                        }
+
+                        if (tooltip != null) {
+                            Shell shell = tree.getShell();
+                            Display display = tree.getDisplay();
+
+                            Color fg = display.getSystemColor(SWT.COLOR_INFO_FOREGROUND);
+                            Color bg = display.getSystemColor(SWT.COLOR_INFO_BACKGROUND);
+                            mTip = new Shell(shell, SWT.ON_TOP | SWT.NO_FOCUS | SWT.TOOL);
+                            mTip.setBackground(bg);
+                            FillLayout layout = new FillLayout();
+                            layout.marginWidth = 1;
+                            layout.marginHeight = 1;
+                            mTip.setLayout(layout);
+                            mLabel = new Label(mTip, SWT.WRAP);
+                            mLabel.setForeground(fg);
+                            mLabel.setBackground(bg);
+                            mLabel.setText(tooltip);
+                            mLabel.addListener(SWT.MouseExit, this);
+                            mLabel.addListener(SWT.MouseDown, this);
+
+                            Point pt = tree.toDisplay(rect.x, rect.y + rect.height);
+                            Rectangle displayBounds = display.getBounds();
+                            // -10: Don't extend -all- the way to the edge of the screen
+                            // which would make it look like it has been cropped
+                            int availableWidth = displayBounds.x + displayBounds.width - pt.x - 10;
+                            if (availableWidth < 80) {
+                                availableWidth = 80;
+                            }
+                            Point size = mTip.computeSize(SWT.DEFAULT, SWT.DEFAULT);
+                            if (size.x > availableWidth) {
+                                size = mTip.computeSize(availableWidth, SWT.DEFAULT);
+                            }
+                            mTip.setBounds(pt.x, pt.y, size.x, size.y);
+
+                            mTip.setVisible(true);
+                        }
+                    }
+                }
+            }
+        };
+
+        tree.addListener(SWT.Dispose, listener);
+        tree.addListener(SWT.KeyDown, listener);
+        tree.addListener(SWT.MouseMove, listener);
+        tree.addListener(SWT.MouseHover, listener);
     }
 }

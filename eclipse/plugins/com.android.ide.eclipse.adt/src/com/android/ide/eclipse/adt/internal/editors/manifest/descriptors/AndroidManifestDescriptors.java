@@ -18,7 +18,6 @@ package com.android.ide.eclipse.adt.internal.editors.manifest.descriptors;
 
 import com.android.ide.common.api.IAttributeInfo;
 import com.android.ide.common.api.IAttributeInfo.Format;
-import com.android.ide.common.layout.LayoutConstants;
 import com.android.ide.common.resources.platform.AttributeInfo;
 import com.android.ide.common.resources.platform.AttrsXmlParser;
 import com.android.ide.common.resources.platform.DeclareStyleableInfo;
@@ -34,6 +33,7 @@ import com.android.ide.eclipse.adt.internal.editors.descriptors.ReferenceAttribu
 import com.android.ide.eclipse.adt.internal.editors.descriptors.TextAttributeDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor;
 import com.android.sdklib.SdkConstants;
+import com.android.util.XmlUtils;
 
 import org.eclipse.core.runtime.IStatus;
 
@@ -55,7 +55,8 @@ import java.util.TreeSet;
  * loaded the first time.
  */
 public final class AndroidManifestDescriptors implements IDescriptorProvider {
-
+    /** Name of the {@code <uses-permission>} */
+    public static final String USES_PERMISSION = "uses-permission";             //$NON-NLS-1$
     private static final String MANIFEST_NODE_NAME = "manifest";                //$NON-NLS-1$
     private static final String ANDROID_MANIFEST_STYLEABLE =
         AttrsXmlParser.ANDROID_MANIFEST_STYLEABLE;
@@ -93,7 +94,7 @@ public final class AndroidManifestDescriptors implements IDescriptorProvider {
         INTRUMENTATION_ELEMENT = createElement("instrumentation"); //$NON-NLS-1$
 
         PERMISSION_ELEMENT = createElement("permission"); //$NON-NLS-1$
-        USES_PERMISSION_ELEMENT = createElement("uses-permission"); //$NON-NLS-1$
+        USES_PERMISSION_ELEMENT = createElement(USES_PERMISSION);
         USES_SDK_ELEMENT = createElement("uses-sdk", null, Mandatory.MANDATORY); //$NON-NLS-1$ + no child & mandatory
 
         PERMISSION_GROUP_ELEMENT = createElement("permission-group"); //$NON-NLS-1$
@@ -115,16 +116,19 @@ public final class AndroidManifestDescriptors implements IDescriptorProvider {
         // The "package" attribute is treated differently as it doesn't have the standard
         // Android XML namespace.
         PACKAGE_ATTR_DESC = new PackageAttributeDescriptor(PACKAGE_ATTR,
-                "Package",
                 null /* nsUri */,
-                "This attribute gives a unique name for the package, using a Java-style naming convention to avoid name collisions.\nFor example, applications published by Google could have names of the form com.google.app.appname",
-                new AttributeInfo(PACKAGE_ATTR, new Format[] { Format.REFERENCE }) );
+                new AttributeInfo(PACKAGE_ATTR, Format.REFERENCE_SET)).setTooltip(
+                    "This attribute gives a unique name for the package, using a Java-style " +
+                    "naming convention to avoid name collisions.\nFor example, applications " +
+                    "published by Google could have names of the form com.google.app.appname");
     }
 
+    @Override
     public ElementDescriptor[] getRootElementDescriptors() {
         return new ElementDescriptor[] { MANIFEST_ELEMENT };
     }
 
+    @Override
     public ElementDescriptor getDescriptor() {
         return getManifestElement();
     }
@@ -229,7 +233,7 @@ public final class AndroidManifestDescriptors implements IDescriptorProvider {
         insertAttribute(MANIFEST_ELEMENT, PACKAGE_ATTR_DESC);
 
         XmlnsAttributeDescriptor xmlns = new XmlnsAttributeDescriptor(
-                LayoutConstants.ANDROID_NS_NAME, SdkConstants.NS_RESOURCES);
+                XmlUtils.ANDROID_NS_NAME, XmlUtils.ANDROID_URI);
         insertAttribute(MANIFEST_ELEMENT, xmlns);
 
         assert sanityCheck(manifestMap, MANIFEST_ELEMENT);
@@ -245,12 +249,11 @@ public final class AndroidManifestDescriptors implements IDescriptorProvider {
             final String className) {
         overrides.put(elementName + "/" + ANDROID_NAME_ATTR,
                 new ITextAttributeCreator() {
-            public TextAttributeDescriptor create(String xmlName, String uiName, String nsUri,
-                    String tooltip, IAttributeInfo attrInfo) {
-                uiName += "*";  //$NON-NLS-1$
-
+            @Override
+            public TextAttributeDescriptor create(String xmlName, String nsUri,
+                    IAttributeInfo attrInfo) {
                 if (attrInfo == null) {
-                    attrInfo = new AttributeInfo(xmlName, new Format[] { Format.STRING } );
+                    attrInfo = new AttributeInfo(xmlName, Format.STRING_SET );
                 }
 
                 if (SdkConstants.CLASS_ACTIVITY.equals(className)) {
@@ -258,9 +261,7 @@ public final class AndroidManifestDescriptors implements IDescriptorProvider {
                             className,
                             PostActivityCreationAction.getAction(),
                             xmlName,
-                            uiName,
                             nsUri,
-                            tooltip,
                             attrInfo,
                             true /*mandatory */,
                             true /*defaultToProjectOnly*/);
@@ -269,9 +270,7 @@ public final class AndroidManifestDescriptors implements IDescriptorProvider {
                             className,
                             PostReceiverCreationAction.getAction(),
                             xmlName,
-                            uiName,
                             nsUri,
-                            tooltip,
                             attrInfo,
                             true /*mandatory */,
                             true /*defaultToProjectOnly*/);
@@ -280,9 +279,7 @@ public final class AndroidManifestDescriptors implements IDescriptorProvider {
                             className,
                             null, // no post action
                             xmlName,
-                            uiName,
                             nsUri,
-                            tooltip,
                             attrInfo,
                             true /*mandatory */,
                             false /*defaultToProjectOnly*/);
@@ -290,9 +287,7 @@ public final class AndroidManifestDescriptors implements IDescriptorProvider {
                     return new ClassAttributeDescriptor(
                             className,
                             xmlName,
-                            uiName,
                             nsUri,
-                            tooltip,
                             attrInfo,
                             true /*mandatory */);
                 }

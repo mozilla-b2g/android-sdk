@@ -24,30 +24,29 @@ import com.android.sdklib.SdkConstants;
 import com.android.sdklib.SdkManager;
 import com.android.sdklib.internal.avd.AvdManager;
 import com.android.sdklib.internal.repository.AdbWrapper;
-import com.android.sdklib.internal.repository.AddonPackage;
-import com.android.sdklib.internal.repository.AddonsListFetcher;
-import com.android.sdklib.internal.repository.AddonsListFetcher.Site;
-import com.android.sdklib.internal.repository.Archive;
-import com.android.sdklib.internal.repository.ArchiveInstaller;
+import com.android.sdklib.internal.repository.DownloadCache;
 import com.android.sdklib.internal.repository.ITask;
 import com.android.sdklib.internal.repository.ITaskFactory;
 import com.android.sdklib.internal.repository.ITaskMonitor;
 import com.android.sdklib.internal.repository.LocalSdkParser;
 import com.android.sdklib.internal.repository.NullTaskMonitor;
-import com.android.sdklib.internal.repository.Package;
-import com.android.sdklib.internal.repository.PlatformToolPackage;
-import com.android.sdklib.internal.repository.SdkAddonSource;
-import com.android.sdklib.internal.repository.SdkRepoSource;
-import com.android.sdklib.internal.repository.SdkSource;
-import com.android.sdklib.internal.repository.SdkSourceCategory;
-import com.android.sdklib.internal.repository.SdkSources;
-import com.android.sdklib.internal.repository.ToolPackage;
+import com.android.sdklib.internal.repository.archives.Archive;
+import com.android.sdklib.internal.repository.archives.ArchiveInstaller;
+import com.android.sdklib.internal.repository.packages.AddonPackage;
+import com.android.sdklib.internal.repository.packages.Package;
+import com.android.sdklib.internal.repository.packages.PlatformToolPackage;
+import com.android.sdklib.internal.repository.packages.ToolPackage;
+import com.android.sdklib.internal.repository.sources.SdkRepoSource;
+import com.android.sdklib.internal.repository.sources.SdkSource;
+import com.android.sdklib.internal.repository.sources.SdkSourceCategory;
+import com.android.sdklib.internal.repository.sources.SdkSources;
 import com.android.sdklib.repository.SdkAddonConstants;
-import com.android.sdklib.repository.SdkAddonsListConstants;
 import com.android.sdklib.repository.SdkRepoConstants;
 import com.android.sdklib.util.LineUtil;
 import com.android.sdklib.util.SparseIntArray;
+import com.android.sdkuilib.internal.repository.SettingsController.OnChangedListener;
 import com.android.sdkuilib.internal.repository.icons.ImageFactory;
+import com.android.sdkuilib.internal.repository.sdkman2.PackageLoader;
 import com.android.sdkuilib.internal.repository.sdkman2.SdkUpdaterWindowImpl2;
 import com.android.sdkuilib.repository.ISdkChangeListener;
 
@@ -78,32 +77,32 @@ public class UpdaterData implements IUpdaterData {
 
     private String mOsSdkRoot;
 
-    private final ISdkLog mSdkLog;
-    private ITaskFactory mTaskFactory;
-
-    private SdkManager mSdkManager;
-    private AvdManager mAvdManager;
-
     private final LocalSdkParser mLocalSdkParser = new LocalSdkParser();
     private final SdkSources mSources = new SdkSources();
-
-    private ImageFactory mImageFactory;
-
     private final SettingsController mSettingsController;
-
     private final ArrayList<ISdkChangeListener> mListeners = new ArrayList<ISdkChangeListener>();
-
+    private final ISdkLog mSdkLog;
+    private ITaskFactory mTaskFactory;
     private Shell mWindowShell;
-
-    private AndroidLocationException mAvdManagerInitError;
-
+    private SdkManager mSdkManager;
+    private AvdManager mAvdManager;
     /**
-     * 0 = need to fetch remote addons list once..
-     * 1 = fetch succeeded, don't need to do it any more.
-     * -1= fetch failed, do it again only if the user requests a refresh
-     *     or changes the force-http setting.
+     * The current {@link PackageLoader} to use.
+     * Lazily created in {@link #getPackageLoader()}.
      */
-    private int mStateFetchRemoteAddonsList;
+    private PackageLoader mPackageLoader;
+    /**
+     * The current {@link DownloadCache} to use.
+     * Lazily created in {@link #getDownloadCache()}.
+     */
+    private DownloadCache mDownloadCache;
+    /**
+     * The current {@link ImageFactory}.
+     * Set via {@link #setImageFactory(ImageFactory)} by the window implementation.
+     * It is null when invoked using the command-line interface.
+     */
+    private ImageFactory mImageFactory;
+    private AndroidLocationException mAvdManagerInitError;
 
     /**
      * Creates a new updater data.
@@ -115,8 +114,8 @@ public class UpdaterData implements IUpdaterData {
         mOsSdkRoot = osSdkRoot;
         mSdkLog = sdkLog;
 
-        mSettingsController = new SettingsController(this);
 
+        mSettingsController = initSettingsController();
         initSdk();
     }
 
@@ -126,10 +125,22 @@ public class UpdaterData implements IUpdaterData {
         return mOsSdkRoot;
     }
 
+    @Override
+    public DownloadCache getDownloadCache() {
+        if (mDownloadCache == null) {
+            mDownloadCache = new DownloadCache(
+                    mSettingsController.getSettings().getUseDownloadCache() ?
+                            DownloadCache.Strategy.FRESH_CACHE :
+                            DownloadCache.Strategy.DIRECT);
+        }
+        return mDownloadCache;
+    }
+
     public void setTaskFactory(ITaskFactory taskFactory) {
         mTaskFactory = taskFactory;
     }
 
+    @Override
     public ITaskFactory getTaskFactory() {
         return mTaskFactory;
     }
@@ -142,6 +153,7 @@ public class UpdaterData implements IUpdaterData {
         return mLocalSdkParser;
     }
 
+    @Override
     public ISdkLog getSdkLog() {
         return mSdkLog;
     }
@@ -150,18 +162,22 @@ public class UpdaterData implements IUpdaterData {
         mImageFactory = imageFactory;
     }
 
+    @Override
     public ImageFactory getImageFactory() {
         return mImageFactory;
     }
 
+    @Override
     public SdkManager getSdkManager() {
         return mSdkManager;
     }
 
+    @Override
     public AvdManager getAvdManager() {
         return mAvdManager;
     }
 
+    @Override
     public SettingsController getSettingsController() {
         return mSettingsController;
     }
@@ -182,8 +198,17 @@ public class UpdaterData implements IUpdaterData {
         mWindowShell = windowShell;
     }
 
+    @Override
     public Shell getWindowShell() {
         return mWindowShell;
+    }
+
+    public PackageLoader getPackageLoader() {
+        // The package loader is lazily initialized here.
+        if (mPackageLoader == null) {
+            mPackageLoader = new PackageLoader(this);
+        }
+        return mPackageLoader;
     }
 
     /**
@@ -210,7 +235,7 @@ public class UpdaterData implements IUpdaterData {
                 example);
 
             // We may not have any UI. Only display a dialog if there's a window shell available.
-            if (mWindowShell != null) {
+            if (mWindowShell != null && !mWindowShell.isDisposed()) {
                 MessageDialog.openError(mWindowShell,
                     "Android Virtual Devices Manager",
                     error);
@@ -227,6 +252,7 @@ public class UpdaterData implements IUpdaterData {
 
     /**
      * Initializes the {@link SdkManager} and the {@link AvdManager}.
+     * Extracted so that we can override this in unit tests.
      */
     @VisibleForTesting(visibility=Visibility.PRIVATE)
     protected void initSdk() {
@@ -248,6 +274,35 @@ public class UpdaterData implements IUpdaterData {
 
         // notify listeners.
         broadcastOnSdkReload();
+    }
+
+    /**
+     * Initializes the {@link SettingsController}
+     * Extracted so that we can override this in unit tests.
+     */
+    @VisibleForTesting(visibility=Visibility.PRIVATE)
+    protected SettingsController initSettingsController() {
+        SettingsController settingsController = new SettingsController(mSdkLog);
+        settingsController.registerOnChangedListener(new OnChangedListener() {
+            @Override
+            public void onSettingsChanged(
+                    SettingsController controller,
+                    SettingsController.Settings oldSettings) {
+
+                // Reset the download cache if it doesn't match the right strategy.
+                // The cache instance gets lazily recreated later in getDownloadCache().
+                if (mDownloadCache != null) {
+                    if (controller.getSettings().getUseDownloadCache() &&
+                            mDownloadCache.getStrategy() != DownloadCache.Strategy.FRESH_CACHE) {
+                        mDownloadCache = null;
+                    } else if (!controller.getSettings().getUseDownloadCache() &&
+                            mDownloadCache.getStrategy() != DownloadCache.Strategy.DIRECT) {
+                        mDownloadCache = null;
+                    }
+                }
+            }
+        });
+        return settingsController;
     }
 
     @VisibleForTesting(visibility=Visibility.PRIVATE)
@@ -321,7 +376,8 @@ public class UpdaterData implements IUpdaterData {
                 new SdkRepoSource(baseUrl,
                                   SdkSourceCategory.ANDROID_REPO.getUiName()));
 
-        // Load user sources
+        // Load user sources (this will also notify change listeners but this operation is
+        // done early enough that there shouldn't be any anyway.)
         sources.loadUserAddons(getSdkLog());
     }
 
@@ -360,12 +416,13 @@ public class UpdaterData implements IUpdaterData {
         // this will accumulate all the packages installed.
         final List<Archive> newlyInstalledArchives = new ArrayList<Archive>();
 
-        final boolean forceHttp = getSettingsController().getForceHttp();
+        final boolean forceHttp = getSettingsController().getSettings().getForceHttp();
 
         // sort all archives based on their dependency level.
         Collections.sort(archives, new InstallOrderComparator());
 
         mTaskFactory.start("Installing Archives", new ITask() {
+            @Override
             public void run(ITaskMonitor monitor) {
 
                 final int progressPerArchive = 2 * ArchiveInstaller.NUM_MONITOR_INC;
@@ -432,6 +489,7 @@ public class UpdaterData implements IUpdaterData {
                                               mOsSdkRoot,
                                               forceHttp,
                                               mSdkManager,
+                                              getDownloadCache(),
                                               monitor)) {
                             // We installed this archive.
                             newlyInstalledArchives.add(archive);
@@ -535,6 +593,7 @@ public class UpdaterData implements IUpdaterData {
 
         private final Map<ArchiveInfo, Integer> mOrders = new HashMap<ArchiveInfo, Integer>();
 
+        @Override
         public int compare(ArchiveInfo o1, ArchiveInfo o2) {
             int n1 = getDependencyOrder(o1);
             int n2 = getDependencyOrder(o2);
@@ -584,11 +643,13 @@ public class UpdaterData implements IUpdaterData {
     private void askForAdbRestart(ITaskMonitor monitor) {
         final boolean[] canRestart = new boolean[] { true };
 
-        if (getWindowShell() != null && getSettingsController().getAskBeforeAdbRestart()) {
+        if (getWindowShell() != null &&
+                getSettingsController().getSettings().getAskBeforeAdbRestart()) {
             // need to ask for permission first
             final Shell shell = getWindowShell();
             if (shell != null && !shell.isDisposed()) {
                 shell.getDisplay().syncExec(new Runnable() {
+                    @Override
                     public void run() {
                         if (!shell.isDisposed()) {
                             canRestart[0] = MessageDialog.openQuestion(shell,
@@ -630,6 +691,7 @@ public class UpdaterData implements IUpdaterData {
         final Shell shell = getWindowShell();
         if (msg2 != null && shell != null && !shell.isDisposed()) {
             shell.getDisplay().syncExec(new Runnable() {
+                @Override
                 public void run() {
                     if (!shell.isDisposed()) {
                         MessageDialog.openInformation(shell,
@@ -680,7 +742,7 @@ public class UpdaterData implements IUpdaterData {
                 includeObsoletes);
 
         if (selectedArchives == null) {
-            loadRemoteAddonsList(new NullTaskMonitor(getSdkLog()));
+            getPackageLoader().loadRemoteAddonsList(new NullTaskMonitor(getSdkLog()));
             ul.addNewPlatforms(
                     archives,
                     getSources(),
@@ -710,34 +772,34 @@ public class UpdaterData implements IUpdaterData {
      * Used by {@link UpdaterData#listRemotePackages_NoGUI} and
      * {@link UpdaterData#updateOrInstallAll_NoGUI}.
      *
-     * @param includeObsoletes True to also list obsolete packages.
+     * @param includeAll True to list and install all packages, including obsolete ones.
      * @return A list of potential {@link ArchiveInfo} to install.
      */
-    private List<ArchiveInfo> getRemoteArchives_NoGUI(boolean includeObsoletes) {
+    private List<ArchiveInfo> getRemoteArchives_NoGUI(boolean includeAll) {
         refreshSources(true);
-        loadRemoteAddonsList(new NullTaskMonitor(getSdkLog()));
+        getPackageLoader().loadRemoteAddonsList(new NullTaskMonitor(getSdkLog()));
 
         List<ArchiveInfo> archives;
         SdkUpdaterLogic ul = new SdkUpdaterLogic(this);
 
-        if (includeObsoletes) {
+        if (includeAll) {
             archives = ul.getAllRemoteArchives(
                     getSources(),
                     getLocalSdkParser().getPackages(),
-                    includeObsoletes);
+                    includeAll);
 
         } else {
             archives = ul.computeUpdates(
                     null /*selectedArchives*/,
                     getSources(),
                     getLocalSdkParser().getPackages(),
-                    includeObsoletes);
+                    includeAll);
 
             ul.addNewPlatforms(
                     archives,
                     getSources(),
                     getLocalSdkParser().getPackages(),
-                    includeObsoletes);
+                    includeAll);
         }
 
         Collections.sort(archives);
@@ -748,12 +810,12 @@ public class UpdaterData implements IUpdaterData {
      * Lists remote packages available for install using
      * {@link UpdaterData#updateOrInstallAll_NoGUI}.
      *
-     * @param includeObsoletes True to also list obsolete packages.
+     * @param includeAll True to list and install all packages, including obsolete ones.
      * @param extendedOutput True to display more details on each package.
      */
-    public void listRemotePackages_NoGUI(boolean includeObsoletes, boolean extendedOutput) {
+    public void listRemotePackages_NoGUI(boolean includeAll, boolean extendedOutput) {
 
-        List<ArchiveInfo> archives = getRemoteArchives_NoGUI(includeObsoletes);
+        List<ArchiveInfo> archives = getRemoteArchives_NoGUI(includeAll);
 
         mSdkLog.printf("Packages available for installation or update: %1$d\n", archives.size());
 
@@ -790,17 +852,17 @@ public class UpdaterData implements IUpdaterData {
      * @param pkgFilter A list of {@link SdkRepoConstants#NODES} or {@link Package#installId()}
      *   or package indexes to limit the packages we can update or install.
      *   A null or empty list means to update everything possible.
-     * @param includeObsoletes True to also list and install obsolete packages.
+     * @param includeAll True to list and install all packages, including obsolete ones.
      * @param dryMode True to check what would be updated/installed but do not actually
      *   download or install anything.
      * @return A list of archives that have been installed. Can be null if nothing was done.
      */
     public List<Archive> updateOrInstallAll_NoGUI(
             Collection<String> pkgFilter,
-            boolean includeObsoletes,
+            boolean includeAll,
             boolean dryMode) {
 
-        List<ArchiveInfo> archives = getRemoteArchives_NoGUI(includeObsoletes);
+        List<ArchiveInfo> archives = getRemoteArchives_NoGUI(includeAll);
 
         // Filter the selected archives to only keep the ones matching the filter
         if (pkgFilter != null && pkgFilter.size() > 0 && archives != null && archives.size() > 0) {
@@ -974,14 +1036,13 @@ public class UpdaterData implements IUpdaterData {
     public void refreshSources(final boolean forceFetching) {
         assert mTaskFactory != null;
 
-        final boolean forceHttp = getSettingsController().getForceHttp();
+        final boolean forceHttp = getSettingsController().getSettings().getForceHttp();
 
         mTaskFactory.start("Refresh Sources", new ITask() {
+            @Override
             public void run(ITaskMonitor monitor) {
 
-                if (mStateFetchRemoteAddonsList <= 0) {
-                    loadRemoteAddonsListInTask(monitor);
-                }
+                getPackageLoader().loadRemoteAddonsList(monitor);
 
                 SdkSource[] sources = mSources.getAllSources();
                 monitor.setDescription("Refresh Sources");
@@ -990,7 +1051,7 @@ public class UpdaterData implements IUpdaterData {
                     if (forceFetching ||
                             source.getPackages() != null ||
                             source.getFetchError() != null) {
-                        source.load(monitor.createSubMonitor(1), forceHttp);
+                        source.load(getDownloadCache(), monitor.createSubMonitor(1), forceHttp);
                     }
                     monitor.incProgress(1);
                 }
@@ -999,70 +1060,13 @@ public class UpdaterData implements IUpdaterData {
     }
 
     /**
-     * Loads the remote add-ons list.
-     */
-    public void loadRemoteAddonsList(ITaskMonitor monitor) {
-
-        if (mStateFetchRemoteAddonsList != 0) {
-            return;
-        }
-
-        mTaskFactory.start("Load Add-ons List", monitor, new ITask() {
-            public void run(ITaskMonitor subMonitor) {
-                loadRemoteAddonsListInTask(subMonitor);
-            }
-        });
-    }
-
-    private void loadRemoteAddonsListInTask(ITaskMonitor monitor) {
-        mStateFetchRemoteAddonsList = -1;
-
-        String url = SdkAddonsListConstants.URL_ADDON_LIST;
-
-        // We override SdkRepoConstants.URL_GOOGLE_SDK_SITE if this is defined
-        String baseUrl = System.getenv("SDK_TEST_BASE_URL");            //$NON-NLS-1$
-        if (baseUrl != null) {
-            if (baseUrl.length() > 0 && baseUrl.endsWith("/")) {        //$NON-NLS-1$
-                if (url.startsWith(SdkRepoConstants.URL_GOOGLE_SDK_SITE)) {
-                    url = baseUrl + url.substring(SdkRepoConstants.URL_GOOGLE_SDK_SITE.length());
-                }
-            } else {
-                monitor.logError("Ignoring invalid SDK_TEST_BASE_URL: %1$s", baseUrl);  //$NON-NLS-1$
-            }
-        }
-
-        if (getSettingsController().getForceHttp()) {
-            url = url.replaceAll("https://", "http://");    //$NON-NLS-1$ //$NON-NLS-2$
-        }
-
-        // Hook to bypass loading 3rd party addons lists.
-        boolean fetch3rdParties = System.getenv("SDK_SKIP_3RD_PARTIES") == null;
-
-        AddonsListFetcher fetcher = new AddonsListFetcher();
-        Site[] sites = fetcher.fetch(monitor, url);
-        if (sites != null) {
-            mSources.removeAll(SdkSourceCategory.ADDONS_3RD_PARTY);
-
-            if (fetch3rdParties) {
-                for (Site s : sites) {
-                    mSources.add(SdkSourceCategory.ADDONS_3RD_PARTY,
-                                 new SdkAddonSource(s.getUrl(), s.getUiName()));
-                }
-            }
-
-            mStateFetchRemoteAddonsList = 1;
-        }
-
-        monitor.setDescription("Fetched Add-ons List successfully");
-    }
-
-    /**
      * Safely invoke all the registered {@link ISdkChangeListener#onSdkLoaded()}.
      * This can be called from any thread.
      */
     public void broadcastOnSdkLoaded() {
-        if (mWindowShell != null && mListeners.size() > 0) {
+        if (mWindowShell != null && !mWindowShell.isDisposed() && mListeners.size() > 0) {
             mWindowShell.getDisplay().syncExec(new Runnable() {
+                @Override
                 public void run() {
                     for (ISdkChangeListener listener : mListeners) {
                         try {
@@ -1081,8 +1085,9 @@ public class UpdaterData implements IUpdaterData {
      * This can be called from any thread.
      */
     private void broadcastOnSdkReload() {
-        if (mWindowShell != null && mListeners.size() > 0) {
+        if (mWindowShell != null && !mWindowShell.isDisposed() && mListeners.size() > 0) {
             mWindowShell.getDisplay().syncExec(new Runnable() {
+                @Override
                 public void run() {
                     for (ISdkChangeListener listener : mListeners) {
                         try {
@@ -1101,8 +1106,9 @@ public class UpdaterData implements IUpdaterData {
      * This can be called from any thread.
      */
     private void broadcastPreInstallHook() {
-        if (mWindowShell != null && mListeners.size() > 0) {
+        if (mWindowShell != null && !mWindowShell.isDisposed() && mListeners.size() > 0) {
             mWindowShell.getDisplay().syncExec(new Runnable() {
+                @Override
                 public void run() {
                     for (ISdkChangeListener listener : mListeners) {
                         try {
@@ -1121,8 +1127,9 @@ public class UpdaterData implements IUpdaterData {
      * This can be called from any thread.
      */
     private void broadcastPostInstallHook() {
-        if (mWindowShell != null && mListeners.size() > 0) {
+        if (mWindowShell != null && !mWindowShell.isDisposed() && mListeners.size() > 0) {
             mWindowShell.getDisplay().syncExec(new Runnable() {
+                @Override
                 public void run() {
                     for (ISdkChangeListener listener : mListeners) {
                         try {

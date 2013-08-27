@@ -17,19 +17,20 @@
 package com.android.ide.eclipse.adt.internal.sdk;
 
 import static com.android.ide.eclipse.adt.AdtConstants.DOT_XML;
-import static com.android.ide.eclipse.adt.AdtUtils.endsWith;
 import static com.android.sdklib.SdkConstants.FD_RES;
 
-import com.android.AndroidConstants;
+import com.android.annotations.NonNull;
 import com.android.ddmlib.IDevice;
 import com.android.ide.common.rendering.LayoutLibrary;
 import com.android.ide.common.sdk.LoadStatus;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.build.DexWrapper;
-import com.android.ide.eclipse.adt.internal.project.AndroidClasspathContainerInitializer;
+import com.android.ide.eclipse.adt.internal.editors.common.CommonXmlEditor;
+import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
 import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper;
 import com.android.ide.eclipse.adt.internal.project.LibraryClasspathContainerInitializer;
+import com.android.ide.eclipse.adt.internal.project.ProjectHelper;
 import com.android.ide.eclipse.adt.internal.resources.manager.GlobalProjectMonitor;
 import com.android.ide.eclipse.adt.internal.resources.manager.GlobalProjectMonitor.IFileListener;
 import com.android.ide.eclipse.adt.internal.resources.manager.GlobalProjectMonitor.IProjectListener;
@@ -38,12 +39,13 @@ import com.android.ide.eclipse.adt.internal.sdk.ProjectState.LibraryDifference;
 import com.android.ide.eclipse.adt.internal.sdk.ProjectState.LibraryState;
 import com.android.io.StreamException;
 import com.android.prefs.AndroidLocation.AndroidLocationException;
-import com.android.resources.ResourceFolderType;
 import com.android.sdklib.AndroidVersion;
 import com.android.sdklib.IAndroidTarget;
 import com.android.sdklib.ISdkLog;
 import com.android.sdklib.SdkConstants;
 import com.android.sdklib.SdkManager;
+import com.android.sdklib.devices.Device;
+import com.android.sdklib.devices.DeviceManager;
 import com.android.sdklib.internal.avd.AvdManager;
 import com.android.sdklib.internal.project.ProjectProperties;
 import com.android.sdklib.internal.project.ProjectProperties.PropertyType;
@@ -65,6 +67,17 @@ import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.JavaCore;
+import org.eclipse.jface.preference.IPreferenceStore;
+import org.eclipse.ui.IEditorDescriptor;
+import org.eclipse.ui.IEditorInput;
+import org.eclipse.ui.IEditorPart;
+import org.eclipse.ui.IEditorReference;
+import org.eclipse.ui.IFileEditorInput;
+import org.eclipse.ui.IWorkbenchPage;
+import org.eclipse.ui.IWorkbenchPartSite;
+import org.eclipse.ui.IWorkbenchWindow;
+import org.eclipse.ui.PartInitException;
+import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.ide.IDE;
 
 import java.io.File;
@@ -72,6 +85,8 @@ import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -116,6 +131,7 @@ public final class Sdk  {
     private final SdkManager mManager;
     private final DexWrapper mDexWrapper;
     private final AvdManager mAvdManager;
+    private final DeviceManager mDeviceManager;
 
     /** Map associating an {@link IAndroidTarget} to an {@link AndroidTargetData} */
     private final HashMap<IAndroidTarget, AndroidTargetData> mTargetDataMap =
@@ -131,8 +147,6 @@ public final class Sdk  {
     private boolean mDontLoadTargetData = false;
 
     private final String mDocBaseUrl;
-
-    private final LayoutDeviceManager mLayoutDeviceManager = new LayoutDeviceManager();
 
     /**
      * Classes implementing this interface will receive notification when targets are changed.
@@ -174,12 +188,14 @@ public final class Sdk  {
          */
         public abstract void reload();
 
+        @Override
         public void onProjectTargetChange(IProject changedProject) {
             if (changedProject != null && changedProject.equals(getProject())) {
                 reload();
             }
         }
 
+        @Override
         public void onTargetLoaded(IAndroidTarget target) {
             IProject project = getProject();
             if (target != null && target.equals(Sdk.getCurrent().getTarget(project))) {
@@ -187,6 +203,7 @@ public final class Sdk  {
             }
         }
 
+        @Override
         public void onSdkLoaded() {
             // do nothing;
         }
@@ -214,6 +231,7 @@ public final class Sdk  {
 
             final ArrayList<String> logMessages = new ArrayList<String>();
             ISdkLog log = new ISdkLog() {
+                @Override
                 public void error(Throwable throwable, String errorFormat, Object... arg) {
                     if (errorFormat != null) {
                         logMessages.add(String.format("Error: " + errorFormat, arg));
@@ -224,10 +242,12 @@ public final class Sdk  {
                     }
                 }
 
+                @Override
                 public void warning(String warningFormat, Object... arg) {
                     logMessages.add(String.format("Warning: " + warningFormat, arg));
                 }
 
+                @Override
                 public void printf(String msgFormat, Object... arg) {
                     logMessages.add(String.format(msgFormat, arg));
                 }
@@ -285,6 +305,25 @@ public final class Sdk  {
     }
 
     /**
+     * Returns a <em>new</em> {@link SdkManager} that can parse the SDK located
+     * at the current {@link #getSdkLocation()}.
+     * <p/>
+     * Implementation detail: The {@link Sdk} has its own internal manager with
+     * a custom logger which is not designed to be useful for outsiders. Callers
+     * who need their own {@link SdkManager} for parsing will often want to control
+     * the logger for their own need.
+     * <p/>
+     * This is just a convenient method equivalent to writing:
+     * <pre>SdkManager.createManager(Sdk.getCurrent().getSdkLocation(), log);</pre>
+     *
+     * @param log The logger for the {@link SdkManager}.
+     * @return A new {@link SdkManager} parsing the same location.
+     */
+    public @NonNull SdkManager getNewSdkManager(@NonNull ISdkLog log) {
+        return SdkManager.createManager(getSdkLocation(), log);
+    }
+
+    /**
      * Returns the URL to the local documentation.
      * Can return null if no documentation is found in the current SDK.
      *
@@ -314,7 +353,7 @@ public final class Sdk  {
     /**
      * Initializes a new project with a target. This creates the <code>project.properties</code>
      * file.
-     * @param project the project to intialize
+     * @param project the project to initialize
      * @param target the project's target.
      * @throws IOException if creating the file failed in any way.
      * @throws StreamException
@@ -404,6 +443,10 @@ public final class Sdk  {
 
                             // delete the old file.
                             ProjectProperties.delete(projectLocation, PropertyType.LEGACY_DEFAULT);
+
+                            // make sure to use the new properties
+                            properties = ProjectProperties.load(projectLocation,
+                                    PropertyType.PROJECT);
                         } catch (Exception e) {
                             AdtPlugin.log(IStatus.ERROR,
                                     "Failed to rename properties file to %1$s for project '%s2$'",
@@ -538,7 +581,7 @@ public final class Sdk  {
                         }
 
                         if (javaProjectArray != null) {
-                            AndroidClasspathContainerInitializer.updateProjects(javaProjectArray);
+                            ProjectHelper.updateProjects(javaProjectArray);
                         }
 
                         return status;
@@ -620,8 +663,13 @@ public final class Sdk  {
         }
     }
 
-    public LayoutDeviceManager getLayoutDeviceManager() {
-        return mLayoutDeviceManager;
+    public DeviceManager getDeviceManager() {
+        return mDeviceManager;
+    }
+
+    /** Returns the devices provided by the SDK, including user created devices */
+    public List<Device> getDevices() {
+        return mDeviceManager.getDevices(getSdkLocation());
     }
 
     /**
@@ -695,16 +743,14 @@ public final class Sdk  {
         // is called back during registration with project opened in the workspace.
         monitor.addResourceEventListener(mResourceEventListener);
         monitor.addProjectListener(mProjectListener);
-        monitor.addFileListener(mFileListener, IResourceDelta.CHANGED | IResourceDelta.ADDED);
+        monitor.addFileListener(mFileListener,
+                IResourceDelta.CHANGED | IResourceDelta.ADDED | IResourceDelta.REMOVED);
 
         // pre-compute some paths
         mDocBaseUrl = getDocumentationBaseUrl(mManager.getLocation() +
                 SdkConstants.OS_SDK_DOCS_FOLDER);
 
-        // load the built-in and user layout devices
-        mLayoutDeviceManager.loadDefaultAndUserDevices(mManager.getLocation());
-        // and the ones from the add-on
-        loadLayoutDevices();
+        mDeviceManager = new DeviceManager(AdtPlugin.getDefault());
 
         // update whatever ProjectState is already present with new IAndroidTarget objects.
         synchronized (LOCK) {
@@ -783,31 +829,15 @@ public final class Sdk  {
     }
 
     /**
-     * Parses the SDK add-ons to look for files called {@link SdkConstants#FN_DEVICES_XML} to
-     * load {@link LayoutDevice} from them.
-     */
-    private void loadLayoutDevices() {
-        IAndroidTarget[] targets = mManager.getTargets();
-        for (IAndroidTarget target : targets) {
-            if (target.isPlatform() == false) {
-                File deviceXml = new File(target.getLocation(), SdkConstants.FN_DEVICES_XML);
-                if (deviceXml.isFile()) {
-                    mLayoutDeviceManager.parseAddOnLayoutDevice(deviceXml);
-                }
-            }
-        }
-
-        mLayoutDeviceManager.sealAddonLayoutDevices();
-    }
-
-    /**
      * Delegate listener for project changes.
      */
     private IProjectListener mProjectListener = new IProjectListener() {
+        @Override
         public void projectClosed(IProject project) {
             onProjectRemoved(project, false /*deleted*/);
         }
 
+        @Override
         public void projectDeleted(IProject project) {
             onProjectRemoved(project, true /*deleted*/);
         }
@@ -878,13 +908,21 @@ public final class Sdk  {
             }
         }
 
+        @Override
         public void projectOpened(IProject project) {
             onProjectOpened(project);
         }
 
+        @Override
         public void projectOpenedWithWorkspace(IProject project) {
             // no need to force recompilation when projects are opened with the workspace.
             onProjectOpened(project);
+        }
+
+        @Override
+        public void allProjectsOpenedWithWorkspace() {
+            // Correct currently open editors
+            fixOpenLegacyEditors();
         }
 
         private void onProjectOpened(final IProject openedProject) {
@@ -965,6 +1003,7 @@ public final class Sdk  {
             }
         }
 
+        @Override
         public void projectRenamed(IProject project, IPath from) {
             // we don't actually care about this anymore.
         }
@@ -974,6 +1013,7 @@ public final class Sdk  {
      * Delegate listener for file changes.
      */
     private IFileListener mFileListener = new IFileListener() {
+        @Override
         public void fileChanged(final IFile file, IMarkerDelta[] markerDeltas, int kind) {
             if (SdkConstants.FN_PROJECT_PROPERTIES.equals(file.getName()) &&
                     file.getParent() == file.getProject()) {
@@ -1023,8 +1063,7 @@ public final class Sdk  {
                         IJavaProject javaProject = BaseProjectHelper.getJavaProject(
                                 file.getProject());
                         if (javaProject != null) {
-                            AndroidClasspathContainerInitializer.updateProjects(
-                                    new IJavaProject[] { javaProject });
+                            ProjectHelper.updateProject(javaProject);
                         }
 
                         // update the editors to reload with the new target
@@ -1034,6 +1073,48 @@ public final class Sdk  {
                     // This can't happen as it's only for closed project (or non existing)
                     // but in that case we can't get a fileChanged on this file.
                 }
+            } else if (kind == IResourceDelta.ADDED || kind == IResourceDelta.REMOVED) {
+                // check if it's an add/remove on a jar files inside libs
+                if (file.getProjectRelativePath().segmentCount() == 2 &&
+                        file.getParent().getName().equals(SdkConstants.FD_NATIVE_LIBS)) {
+                    // need to update the project and whatever depend on it.
+
+                    processJarFileChange(file);
+                }
+            }
+        }
+
+        private void processJarFileChange(final IFile file) {
+            try {
+                IProject iProject = file.getProject();
+
+                if (iProject.hasNature(AdtConstants.NATURE_DEFAULT) == false) {
+                    return;
+                }
+
+                List<IJavaProject> projectList = new ArrayList<IJavaProject>();
+                IJavaProject javaProject = BaseProjectHelper.getJavaProject(iProject);
+                if (javaProject != null) {
+                    projectList.add(javaProject);
+                }
+
+                ProjectState state = Sdk.getProjectState(iProject);
+
+                if (state != null) {
+                    Collection<ProjectState> parents = state.getFullParentProjects();
+                    for (ProjectState s : parents) {
+                        javaProject = BaseProjectHelper.getJavaProject(s.getProject());
+                        if (javaProject != null) {
+                            projectList.add(javaProject);
+                        }
+                    }
+
+                    ProjectHelper.updateProjects(
+                            projectList.toArray(new IJavaProject[projectList.size()]));
+                }
+            } catch (CoreException e) {
+                // This can't happen as it's only for closed project (or non existing)
+                // but in that case we can't get a fileChanged on this file.
             }
         }
     };
@@ -1072,11 +1153,13 @@ public final class Sdk  {
      * project and file listeners (for a given resource change event).
      */
     private IResourceEventListener mResourceEventListener = new IResourceEventListener() {
+        @Override
         public void resourceChangeEventStart() {
             mModifiedProjects.clear();
             mModifiedChildProjects.clear();
         }
 
+        @Override
         public void resourceChangeEventEnd() {
             if (mModifiedProjects.size() == 0) {
                 return;
@@ -1119,7 +1202,6 @@ public final class Sdk  {
      * Updates all existing projects with a given list of new/updated libraries.
      * This loops through all opened projects and check if they depend on any of the given
      * library project, and if they do, they are linked together.
-     * @param libraries the list of new/updated library projects.
      */
     private void updateParentProjects() {
         if (mModifiedChildProjects.size() == 0) {
@@ -1150,13 +1232,14 @@ public final class Sdk  {
         updateParentProjects();
     }
 
-    /** Fix editor associations for the given project, if not already done.
-     * <p>
+    /**
+     * Fix editor associations for the given project, if not already done.
+     * <p/>
      * Eclipse has a per-file setting for which editor should be used for each file
      * (see {@link IDE#setDefaultEditor(IFile, String)}).
      * We're using this flag to pick between the various XML editors (layout, drawable, etc)
      * since they all have the same file name extension.
-     * <p>
+     * <p/>
      * Unfortunately, the file setting can be "wrong" for two reasons:
      * <ol>
      *   <li> The editor type was added <b>after</b> a file had been seen by the IDE.
@@ -1168,7 +1251,7 @@ public final class Sdk  {
      *        is fixed in ADT 16, the fix only affects new files, it cannot retroactively
      *        fix editor associations that were set incorrectly by ADT 14 or 15.
      * </ol>
-     * <p>
+     * <p/>
      * This method attempts to fix the editor bindings retroactively by scanning all the
      * resource XML files and resetting the editor associations.
      * Since this is a potentially slow operation, this is only done "once"; we use a
@@ -1180,15 +1263,28 @@ public final class Sdk  {
 
         try {
             String value = project.getPersistentProperty(KEY);
-
+            int currentVersion = 0;
             if (value != null) {
+                try {
+                    currentVersion = Integer.parseInt(value);
+                } catch (Exception ingore) {
+                }
+            }
+
+            // The target version we're comparing to. This must be incremented each time
+            // we change the processing here so that a new version of the plugin would
+            // try to fix existing user projects.
+            final int targetVersion = 2;
+
+            if (currentVersion >= targetVersion) {
                 return;
             }
 
             // Set to specific version such that we can rev the version in the future
             // to trigger further scanning
-            project.setPersistentProperty(KEY, "1"); //$NON-NLS-1$
+            project.setPersistentProperty(KEY, Integer.toString(targetVersion));
 
+            // Now update the actual editor associations.
             Job job = new Job("Update Android editor bindings") { //$NON-NLS-1$
                 @Override
                 protected IStatus run(IProgressMonitor monitor) {
@@ -1197,30 +1293,35 @@ public final class Sdk  {
                             if (folderResource instanceof IFolder) {
                                 IFolder folder = (IFolder) folderResource;
 
-                                String[] folderSegments = folder.getName().split(
-                                        AndroidConstants.RES_QUALIFIER_SEP);
-
-                                ResourceFolderType type = ResourceFolderType.getTypeByName(
-                                        folderSegments[0]);
-
-                                if (type == null) {
-                                    continue;
-                                }
-
                                 for (IResource resource : folder.members()) {
-                                    if (endsWith(resource.getName(), DOT_XML)
-                                            && resource instanceof IFile) {
-                                        IFile file = (IFile) resource;
-                                        AdtPlugin.assignEditor(file, type);
+                                    if (resource instanceof IFile &&
+                                            resource.getName().endsWith(DOT_XML)) {
+                                        fixXmlFile((IFile) resource);
                                     }
                                 }
                             }
                         }
+
+                        // TODO change AndroidManifest.xml ID too
+
                     } catch (CoreException e) {
                         AdtPlugin.log(e, null);
                     }
 
                     return Status.OK_STATUS;
+                }
+
+                /**
+                 * Attempt to fix the editor ID for the given /res XML file.
+                 */
+                private void fixXmlFile(final IFile file) {
+                    // Fix the default editor ID for this resource.
+                    // This has no effect on currently open editors.
+                    IEditorDescriptor desc = IDE.getDefaultEditor(file);
+
+                    if (desc == null || !CommonXmlEditor.ID.equals(desc.getId())) {
+                        IDE.setDefaultEditor(file, CommonXmlEditor.ID);
+                    }
                 }
             };
             job.setPriority(Job.BUILD);
@@ -1228,5 +1329,99 @@ public final class Sdk  {
         } catch (CoreException e) {
             AdtPlugin.log(e, null);
         }
+    }
+
+    /**
+     * Tries to fix all currently open Android legacy editors.
+     * <p/>
+     * If an editor is found to match one of the legacy ids, we'll try to close it.
+     * If that succeeds, we try to reopen it using the new common editor ID.
+     * <p/>
+     * This method must be run from the UI thread.
+     */
+    private void fixOpenLegacyEditors() {
+
+        AdtPlugin adt = AdtPlugin.getDefault();
+        if (adt == null) {
+            return;
+        }
+
+        final IPreferenceStore store = adt.getPreferenceStore();
+        int currentValue = store.getInt(AdtPrefs.PREFS_FIX_LEGACY_EDITORS);
+        // The target version we're comparing to. This must be incremented each time
+        // we change the processing here so that a new version of the plugin would
+        // try to fix existing editors.
+        final int targetValue = 1;
+
+        if (currentValue >= targetValue) {
+            return;
+        }
+
+        // To be able to close and open editors we need to make sure this is done
+        // in the UI thread, which this isn't invoked from.
+        PlatformUI.getWorkbench().getDisplay().asyncExec(new Runnable() {
+            @Override
+            public void run() {
+                HashSet<String> legacyIds =
+                    new HashSet<String>(Arrays.asList(CommonXmlEditor.LEGACY_EDITOR_IDS));
+
+                for (IWorkbenchWindow win : PlatformUI.getWorkbench().getWorkbenchWindows()) {
+                    for (IWorkbenchPage page : win.getPages()) {
+                        for (IEditorReference ref : page.getEditorReferences()) {
+                            try {
+                                IEditorInput input = ref.getEditorInput();
+                                if (input instanceof IFileEditorInput) {
+                                    IFile file = ((IFileEditorInput)input).getFile();
+                                    IEditorPart part = ref.getEditor(true /*restore*/);
+                                    if (part != null) {
+                                        IWorkbenchPartSite site = part.getSite();
+                                        if (site != null) {
+                                            String id = site.getId();
+                                            if (legacyIds.contains(id)) {
+                                                // This editor matches one of legacy editor IDs.
+                                                fixEditor(page, part, input, file, id);
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (Exception e) {
+                                // ignore
+                            }
+                        }
+                    }
+                }
+
+                // Remember that we managed to do fix all editors
+                store.setValue(AdtPrefs.PREFS_FIX_LEGACY_EDITORS, targetValue);
+            }
+
+            private void fixEditor(
+                    IWorkbenchPage page,
+                    IEditorPart part,
+                    IEditorInput input,
+                    IFile file,
+                    String id) {
+                IDE.setDefaultEditor(file, CommonXmlEditor.ID);
+
+                boolean ok = page.closeEditor(part, true /*save*/);
+
+                AdtPlugin.log(IStatus.INFO,
+                    "Closed legacy editor ID %s for %s: %s", //$NON-NLS-1$
+                    id,
+                    file.getFullPath(),
+                    ok ? "Success" : "Failed");//$NON-NLS-1$ //$NON-NLS-2$
+
+                if (ok) {
+                    // Try to reopen it with the new ID
+                    try {
+                        page.openEditor(input, CommonXmlEditor.ID);
+                    } catch (PartInitException e) {
+                        AdtPlugin.log(e,
+                            "Failed to reopen %s",          //$NON-NLS-1$
+                            file.getFullPath());
+                    }
+                }
+            }
+        });
     }
 }

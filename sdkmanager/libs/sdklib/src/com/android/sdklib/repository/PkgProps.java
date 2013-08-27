@@ -29,7 +29,6 @@ package com.android.sdklib.repository;
 public class PkgProps {
 
     // Base Package
-
     public static final String PKG_REVISION             = "Pkg.Revision";           //$NON-NLS-1$
     public static final String PKG_LICENSE              = "Pkg.License";            //$NON-NLS-1$
     public static final String PKG_DESC                 = "Pkg.Desc";               //$NON-NLS-1$
@@ -42,12 +41,19 @@ public class PkgProps {
     // AndroidVersion
 
     public static final String VERSION_API_LEVEL        = "AndroidVersion.ApiLevel";//$NON-NLS-1$
+    /** Code name of the platform if the platform is not final */
     public static final String VERSION_CODENAME         = "AndroidVersion.CodeName";//$NON-NLS-1$
+
 
     // AddonPackage
 
     public static final String ADDON_NAME               = "Addon.Name";             //$NON-NLS-1$
+    public static final String ADDON_NAME_ID            = "Addon.NameId";           //$NON-NLS-1$
+    public static final String ADDON_NAME_DISPLAY       = "Addon.NameDisplay";      //$NON-NLS-1$
+
     public static final String ADDON_VENDOR             = "Addon.Vendor";           //$NON-NLS-1$
+    public static final String ADDON_VENDOR_ID          = "Addon.VendorId";         //$NON-NLS-1$
+    public static final String ADDON_VENDOR_DISPLAY     = "Addon.VendorDisplay";    //$NON-NLS-1$
 
     // DocPackage
 
@@ -55,9 +61,12 @@ public class PkgProps {
 
     public static final String EXTRA_PATH               = "Extra.Path";             //$NON-NLS-1$
     public static final String EXTRA_OLD_PATHS          = "Extra.OldPaths";         //$NON-NLS-1$
-    public static final String EXTRA_VENDOR             = "Extra.Vendor";           //$NON-NLS-1$
     public static final String EXTRA_MIN_API_LEVEL      = "Extra.MinApiLevel";      //$NON-NLS-1$
     public static final String EXTRA_PROJECT_FILES      = "Extra.ProjectFiles";     //$NON-NLS-1$
+    public static final String EXTRA_VENDOR             = "Extra.Vendor";           //$NON-NLS-1$
+    public static final String EXTRA_VENDOR_ID          = "Extra.VendorId";         //$NON-NLS-1$
+    public static final String EXTRA_VENDOR_DISPLAY     = "Extra.VendorDisplay";    //$NON-NLS-1$
+    public static final String EXTRA_NAME_DISPLAY       = "Extra.NameDisplay";      //$NON-NLS-1$
 
     // ILayoutlibVersion
 
@@ -71,9 +80,14 @@ public class PkgProps {
     // PlatformPackage
 
     public static final String PLATFORM_VERSION         = "Platform.Version";       //$NON-NLS-1$
+    /** Code name of the platform. This has no bearing on the package being a preview or not. */
+    public static final String PLATFORM_CODENAME        = "Platform.CodeName";      //$NON-NLS-1$
     public static final String PLATFORM_INCLUDED_ABI    = "Platform.Included.Abi";  //$NON-NLS-1$
 
-    // PlatformToolPackage
+    // ToolPackage
+
+    public static final String MIN_PLATFORM_TOOLS_REV   = "Platform.MinPlatformToolsRev";//$NON-NLS-1$
+
 
     // SamplePackage
 

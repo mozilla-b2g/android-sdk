@@ -34,8 +34,6 @@ import org.eclipse.swt.events.ControlEvent;
 import org.eclipse.swt.events.ControlListener;
 import org.eclipse.swt.events.DisposeEvent;
 import org.eclipse.swt.events.DisposeListener;
-import org.eclipse.swt.graphics.Font;
-import org.eclipse.swt.graphics.FontData;
 import org.eclipse.swt.graphics.Image;
 import org.eclipse.swt.layout.FillLayout;
 import org.eclipse.swt.widgets.Composite;
@@ -54,10 +52,9 @@ public class PropertyViewer extends Composite implements ITreeChangeListener {
 
     private DrawableViewNode mSelectedNode;
 
-    private Font mSmallFont;
-
     private class ContentProvider implements ITreeContentProvider, ITableLabelProvider {
 
+        @Override
         public Object[] getChildren(Object parentElement) {
             synchronized (PropertyViewer.this) {
                 if (mSelectedNode != null && parentElement instanceof String) {
@@ -80,6 +77,7 @@ public class PropertyViewer extends Composite implements ITreeChangeListener {
             }
         }
 
+        @Override
         public Object getParent(Object element) {
             synchronized (PropertyViewer.this) {
                 if (mSelectedNode != null && element instanceof Property) {
@@ -97,6 +95,7 @@ public class PropertyViewer extends Composite implements ITreeChangeListener {
             }
         }
 
+        @Override
         public boolean hasChildren(Object element) {
             synchronized (PropertyViewer.this) {
                 if (mSelectedNode != null && element instanceof String) {
@@ -117,6 +116,7 @@ public class PropertyViewer extends Composite implements ITreeChangeListener {
             }
         }
 
+        @Override
         public Object[] getElements(Object inputElement) {
             synchronized (PropertyViewer.this) {
                 if (mSelectedNode != null && inputElement instanceof TreeViewModel) {
@@ -132,18 +132,22 @@ public class PropertyViewer extends Composite implements ITreeChangeListener {
             }
         }
 
+        @Override
         public void dispose() {
             // pass
         }
 
+        @Override
         public void inputChanged(Viewer viewer, Object oldInput, Object newInput) {
             // pass
         }
 
+        @Override
         public Image getColumnImage(Object element, int column) {
             return null;
         }
 
+        @Override
         public String getColumnText(Object element, int column) {
             synchronized (PropertyViewer.this) {
                 if (mSelectedNode != null) {
@@ -167,15 +171,18 @@ public class PropertyViewer extends Composite implements ITreeChangeListener {
             }
         }
 
+        @Override
         public void addListener(ILabelProviderListener listener) {
             // pass
         }
 
+        @Override
         public boolean isLabelProperty(Object element, String property) {
             // pass
             return false;
         }
 
+        @Override
         public void removeListener(ILabelProviderListener listener) {
             // pass
         }
@@ -202,10 +209,7 @@ public class PropertyViewer extends Composite implements ITreeChangeListener {
         mTreeViewer.setInput(mModel);
         mModel.addTreeChangeListener(this);
 
-        loadResources();
         addDisposeListener(mDisposeListener);
-
-        mTree.setFont(mSmallFont);
 
         new TreeColumnResizer(this, propertyColumn, valueColumn);
 
@@ -214,21 +218,10 @@ public class PropertyViewer extends Composite implements ITreeChangeListener {
         treeChanged();
     }
 
-    public void loadResources() {
-        Display display = Display.getDefault();
-        Font systemFont = display.getSystemFont();
-        FontData[] fontData = systemFont.getFontData();
-        FontData[] newFontData = new FontData[fontData.length];
-        for (int i = 0; i < fontData.length; i++) {
-            newFontData[i] = new FontData(fontData[i].getName(), 8, fontData[i].getStyle());
-        }
-        mSmallFont = new Font(Display.getDefault(), newFontData);
-    }
-
     private DisposeListener mDisposeListener = new DisposeListener() {
+        @Override
         public void widgetDisposed(DisposeEvent e) {
             mModel.removeTreeChangeListener(PropertyViewer.this);
-            mSmallFont.dispose();
         }
     };
 
@@ -259,6 +252,7 @@ public class PropertyViewer extends Composite implements ITreeChangeListener {
         }
     };
 
+    @Override
     public void selectionChanged() {
         synchronized (this) {
             mSelectedNode = mModel.getSelection();
@@ -266,6 +260,7 @@ public class PropertyViewer extends Composite implements ITreeChangeListener {
         doRefresh();
     }
 
+    @Override
     public void treeChanged() {
         synchronized (this) {
             mSelectedNode = mModel.getSelection();
@@ -273,16 +268,19 @@ public class PropertyViewer extends Composite implements ITreeChangeListener {
         doRefresh();
     }
 
+    @Override
     public void viewportChanged() {
         // pass
     }
 
+    @Override
     public void zoomChanged() {
         // pass
     }
 
     private void doRefresh() {
         Display.getDefault().syncExec(new Runnable() {
+            @Override
             public void run() {
                 mTreeViewer.refresh();
             }

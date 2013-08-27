@@ -17,28 +17,29 @@
 package com.android.sdkuilib.internal.repository;
 
 import com.android.sdklib.AndroidVersion;
-import com.android.sdklib.internal.repository.AddonPackage;
-import com.android.sdklib.internal.repository.Archive;
-import com.android.sdklib.internal.repository.DocPackage;
-import com.android.sdklib.internal.repository.ExtraPackage;
-import com.android.sdklib.internal.repository.IExactApiLevelDependency;
-import com.android.sdklib.internal.repository.IMinApiLevelDependency;
-import com.android.sdklib.internal.repository.IMinPlatformToolsDependency;
-import com.android.sdklib.internal.repository.IMinToolsDependency;
-import com.android.sdklib.internal.repository.IPackageVersion;
-import com.android.sdklib.internal.repository.IPlatformDependency;
 import com.android.sdklib.internal.repository.ITask;
 import com.android.sdklib.internal.repository.ITaskMonitor;
-import com.android.sdklib.internal.repository.MinToolsPackage;
-import com.android.sdklib.internal.repository.Package;
-import com.android.sdklib.internal.repository.Package.UpdateInfo;
-import com.android.sdklib.internal.repository.PlatformPackage;
-import com.android.sdklib.internal.repository.PlatformToolPackage;
-import com.android.sdklib.internal.repository.SamplePackage;
-import com.android.sdklib.internal.repository.SdkSource;
-import com.android.sdklib.internal.repository.SdkSources;
-import com.android.sdklib.internal.repository.SystemImagePackage;
-import com.android.sdklib.internal.repository.ToolPackage;
+import com.android.sdklib.internal.repository.archives.Archive;
+import com.android.sdklib.internal.repository.packages.AddonPackage;
+import com.android.sdklib.internal.repository.packages.DocPackage;
+import com.android.sdklib.internal.repository.packages.ExtraPackage;
+import com.android.sdklib.internal.repository.packages.FullRevision;
+import com.android.sdklib.internal.repository.packages.IAndroidVersionProvider;
+import com.android.sdklib.internal.repository.packages.IExactApiLevelDependency;
+import com.android.sdklib.internal.repository.packages.IMinApiLevelDependency;
+import com.android.sdklib.internal.repository.packages.IMinPlatformToolsDependency;
+import com.android.sdklib.internal.repository.packages.IMinToolsDependency;
+import com.android.sdklib.internal.repository.packages.IPlatformDependency;
+import com.android.sdklib.internal.repository.packages.MinToolsPackage;
+import com.android.sdklib.internal.repository.packages.Package;
+import com.android.sdklib.internal.repository.packages.Package.UpdateInfo;
+import com.android.sdklib.internal.repository.packages.PlatformPackage;
+import com.android.sdklib.internal.repository.packages.PlatformToolPackage;
+import com.android.sdklib.internal.repository.packages.SamplePackage;
+import com.android.sdklib.internal.repository.packages.SystemImagePackage;
+import com.android.sdklib.internal.repository.packages.ToolPackage;
+import com.android.sdklib.internal.repository.sources.SdkSource;
+import com.android.sdklib.internal.repository.sources.SdkSources;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -70,7 +71,7 @@ class SdkUpdaterLogic {
     public List<ArchiveInfo> getAllRemoteArchives(
             SdkSources sources,
             Package[] localPkgs,
-            boolean includeObsoletes) {
+            boolean includeAll) {
 
         List<Package> remotePkgs = new ArrayList<Package>();
         SdkSource[] remoteSources = sources.getAllSources();
@@ -79,7 +80,7 @@ class SdkUpdaterLogic {
         ArrayList<Archive> archives = new ArrayList<Archive>();
         for (Package remotePkg : remotePkgs) {
             // Only look for non-obsolete updates unless requested to include them
-            if (includeObsoletes || !remotePkg.isObsolete()) {
+            if (includeAll || !remotePkg.isObsolete()) {
                 // Found a suitable update. Only accept the remote package
                 // if it provides at least one compatible archive
 
@@ -137,7 +138,7 @@ class SdkUpdaterLogic {
             Collection<Archive> selectedArchives,
             SdkSources sources,
             Package[] localPkgs,
-            boolean includeObsoletes) {
+            boolean includeAll) {
 
         List<ArchiveInfo> archives = new ArrayList<ArchiveInfo>();
         List<Package>   remotePkgs = new ArrayList<Package>();
@@ -154,7 +155,7 @@ class SdkUpdaterLogic {
                     localArchives,
                     remotePkgs,
                     remoteSources,
-                    includeObsoletes);
+                    includeAll);
         }
 
         // Once we have a list of packages to install, we try to solve all their
@@ -184,6 +185,14 @@ class SdkUpdaterLogic {
         return archives;
     }
 
+    private double getRevisionRank(FullRevision rev) {
+        int p = rev.isPreview() ? 999 : 999 - rev.getPreview();
+        return  rev.getMajor() +
+                rev.getMinor() / 1000.d +
+                rev.getMicro() / 1000000.d +
+                p              / 1000000000.d;
+    }
+
     /**
      * Finds new packages that the user does not have in his/her local SDK
      * and adds them to the list of archives to install.
@@ -198,7 +207,7 @@ class SdkUpdaterLogic {
      *  already scheduled for install. This method will add to the list.
      * @param sources The list of all sources, to fetch them as necessary.
      * @param localPkgs The list of all currently installed packages.
-     * @param includeObsoletes When true, this will list all platform
+     * @param includeAll When true, this will list all platforms.
      * (included these lower than the highest installed one) as well as
      * all obsolete packages of these platforms.
      */
@@ -206,33 +215,33 @@ class SdkUpdaterLogic {
             Collection<ArchiveInfo> archives,
             SdkSources sources,
             Package[] localPkgs,
-            boolean includeObsoletes) {
+            boolean includeAll) {
 
         // Create ArchiveInfos out of local (installed) packages.
         ArchiveInfo[] localArchives = createLocalArchives(localPkgs);
 
         // Find the highest platform installed
-        float currentPlatformScore = 0;
-        float currentSampleScore = 0;
-        float currentAddonScore = 0;
-        float currentDocScore = 0;
-        HashMap<String, Float> currentExtraScore = new HashMap<String, Float>();
-        if (!includeObsoletes) {
+        double currentPlatformScore = 0;
+        double currentSampleScore = 0;
+        double currentAddonScore = 0;
+        double currentDocScore = 0;
+        HashMap<String, Double> currentExtraScore = new HashMap<String, Double>();
+        if (!includeAll) {
             if (localPkgs != null) {
                 for (Package p : localPkgs) {
-                    int rev = p.getRevision();
+                    double rev = getRevisionRank(p.getRevision());
                     int api = 0;
                     boolean isPreview = false;
-                    if (p instanceof IPackageVersion) {
-                        AndroidVersion vers = ((IPackageVersion) p).getVersion();
+                    if (p instanceof IAndroidVersionProvider) {
+                        AndroidVersion vers = ((IAndroidVersionProvider) p).getAndroidVersion();
                         api = vers.getApiLevel();
                         isPreview = vers.isPreview();
                     }
 
-                    // The score is 10*api + (1 if preview) + rev/100
+                    // The score is 1000*api + (999 if preview) + rev
                     // This allows previews to rank above a non-preview and
                     // allows revisions to rank appropriately.
-                    float score = api * 10 + (isPreview ? 1 : 0) + rev/100.f;
+                    double score = api * 1000 + (isPreview ? 999 : 0) + rev;
 
                     if (p instanceof PlatformPackage) {
                         currentPlatformScore = Math.max(currentPlatformScore, score);
@@ -257,20 +266,20 @@ class SdkUpdaterLogic {
 
         for (Package p : remotePkgs) {
             // Skip obsolete packages unless requested to include them.
-            if (p.isObsolete() && !includeObsoletes) {
+            if (p.isObsolete() && !includeAll) {
                 continue;
             }
 
-            int rev = p.getRevision();
+            double rev = getRevisionRank(p.getRevision());
             int api = 0;
             boolean isPreview = false;
-            if (p instanceof  IPackageVersion) {
-                AndroidVersion vers = ((IPackageVersion) p).getVersion();
+            if (p instanceof IAndroidVersionProvider) {
+                AndroidVersion vers = ((IAndroidVersionProvider) p).getAndroidVersion();
                 api = vers.getApiLevel();
                 isPreview = vers.isPreview();
             }
 
-            float score = api * 10 + (isPreview ? 1 : 0) + rev/100.f;
+            double score = api * 1000 + (isPreview ? 999 : 0) + rev;
 
             boolean shouldAdd = false;
             if (p instanceof PlatformPackage) {
@@ -282,7 +291,7 @@ class SdkUpdaterLogic {
             } else if (p instanceof ExtraPackage) {
                 String key = ((ExtraPackage) p).getPath();
                 shouldAdd = !currentExtraScore.containsKey(key) ||
-                    score > currentExtraScore.get(key).floatValue();
+                    score > currentExtraScore.get(key).doubleValue();
             } else if (p instanceof DocPackage) {
                 // We don't want all the doc, only the most recent one
                 if (score > currentDocScore) {
@@ -314,11 +323,11 @@ class SdkUpdaterLogic {
                 if (pp.getIncludedAbi() == null) {
                     for (Package p2 : remotePkgs) {
                         if (!(p2 instanceof SystemImagePackage) ||
-                             (p2.isObsolete() && !includeObsoletes)) {
+                             (p2.isObsolete() && !includeAll)) {
                             continue;
                         }
                         SystemImagePackage sip = (SystemImagePackage) p2;
-                        if (sip.getVersion().equals(pp.getVersion())) {
+                        if (sip.getAndroidVersion().equals(pp.getAndroidVersion())) {
                             for (Archive a : sip.getArchives()) {
                                 if (a.isCompatible()) {
                                     insertArchive(a,
@@ -395,7 +404,7 @@ class SdkUpdaterLogic {
             ArchiveInfo[] localArchives,
             Collection<Package> remotePkgs,
             SdkSource[] remoteSources,
-            boolean includeObsoletes) {
+            boolean includeAll) {
         ArrayList<Archive> updates = new ArrayList<Archive>();
 
         fetchRemotePackages(remotePkgs, remoteSources);
@@ -409,7 +418,7 @@ class SdkUpdaterLogic {
 
             for (Package remotePkg : remotePkgs) {
                 // Only look for non-obsolete updates unless requested to include them
-                if ((includeObsoletes || !remotePkg.isObsolete()) &&
+                if ((includeAll || !remotePkg.isObsolete()) &&
                         localPkg.canBeUpdatedBy(remotePkg) == UpdateInfo.UPDATE) {
                     // Found a suitable update. Only accept the remote package
                     // if it provides at least one compatible archive
@@ -673,9 +682,9 @@ class SdkUpdaterLogic {
             SdkSource[] remoteSources,
             ArchiveInfo[] localArchives) {
         // This is the requirement to match.
-        int rev = pkg.getMinToolsRevision();
+        FullRevision rev = pkg.getMinToolsRevision();
 
-        if (rev == MinToolsPackage.MIN_TOOLS_REV_NOT_SPECIFIED) {
+        if (rev.equals(MinToolsPackage.MIN_TOOLS_REV_NOT_SPECIFIED)) {
             // Well actually there's no requirement.
             return null;
         }
@@ -686,7 +695,7 @@ class SdkUpdaterLogic {
             if (a != null) {
                 Package p = a.getParentPackage();
                 if (p instanceof ToolPackage) {
-                    if (((ToolPackage) p).getRevision() >= rev) {
+                    if (((ToolPackage) p).getRevision().compareTo(rev) >= 0) {
                         // We found one already installed.
                         return null;
                     }
@@ -700,7 +709,7 @@ class SdkUpdaterLogic {
             if (a != null) {
                 Package p = a.getParentPackage();
                 if (p instanceof ToolPackage) {
-                    if (((ToolPackage) p).getRevision() >= rev) {
+                    if (((ToolPackage) p).getRevision().compareTo(rev) >= 0) {
                         // The dependency is already scheduled for install, nothing else to do.
                         return ai;
                     }
@@ -713,7 +722,7 @@ class SdkUpdaterLogic {
             for (Archive a : selectedArchives) {
                 Package p = a.getParentPackage();
                 if (p instanceof ToolPackage) {
-                    if (((ToolPackage) p).getRevision() >= rev) {
+                    if (((ToolPackage) p).getRevision().compareTo(rev) >= 0) {
                         // It's not already in the list of things to install, so add it now
                         return insertArchive(a,
                                 outArchives,
@@ -731,7 +740,7 @@ class SdkUpdaterLogic {
         fetchRemotePackages(remotePkgs, remoteSources);
         for (Package p : remotePkgs) {
             if (p instanceof ToolPackage) {
-                if (((ToolPackage) p).getRevision() >= rev) {
+                if (((ToolPackage) p).getRevision().compareTo(rev) >= 0) {
                     // It's not already in the list of things to install, so add the
                     // first compatible archive we can find.
                     for (Archive a : p.getArchives()) {
@@ -771,12 +780,12 @@ class SdkUpdaterLogic {
             SdkSource[] remoteSources,
             ArchiveInfo[] localArchives) {
         // This is the requirement to match.
-        int rev = pkg.getMinPlatformToolsRevision();
+        FullRevision rev = pkg.getMinPlatformToolsRevision();
         boolean findMax = false;
         ArchiveInfo aiMax = null;
         Archive aMax = null;
 
-        if (rev == IMinPlatformToolsDependency.MIN_PLATFORM_TOOLS_REV_INVALID) {
+        if (rev.equals(IMinPlatformToolsDependency.MIN_PLATFORM_TOOLS_REV_INVALID)) {
             // The requirement is invalid, which is not supposed to happen since this
             // property is mandatory. However in a typical upgrade scenario we can end
             // up with the previous updater managing a new package and not dealing
@@ -792,11 +801,11 @@ class SdkUpdaterLogic {
             if (a != null) {
                 Package p = a.getParentPackage();
                 if (p instanceof PlatformToolPackage) {
-                    int r = ((PlatformToolPackage) p).getRevision();
-                    if (findMax && r > rev) {
+                    FullRevision r = ((PlatformToolPackage) p).getRevision();
+                    if (findMax && r.compareTo(rev) > 0) {
                         rev = r;
                         aiMax = ai;
-                    } else if (!findMax && r >= rev) {
+                    } else if (!findMax && r.compareTo(rev) >= 0) {
                         // We found one already installed.
                         return null;
                     }
@@ -810,11 +819,11 @@ class SdkUpdaterLogic {
             if (a != null) {
                 Package p = a.getParentPackage();
                 if (p instanceof PlatformToolPackage) {
-                    int r = ((PlatformToolPackage) p).getRevision();
-                    if (findMax && r > rev) {
+                    FullRevision r = ((PlatformToolPackage) p).getRevision();
+                    if (findMax && r.compareTo(rev) > 0) {
                         rev = r;
                         aiMax = ai;
-                    } else if (!findMax && r >= rev) {
+                    } else if (!findMax && r.compareTo(rev) >= 0) {
                         // The dependency is already scheduled for install, nothing else to do.
                         return ai;
                     }
@@ -827,12 +836,12 @@ class SdkUpdaterLogic {
             for (Archive a : selectedArchives) {
                 Package p = a.getParentPackage();
                 if (p instanceof PlatformToolPackage) {
-                    int r = ((PlatformToolPackage) p).getRevision();
-                    if (findMax && r > rev) {
+                    FullRevision r = ((PlatformToolPackage) p).getRevision();
+                    if (findMax && r.compareTo(rev) > 0) {
                         rev = r;
                         aiMax = null;
                         aMax = a;
-                    } else if (!findMax && r >= rev) {
+                    } else if (!findMax && r.compareTo(rev) >= 0) {
                         // It's not already in the list of things to install, so add it now
                         return insertArchive(a,
                                 outArchives,
@@ -850,16 +859,16 @@ class SdkUpdaterLogic {
         fetchRemotePackages(remotePkgs, remoteSources);
         for (Package p : remotePkgs) {
             if (p instanceof PlatformToolPackage) {
-                int r = ((PlatformToolPackage) p).getRevision();
-                if (r >= rev) {
+                FullRevision r = ((PlatformToolPackage) p).getRevision();
+                if (r.compareTo(rev) >= 0) {
                     // Make sure there's at least one valid archive here
                     for (Archive a : p.getArchives()) {
                         if (a.isCompatible()) {
-                            if (findMax && r > rev) {
+                            if (findMax && r.compareTo(rev) > 0) {
                                 rev = r;
                                 aiMax = null;
                                 aMax = a;
-                            } else if (!findMax && r >= rev) {
+                            } else if (!findMax && r.compareTo(rev) >= 0) {
                                 // It's not already in the list of things to install, so add the
                                 // first compatible archive we can find.
                                 return insertArchive(a,
@@ -912,7 +921,7 @@ class SdkUpdaterLogic {
             SdkSource[] remoteSources,
             ArchiveInfo[] localArchives) {
         // This is the requirement to match.
-        AndroidVersion v = pkg.getVersion();
+        AndroidVersion v = pkg.getAndroidVersion();
 
         // Find a platform that would satisfy the requirement.
 
@@ -922,7 +931,7 @@ class SdkUpdaterLogic {
             if (a != null) {
                 Package p = a.getParentPackage();
                 if (p instanceof PlatformPackage) {
-                    if (v.equals(((PlatformPackage) p).getVersion())) {
+                    if (v.equals(((PlatformPackage) p).getAndroidVersion())) {
                         // We found one already installed.
                         return null;
                     }
@@ -936,7 +945,7 @@ class SdkUpdaterLogic {
             if (a != null) {
                 Package p = a.getParentPackage();
                 if (p instanceof PlatformPackage) {
-                    if (v.equals(((PlatformPackage) p).getVersion())) {
+                    if (v.equals(((PlatformPackage) p).getAndroidVersion())) {
                         // The dependency is already scheduled for install, nothing else to do.
                         return ai;
                     }
@@ -949,7 +958,7 @@ class SdkUpdaterLogic {
             for (Archive a : selectedArchives) {
                 Package p = a.getParentPackage();
                 if (p instanceof PlatformPackage) {
-                    if (v.equals(((PlatformPackage) p).getVersion())) {
+                    if (v.equals(((PlatformPackage) p).getAndroidVersion())) {
                         // It's not already in the list of things to install, so add it now
                         return insertArchive(a,
                                 outArchives,
@@ -967,7 +976,7 @@ class SdkUpdaterLogic {
         fetchRemotePackages(remotePkgs, remoteSources);
         for (Package p : remotePkgs) {
             if (p instanceof PlatformPackage) {
-                if (v.equals(((PlatformPackage) p).getVersion())) {
+                if (v.equals(((PlatformPackage) p).getAndroidVersion())) {
                     // It's not already in the list of things to install, so add the
                     // first compatible archive we can find.
                     for (Archive a : p.getArchives()) {
@@ -988,7 +997,7 @@ class SdkUpdaterLogic {
         // We end up here if nothing matches. We don't have a good platform to match.
         // We need to indicate this addon depends on a missing platform archive
         // so that it can be impossible to install later on.
-        return new MissingPlatformArchiveInfo(pkg.getVersion());
+        return new MissingPlatformArchiveInfo(pkg.getAndroidVersion());
     }
 
     /**
@@ -1025,7 +1034,7 @@ class SdkUpdaterLogic {
             if (a != null) {
                 Package p = a.getParentPackage();
                 if (p instanceof PlatformPackage) {
-                    if (((PlatformPackage) p).getVersion().isGreaterOrEqualThan(api)) {
+                    if (((PlatformPackage) p).getAndroidVersion().isGreaterOrEqualThan(api)) {
                         // We found one already installed.
                         return null;
                     }
@@ -1042,7 +1051,7 @@ class SdkUpdaterLogic {
             if (a != null) {
                 Package p = a.getParentPackage();
                 if (p instanceof PlatformPackage) {
-                    if (((PlatformPackage) p).getVersion().isGreaterOrEqualThan(api)) {
+                    if (((PlatformPackage) p).getAndroidVersion().isGreaterOrEqualThan(api)) {
                         if (api > foundApi) {
                             foundApi = api;
                             foundAi = ai;
@@ -1065,7 +1074,7 @@ class SdkUpdaterLogic {
             for (Archive a : selectedArchives) {
                 Package p = a.getParentPackage();
                 if (p instanceof PlatformPackage) {
-                    if (((PlatformPackage) p).getVersion().isGreaterOrEqualThan(api)) {
+                    if (((PlatformPackage) p).getAndroidVersion().isGreaterOrEqualThan(api)) {
                         if (api > foundApi) {
                             foundApi = api;
                             foundArchive = a;
@@ -1079,7 +1088,7 @@ class SdkUpdaterLogic {
         fetchRemotePackages(remotePkgs, remoteSources);
         for (Package p : remotePkgs) {
             if (p instanceof PlatformPackage) {
-                if (((PlatformPackage) p).getVersion().isGreaterOrEqualThan(api)) {
+                if (((PlatformPackage) p).getAndroidVersion().isGreaterOrEqualThan(api)) {
                     if (api > foundApi) {
                         // It's not already in the list of things to install, so add the
                         // first compatible archive we can find.
@@ -1140,7 +1149,7 @@ class SdkUpdaterLogic {
             if (a != null) {
                 Package p = a.getParentPackage();
                 if (p instanceof PlatformPackage) {
-                    if (((PlatformPackage) p).getVersion().equals(api)) {
+                    if (((PlatformPackage) p).getAndroidVersion().equals(api)) {
                         // We found one already installed.
                         return null;
                     }
@@ -1155,7 +1164,7 @@ class SdkUpdaterLogic {
             if (a != null) {
                 Package p = a.getParentPackage();
                 if (p instanceof PlatformPackage) {
-                    if (((PlatformPackage) p).getVersion().equals(api)) {
+                    if (((PlatformPackage) p).getAndroidVersion().equals(api)) {
                         return ai;
                     }
                 }
@@ -1167,7 +1176,7 @@ class SdkUpdaterLogic {
             for (Archive a : selectedArchives) {
                 Package p = a.getParentPackage();
                 if (p instanceof PlatformPackage) {
-                    if (((PlatformPackage) p).getVersion().equals(api)) {
+                    if (((PlatformPackage) p).getAndroidVersion().equals(api)) {
                         // It's not already in the list of things to install, so add it now
                         return insertArchive(a,
                                 outArchives,
@@ -1185,7 +1194,7 @@ class SdkUpdaterLogic {
         fetchRemotePackages(remotePkgs, remoteSources);
         for (Package p : remotePkgs) {
             if (p instanceof PlatformPackage) {
-                if (((PlatformPackage) p).getVersion().equals(api)) {
+                if (((PlatformPackage) p).getAndroidVersion().equals(api)) {
                     // It's not already in the list of things to install, so add the
                     // first compatible archive we can find.
                     for (Archive a : p.getArchives()) {
@@ -1267,15 +1276,16 @@ class SdkUpdaterLogic {
             return;
         }
 
-        final boolean forceHttp = mUpdaterData.getSettingsController().getForceHttp();
+        final boolean forceHttp = mUpdaterData.getSettingsController().getSettings().getForceHttp();
 
         mUpdaterData.getTaskFactory().start("Refresh Sources", new ITask() {
+            @Override
             public void run(ITaskMonitor monitor) {
                 for (SdkSource remoteSrc : remoteSources) {
                     Package[] pkgs = remoteSrc.getPackages();
 
                     if (pkgs == null) {
-                        remoteSrc.load(monitor, forceHttp);
+                        remoteSrc.load(mUpdaterData.getDownloadCache(), monitor, forceHttp);
                         pkgs = remoteSrc.getPackages();
                     }
 
@@ -1384,7 +1394,7 @@ class SdkUpdaterLogic {
      */
     private static class MissingArchiveInfo extends ArchiveInfo {
 
-        private final int mRevision;
+        private final FullRevision mRevision;
         private final String mTitle;
 
         public static final String TITLE_TOOL = "Tools";
@@ -1397,7 +1407,7 @@ class SdkUpdaterLogic {
          * @param title Typically "Tools" or "Platform-tools".
          * @param revision The required revision.
          */
-        public MissingArchiveInfo(String title, int revision) {
+        public MissingArchiveInfo(String title, FullRevision revision) {
             super(null /*newArchive*/, null /*replaced*/, null /*dependsOn*/);
             mTitle = title;
             mRevision = revision;
@@ -1417,7 +1427,9 @@ class SdkUpdaterLogic {
 
         @Override
         public String getShortDescription() {
-            return String.format("Missing Android SDK %1$s, revision %2$d", mTitle, mRevision);
+            return String.format("Missing Android SDK %1$s, revision %2$s",
+                    mTitle,
+                    mRevision.toShortString());
         }
     }
 }

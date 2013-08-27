@@ -22,6 +22,7 @@ import static com.android.tools.lint.detector.api.LintConstants.ATTR_LAYOUT_COLU
 import static com.android.tools.lint.detector.api.LintConstants.ATTR_LAYOUT_ROW;
 import static com.android.tools.lint.detector.api.LintConstants.ATTR_ROW_COUNT;
 
+import com.android.annotations.NonNull;
 import com.android.tools.lint.detector.api.Category;
 import com.android.tools.lint.detector.api.Issue;
 import com.android.tools.lint.detector.api.LayoutDetector;
@@ -34,8 +35,8 @@ import com.android.tools.lint.detector.api.XmlContext;
 import org.w3c.dom.Attr;
 import org.w3c.dom.Element;
 
-import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 
 /**
  * Check which looks for potential errors in declarations of GridLayouts, such as specifying
@@ -51,24 +52,24 @@ public class GridLayoutDetector extends LayoutDetector {
             "of a GridLayout's rowCount or columnCount is usually an unintentional error.",
             Category.CORRECTNESS,
             4,
-            Severity.ERROR,
+            Severity.FATAL,
             GridLayoutDetector.class,
             Scope.RESOURCE_FILE_SCOPE);
 
-    /** Constructs a new accessibility check */
+    /** Constructs a new {@link GridLayoutDetector} check */
     public GridLayoutDetector() {
     }
 
     @Override
-    public Speed getSpeed() {
+    public @NonNull Speed getSpeed() {
         return Speed.FAST;
     }
 
     @Override
     public Collection<String> getApplicableElements() {
-        return Arrays.asList(new String[] {
-                "GridLayout", //$NON-NLS-1$
-        });
+        return Collections.singletonList(
+                "GridLayout" //$NON-NLS-1$
+        );
     }
 
     private static int getInt(Element element, String attribute, int defaultValue) {
@@ -85,7 +86,7 @@ public class GridLayoutDetector extends LayoutDetector {
     }
 
     @Override
-    public void visitElement(XmlContext context, Element element) {
+    public void visitElement(@NonNull XmlContext context, @NonNull Element element) {
         int declaredRowCount = getInt(element, ATTR_ROW_COUNT, -1);
         int declaredColumnCount = getInt(element, ATTR_COLUMN_COUNT, -1);
 
@@ -95,7 +96,7 @@ public class GridLayoutDetector extends LayoutDetector {
                     int column = getInt(child, ATTR_LAYOUT_COLUMN, -1);
                     if (column >= declaredColumnCount) {
                         Attr node = child.getAttributeNodeNS(ANDROID_URI, ATTR_LAYOUT_COLUMN);
-                        context.report(ISSUE, context.getLocation(node),
+                        context.report(ISSUE, node, context.getLocation(node),
                                 String.format("Column attribute (%1$d) exceeds declared grid column count (%2$d)",
                                         column, declaredColumnCount), null);
                     }
@@ -104,7 +105,7 @@ public class GridLayoutDetector extends LayoutDetector {
                     int row = getInt(child, ATTR_LAYOUT_ROW, -1);
                     if (row > declaredRowCount) {
                         Attr node = child.getAttributeNodeNS(ANDROID_URI, ATTR_LAYOUT_ROW);
-                        context.report(ISSUE, context.getLocation(node),
+                        context.report(ISSUE, node, context.getLocation(node),
                                 String.format("Row attribute (%1$d) exceeds declared grid row count (%2$d)",
                                         row, declaredRowCount), null);
                     }

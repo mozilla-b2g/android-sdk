@@ -62,10 +62,11 @@ bin/android         tools/android
 bin/monkeyrunner    tools/monkeyrunner
 bin/lint            tools/lint
 
-
 # sdk.git Ant templates for project build files
 sdk/templates/build.template        tools/lib/build.template
-sdk/files/proguard.cfg              tools/lib/proguard.cfg
+sdk/files/proguard-project.txt      tools/lib/proguard-project.txt
+sdk/files/proguard-android.txt      tools/proguard/proguard-android.txt
+sdk/files/proguard-android-optimize.txt      tools/proguard/proguard-android-optimize.txt
 
 # Ant Build Rules
 sdk/files/ant                       tools/ant
@@ -107,6 +108,9 @@ framework/mkidentity-prebuilt.jar tools/lib/mkidentity.jar
 framework/lint.jar               tools/lib/lint.jar
 framework/lint_api.jar           tools/lib/lint_api.jar
 framework/lint_checks.jar        tools/lib/lint_checks.jar
+framework/manifmerger.jar        tools/lib/manifmerger.jar
+framework/dvlib.jar              tools/lib/dvlib.jar
+
 
 # 3rd Party java libraries
 framework/commons-compress-1.0.jar                            tools/lib/commons-compress-1.0.jar
@@ -121,36 +125,63 @@ external/emma/lib/emma_ant.jar                                tools/lib/emma_ant
 framework/jcommon-1.0.12.jar                                  tools/lib/jcommon-1.0.12.jar
 framework/jfreechart-1.0.9.jar                                tools/lib/jfreechart-1.0.9.jar
 framework/jfreechart-1.0.9-swt.jar                            tools/lib/jfreechart-1.0.9-swt.jar
-framework/org.eclipse.core.commands_3.4.0.I20080509-2000.jar  tools/lib/org.eclipse.core.commands_3.4.0.I20080509-2000.jar
-framework/org.eclipse.equinox.common_3.4.0.v20080421-2006.jar tools/lib/org.eclipse.equinox.common_3.4.0.v20080421-2006.jar
-framework/org.eclipse.jface_3.4.2.M20090107-0800.jar          tools/lib/org.eclipse.jface_3.4.2.M20090107-0800.jar
+framework/org.eclipse.core.commands_3.6.0.I20100512-1500.jar  tools/lib/org.eclipse.core.commands_3.6.0.I20100512-1500.jar
+framework/org.eclipse.equinox.common_3.6.0.v20100503.jar      tools/lib/org.eclipse.equinox.common_3.6.0.v20100503.jar
+framework/org.eclipse.jface_3.6.2.M20110210-1200.jar          tools/lib/org.eclipse.jface_3.6.2.M20110210-1200.jar
 framework/osgi.jar                                            tools/lib/osgi.jar
 framework/swing-worker-1.1.jar                                tools/lib/swing-worker-1.1.jar
+prebuilts/tools/common/asm-tools/asm-4.0.jar                  tools/lib/asm-4.0.jar
+prebuilts/tools/common/asm-tools/asm-tree-4.0.jar             tools/lib/asm-tree-4.0.jar
+prebuilts/tools/common/guava-tools/guava-10.0.1.jar           tools/lib/guava-10.0.1.jar
+prebuilts/tools/common/lombok-ast/lombok-ast-0.2.jar          tools/lib/lombok-ast-0.2.jar
 
 # Proguard
-external/proguard/docs/license.html                           tools/proguard/license.html
-external/proguard/docs/GPL.html                               tools/proguard/GPL.html
-external/proguard/docs/GPL_exception.html                     tools/proguard/GPL_exception.html
-external/proguard/lib/proguard.jar                            tools/proguard/lib/proguard.jar
-external/proguard/lib/proguardgui.jar                         tools/proguard/lib/proguardgui.jar
-external/proguard/lib/retrace.jar                             tools/proguard/lib/retrace.jar
-external/proguard/bin/proguard.sh                             tools/proguard/bin/proguard.sh
-external/proguard/bin/proguardgui.sh                          tools/proguard/bin/proguardgui.sh
-external/proguard/bin/retrace.sh                              tools/proguard/bin/retrace.sh
-external/proguard/src/proguard/ant/task.properties            tools/proguard/ant/task.properties
+# We're skipping the build and src/ trees (except for src/proguard/ant/task.properties)
+# and copying in a license.html file
+prebuilts/tools/common/proguard/license.html                   tools/proguard/license.html
+prebuilts/tools/common/proguard/proguard4.7/README             tools/proguard/README
+prebuilts/tools/common/proguard/proguard4.7/docs               tools/proguard/docs
+prebuilts/tools/common/proguard/proguard4.7/examples           tools/proguard/examples
+prebuilts/tools/common/proguard/proguard4.7/lib                tools/proguard/lib
+prebuilts/tools/common/proguard/proguard4.7/bin/proguard.sh    tools/proguard/bin/proguard.sh
+prebuilts/tools/common/proguard/proguard4.7/bin/proguardgui.sh tools/proguard/bin/proguardgui.sh
+prebuilts/tools/common/proguard/proguard4.7/bin/retrace.sh     tools/proguard/bin/retrace.sh
+prebuilts/tools/common/proguard/proguard4.7/src/proguard/ant/task.properties  tools/proguard/ant/task.properties
 
+# Templates
+sdk/templates/projects                   tools/templates/projects
+sdk/templates/activities                 tools/templates/activities
+sdk/templates/other                      tools/templates/other
 
 # SDK Controller
 sdk/apps/SdkController       tools/apps/SdkController
+
+# tools specific support jar
+framework/annotations.jar   tools/support/annotations.jar
+
+# systrace
+external/chromium-trace/systrace.py    tools/systrace/systrace.py
+external/chromium-trace/config.py      tools/systrace/config.py
+external/chromium-trace/script.js      tools/systrace/script.js
+external/chromium-trace/style.css      tools/systrace/style.css
+external/chromium-trace/LICENSE        tools/systrace/LICENSE
+external/chromium-trace/AUTHORS        tools/systrace/AUTHORS
+
+# Misspelling database for tools such as lint
+sdk/files/typos-en.txt                 tools/support/typos-en.txt
 
 ##############################################################################
 # Tests Component
 ##############################################################################
 
-sdk/testapps            tests/testapps
-framework/ddmlib-tests.jar tests/libtests/ddmlib-tests.jar
-framework/ninepatch-tests.jar tests/libtests/ninepatch-tests.jar
-framework/common-tests.jar tests/libtests/common-tests.jar
-framework/sdklib-tests.jar tests/libtests/sdklib-tests.jar
-framework/sdkuilib-tests.jar tests/libtests/sdkuilib-tests.jar
-framework/layoutlib_api.jar tests/libtests/layoutlib_api.jar
+sdk/testapps                      tests/testapps
+framework/ddmlib-tests.jar        tests/libtests/ddmlib-tests.jar
+framework/ninepatch-tests.jar     tests/libtests/ninepatch-tests.jar
+framework/common-tests.jar        tests/libtests/common-tests.jar
+framework/sdklib-tests.jar        tests/libtests/sdklib-tests.jar
+framework/sdkuilib-tests.jar      tests/libtests/sdkuilib-tests.jar
+framework/layoutlib_api.jar       tests/libtests/layoutlib_api.jar
+framework/dvlib-tests.jar         tests/libtests/dvlib-tests.jar
+#FIXME breaks build, manifmerger jar files not properly built
+#framework/manifmerger-tests.jar   tests/libtests/manifmerger-tests.jar
+

@@ -16,16 +16,19 @@
 
 package com.android.sdkuilib.internal.repository.sdkman2;
 
+import com.android.sdklib.AndroidVersion;
 import com.android.sdklib.IAndroidTarget;
 import com.android.sdklib.SdkConstants;
-import com.android.sdklib.internal.repository.ExtraPackage;
-import com.android.sdklib.internal.repository.IPackageVersion;
-import com.android.sdklib.internal.repository.Package;
-import com.android.sdklib.internal.repository.PlatformPackage;
-import com.android.sdklib.internal.repository.PlatformToolPackage;
-import com.android.sdklib.internal.repository.SdkSource;
-import com.android.sdklib.internal.repository.SystemImagePackage;
-import com.android.sdklib.internal.repository.ToolPackage;
+import com.android.sdklib.internal.repository.packages.ExtraPackage;
+import com.android.sdklib.internal.repository.packages.IAndroidVersionProvider;
+import com.android.sdklib.internal.repository.packages.IFullRevisionProvider;
+import com.android.sdklib.internal.repository.packages.Package;
+import com.android.sdklib.internal.repository.packages.Package.UpdateInfo;
+import com.android.sdklib.internal.repository.packages.PlatformPackage;
+import com.android.sdklib.internal.repository.packages.PlatformToolPackage;
+import com.android.sdklib.internal.repository.packages.SystemImagePackage;
+import com.android.sdklib.internal.repository.packages.ToolPackage;
+import com.android.sdklib.internal.repository.sources.SdkSource;
 import com.android.sdklib.util.SparseArray;
 import com.android.sdkuilib.internal.repository.UpdaterData;
 import com.android.sdkuilib.internal.repository.sdkman2.PkgItem.PkgState;
@@ -45,17 +48,11 @@ import java.util.Set;
  * so that we can test it using head-less unit tests.
  */
 class PackagesDiffLogic {
-    private final PackageLoader mPackageLoader;
     private final UpdaterData mUpdaterData;
     private boolean mFirstLoadComplete = true;
 
     public PackagesDiffLogic(UpdaterData updaterData) {
         mUpdaterData = updaterData;
-        mPackageLoader = new PackageLoader(updaterData);
-    }
-
-    public PackageLoader getPackageLoader() {
-        return mPackageLoader;
     }
 
     /**
@@ -79,11 +76,12 @@ class PackagesDiffLogic {
     /**
      * Mark all new and update PkgItems as checked.
      *
-     * @param selectNew If true, select all new packages
-     * @param selectUpdates If true, select all update packages
-     * @param selectTop If true, select the top platform. If the top platform has nothing installed,
-     *   select all items in it; if it is partially installed, at least select the platform and
-     *   system images if none of the system images are installed.
+     * @param selectNew If true, select all new packages (except the rc/preview ones).
+     * @param selectUpdates If true, select all update packages.
+     * @param selectTop If true, select the top platform.
+     *   If the top platform has nothing installed, select all items in it (except the rc/preview);
+     *   If it is partially installed, at least select the platform and system images if none of
+     *   the system images are installed.
      * @param currentPlatform The {@link SdkConstants#currentPlatform()} value.
      */
     public void checkNewUpdateItems(
@@ -96,7 +94,8 @@ class PackagesDiffLogic {
         SparseArray<List<PkgItem>> platformItems = new SparseArray<List<PkgItem>>();
 
         // sort items in platforms... directly deal with new/update items
-        for (PkgItem item : getAllPkgItems(true /*byApi*/, true /*bySource*/)) {
+        List<PkgItem> allItems = getAllPkgItems(true /*byApi*/, true /*bySource*/);
+        for (PkgItem item : allItems) {
             if (!item.hasCompatibleArchive()) {
                 // Ignore items that have no archive compatible with the current platform.
                 continue;
@@ -106,8 +105,8 @@ class PackagesDiffLogic {
             // since by definition they should target the same API level.
             int api = 0;
             Package p = item.getMainPackage();
-            if (p instanceof IPackageVersion) {
-                api = ((IPackageVersion) p).getVersion().getApiLevel();
+            if (p instanceof IAndroidVersionProvider) {
+                api = ((IAndroidVersionProvider) p).getAndroidVersion().getApiLevel();
             }
 
             if (selectTop && api > 0) {
@@ -128,8 +127,42 @@ class PackagesDiffLogic {
                 items.add(item);
             }
 
-            if ((selectNew && item.getState() == PkgState.NEW) ||
-                    (selectUpdates && item.hasUpdatePkg())) {
+            if ((selectUpdates || selectNew) &&
+                    item.getState() == PkgState.NEW &&
+                    !item.getRevision().isPreview()) {
+                boolean sameFound = false;
+                Package newPkg = item.getMainPackage();
+                if (newPkg instanceof IFullRevisionProvider) {
+                    // We have a potential new non-preview package; but this kind of package
+                    // supports having previews, which means we want to make sure we're not
+                    // offering an older "new" non-preview if there's a newer preview installed.
+                    //
+                    // We should get into this odd situation only when updating an RC/preview
+                    // by a final release pkg.
+
+                    IFullRevisionProvider newPkg2 = (IFullRevisionProvider) newPkg;
+                    for (PkgItem item2 : allItems) {
+                        if (item2.getState() == PkgState.INSTALLED) {
+                            Package installed = item2.getMainPackage();
+
+                            if (installed.getRevision().isPreview() &&
+                                    newPkg2.sameItemAs(installed, true /*ignorePreviews*/)) {
+                                sameFound = true;
+
+                                if (installed.canBeUpdatedBy(newPkg) == UpdateInfo.UPDATE) {
+                                    item.setChecked(true);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (selectNew && !sameFound) {
+                    item.setChecked(true);
+                }
+
+            } else if (selectUpdates && item.hasUpdatePkg()) {
                 item.setChecked(true);
             }
         }
@@ -139,7 +172,8 @@ class PackagesDiffLogic {
             if (!installedPlatforms.contains(maxApi)) {
                 // If the top platform has nothing installed at all, select everything in it
                 for (PkgItem item : items) {
-                    if (item.getState() == PkgState.NEW || item.hasUpdatePkg()) {
+                    if ((item.getState() == PkgState.NEW && !item.getRevision().isPreview()) ||
+                            item.hasUpdatePkg()) {
                         item.setChecked(true);
                     }
                 }
@@ -150,7 +184,8 @@ class PackagesDiffLogic {
                 // First make sure the platform package itself is installed, or select it.
                 for (PkgItem item : items) {
                      Package p = item.getMainPackage();
-                     if (p instanceof PlatformPackage && item.getState() == PkgState.NEW) {
+                     if (p instanceof PlatformPackage &&
+                             item.getState() == PkgState.NEW && !item.getRevision().isPreview()) {
                          item.setChecked(true);
                          break;
                      }
@@ -162,7 +197,7 @@ class PackagesDiffLogic {
                     Package p = item.getMainPackage();
                     if (p instanceof PlatformPackage && item.getState() == PkgState.INSTALLED) {
                         if (item.hasUpdatePkg() && item.isChecked()) {
-                            // If the installed platform is schedule for update, look for the
+                            // If the installed platform is scheduled for update, look for the
                             // system image in the update package, not the current one.
                             p = item.getUpdatePkg();
                             if (p instanceof PlatformPackage) {
@@ -189,6 +224,7 @@ class PackagesDiffLogic {
                          Package p = item.getMainPackage();
                          if (p instanceof PlatformPackage) {
                              if (item.getState() == PkgState.NEW &&
+                                     !item.getRevision().isPreview() &&
                                      ((PlatformPackage) p).getIncludedAbi() != null) {
                                  item.setChecked(true);
                                  hasSysImg = true;
@@ -219,10 +255,12 @@ class PackagesDiffLogic {
             // On Windows, we'll also auto-select the USB driver
             for (PkgItem item : getAllPkgItems(true /*byApi*/, true /*bySource*/)) {
                 Package p = item.getMainPackage();
-                if (p instanceof ExtraPackage && item.getState() == PkgState.NEW) {
+                if (p instanceof ExtraPackage &&
+                        item.getState() == PkgState.NEW &&
+                        !item.getRevision().isPreview()) {
                     ExtraPackage ep = (ExtraPackage) p;
-                    if (ep.getVendor().equals("google") &&          //$NON-NLS-1$
-                            ep.getPath().equals("usb_driver")) {    //$NON-NLS-1$
+                    if (ep.getVendorId().equals("google") &&            //$NON-NLS-1$
+                            ep.getPath().equals("usb_driver")) {        //$NON-NLS-1$
                         item.setChecked(true);
                     }
                 }
@@ -268,6 +306,8 @@ class PackagesDiffLogic {
 
         /** Creates the category for the given key and returns it. */
         public abstract PkgCategory createCategory(Object catKey);
+        /** Adjust attributes of an existing category. */
+        public abstract void adjustCategory(PkgCategory cat, Object catKey);
 
         /** Sorts the category list (but not the items within the categories.) */
         public abstract void sortCategoryList();
@@ -299,9 +339,7 @@ class PackagesDiffLogic {
         }
 
         public boolean updateSourcePackages(SdkSource source, Package[] newPackages) {
-            if (newPackages.length > 0) {
-                mVisitedSources.add(source);
-            }
+            mVisitedSources.add(source);
             if (source == null) {
                 return processLocals(this, newPackages);
             } else {
@@ -326,9 +364,11 @@ class PackagesDiffLogic {
                     PkgItem item = itemIt.next();
                     if (mItemsToRemove.contains(item)) {
                         itemIt.remove();
+                        hasChanged  = true;
                     } else if (item.hasUpdatePkg() &&
                             mUpdatesToRemove.containsKey(item.getUpdatePkg())) {
                         item.removeUpdate();
+                        hasChanged  = true;
                     }
                 }
             }
@@ -469,14 +509,31 @@ class PackagesDiffLogic {
         return hasChanged;
     }
 
+    /**
+     * {@link PkgState}s to check in {@link #processSource(UpdateOp, SdkSource, Package[])}.
+     * The order matters.
+     * When installing the diff will have both the new and the installed item and we
+     * need to merge with the installed one before the new one.
+     */
+    private final static PkgState[] PKG_STATES = { PkgState.INSTALLED, PkgState.NEW };
+
     /** Process all remote packages. Returns true if something changed. */
     private boolean processSource(UpdateOp op, SdkSource source, Package[] packages) {
         boolean hasChanged = false;
         List<PkgCategory> cats = op.getCategories();
 
+        boolean enablePreviews =
+            mUpdaterData.getSettingsController().getSettings().getEnablePreviews();
+
         nextPkg: for (Package newPkg : packages) {
+
+            if (!enablePreviews && newPkg.getRevision().isPreview()) {
+                // This is a preview and previews are not enabled. Ignore the package.
+                continue nextPkg;
+            }
+
             for (PkgCategory cat : cats) {
-                for (PkgState state : PkgState.values()) {
+                for (PkgState state : PKG_STATES) {
                     for (Iterator<PkgItem> currItemIt = cat.getItems().iterator();
                                            currItemIt.hasNext(); ) {
                         PkgItem currItem = currItemIt.next();
@@ -508,7 +565,7 @@ class PackagesDiffLogic {
 
                         switch (currItem.getState()) {
                         case NEW:
-                            if (newPkg.getRevision() < mainPkg.getRevision()) {
+                            if (newPkg.getRevision().compareTo(mainPkg.getRevision()) < 0) {
                                 if (!op.isKeep(currItem)) {
                                     // The new item has a lower revision than the current one,
                                     // but the current one hasn't been marked as being kept so
@@ -517,7 +574,7 @@ class PackagesDiffLogic {
                                     addNewItem(op, newPkg, PkgState.NEW);
                                     hasChanged = true;
                                 }
-                            } else if (newPkg.getRevision() > mainPkg.getRevision()) {
+                            } else if (newPkg.getRevision().compareTo(mainPkg.getRevision()) > 0) {
                                 // We have a more recent new version, remove the current one
                                 // and replace by a new one
                                 currItemIt.remove();
@@ -526,8 +583,8 @@ class PackagesDiffLogic {
                             }
                             break;
                         case INSTALLED:
-                            // if newPkg.revision <= mainPkg.revision: it's already installed, ignore.
-                            if (newPkg.getRevision() > mainPkg.getRevision()) {
+                            // if newPkg.revision<=mainPkg.revision: it's already installed, ignore.
+                            if (newPkg.getRevision().compareTo(mainPkg.getRevision()) > 0) {
                                 // This is a new update for the main package.
                                 if (currItem.mergeUpdate(newPkg)) {
                                     op.keep(currItem.getUpdatePkg());
@@ -565,6 +622,9 @@ class PackagesDiffLogic {
                 cats.add(cat);
             }
             op.sortCategoryList();
+        } else {
+            // Not a new category. Give op a chance to adjust the category attributes
+            op.adjustCategory(cat, catKey);
         }
 
         PkgItem item = new PkgItem(pkg, state);
@@ -593,12 +653,15 @@ class PackagesDiffLogic {
         public Object getCategoryKey(Package pkg) {
             // Sort by API
 
-            if (pkg instanceof IPackageVersion) {
-                return ((IPackageVersion) pkg).getVersion().getApiLevel();
+            if (pkg instanceof IAndroidVersionProvider) {
+                return ((IAndroidVersionProvider) pkg).getAndroidVersion();
 
             } else if (pkg instanceof ToolPackage || pkg instanceof PlatformToolPackage) {
-                return PkgCategoryApi.KEY_TOOLS;
-
+                if (pkg.getRevision().isPreview()) {
+                    return PkgCategoryApi.KEY_TOOLS_PREVIEW;
+                } else {
+                    return PkgCategoryApi.KEY_TOOLS;
+                }
             } else {
                 return PkgCategoryApi.KEY_EXTRA;
             }
@@ -648,8 +711,11 @@ class PackagesDiffLogic {
             // Create API category.
             PkgCategory cat = null;
 
-            assert catKey instanceof Integer;
-            int apiKey = ((Integer) catKey).intValue();
+            assert catKey instanceof AndroidVersion;
+            AndroidVersion key = (AndroidVersion) catKey;
+
+            // We should not be trying to recreate the tools or extra categories.
+            assert !key.equals(PkgCategoryApi.KEY_TOOLS) && !key.equals(PkgCategoryApi.KEY_EXTRA);
 
             // We need a label for the category.
             // If we have an API level, try to get the info from the SDK Manager.
@@ -657,23 +723,25 @@ class PackagesDiffLogic {
             // locally in the SDK Manager), it's OK we'll try to find the first platform
             // package available.
             String platformName = null;
-            if (apiKey >= 1 && apiKey != PkgCategoryApi.KEY_TOOLS) {
-                for (IAndroidTarget target :
-                        mUpdaterData.getSdkManager().getTargets()) {
-                    if (target.isPlatform() &&
-                            target.getVersion().getApiLevel() == apiKey) {
-                        platformName = target.getVersionName();
-                        break;
-                    }
+            for (IAndroidTarget target :
+                    mUpdaterData.getSdkManager().getTargets()) {
+                if (target.isPlatform() && key.equals(target.getVersion())) {
+                    platformName = target.getVersionName();
+                    break;
                 }
             }
 
             cat = new PkgCategoryApi(
-                    apiKey,
+                    key,
                     platformName,
                     mUpdaterData.getImageFactory().getImageByName(PackagesPage.ICON_CAT_PLATFORM));
 
             return cat;
+        }
+
+        @Override
+        public void adjustCategory(PkgCategory cat, Object catKey) {
+            // Pass. Nothing to do for API-sorted categories
         }
 
         @Override
@@ -686,12 +754,15 @@ class PackagesDiffLogic {
 
             synchronized (getCategories()) {
                 Collections.sort(getCategories(), new Comparator<PkgCategory>() {
+                    @Override
                     public int compare(PkgCategory cat1, PkgCategory cat2) {
                         assert cat1 instanceof PkgCategoryApi;
                         assert cat2 instanceof PkgCategoryApi;
-                        int api1 = ((Integer) cat1.getKey()).intValue();
-                        int api2 = ((Integer) cat2.getKey()).intValue();
-                        return api2 - api1;
+                        assert cat1.getKey() instanceof AndroidVersion;
+                        assert cat2.getKey() instanceof AndroidVersion;
+                        AndroidVersion v1 = (AndroidVersion) cat1.getKey();
+                        AndroidVersion v2 = (AndroidVersion) cat2.getKey();
+                        return v2.compareTo(v1);
                     }
                 });
             }
@@ -735,6 +806,31 @@ class PackagesDiffLogic {
      * {@link UpdateOp} describing the Sort-by-Source operation.
      */
     private class UpdateOpSource extends UpdateOp {
+
+        @Override
+        public boolean updateSourcePackages(SdkSource source, Package[] newPackages) {
+            // When displaying the repo by source, we want to create all the
+            // categories so that they can appear on the UI even if empty.
+            if (source != null) {
+                List<PkgCategory> cats = getCategories();
+                Object catKey = source;
+                PkgCategory cat = findCurrentCategory(cats, catKey);
+
+                if (cat == null) {
+                    // This is a new category. Create it and add it to the list.
+                    cat = createCategory(catKey);
+                    synchronized (cats) {
+                        cats.add(cat);
+                    }
+                    sortCategoryList();
+                }
+
+                keep(cat);
+            }
+
+            return super.updateSourcePackages(source, newPackages);
+        }
+
         @Override
         public Object getCategoryKey(Package pkg) {
             // Sort by source
@@ -766,12 +862,35 @@ class PackagesDiffLogic {
             }
         }
 
+        /**
+         * Create a new source category.
+         * <p/>
+         * One issue is that local archives are processed first and we don't have the
+         * full source information on them (e.g. we know the referral URL but not
+         * the referral name of the site).
+         * In this case this will just create {@link PkgCategorySource} where the label isn't
+         * known yet.
+         */
         @Override
         public PkgCategory createCategory(Object catKey) {
             assert catKey instanceof SdkSource;
             PkgCategory cat = new PkgCategorySource((SdkSource) catKey, mUpdaterData);
             return cat;
+        }
 
+        /**
+         * Checks whether the category needs to be adjust.
+         * As mentioned in {@link #createCategory(Object)}, local archives are processed
+         * first and result in a {@link PkgCategorySource} where the label isn't known.
+         * Once we process the external source with the actual name, we'll update it.
+         */
+        @Override
+        public void adjustCategory(PkgCategory cat, Object catKey) {
+            assert cat instanceof PkgCategorySource;
+            assert catKey instanceof SdkSource;
+            if (cat instanceof PkgCategorySource) {
+                ((PkgCategorySource) cat).adjustLabel((SdkSource) catKey);
+            }
         }
 
         @Override
@@ -781,6 +900,7 @@ class PackagesDiffLogic {
 
             synchronized (getCategories()) {
                 Collections.sort(getCategories(), new Comparator<PkgCategory>() {
+                    @Override
                     public int compare(PkgCategory cat1, PkgCategory cat2) {
                         assert cat1 instanceof PkgCategorySource;
                         assert cat2 instanceof PkgCategorySource;

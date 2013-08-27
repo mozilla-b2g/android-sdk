@@ -16,6 +16,10 @@
 
 package com.android.tools.lint.detector.api;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
+import com.google.common.annotations.Beta;
+
 import java.io.File;
 
 /**
@@ -24,12 +28,14 @@ import java.io.File;
  * <b>NOTE: This is not a public or final API; if you rely on this be prepared
  * to adjust your code for the next tools release.</b>
  */
+@Beta
 public class Location {
     private final File mFile;
     private final Position mStart;
     private final Position mEnd;
     private String mMessage;
     private Location mSecondary;
+    private Object mClientData;
 
     /**
      * (Private constructor, use one of the factory methods
@@ -43,10 +49,10 @@ public class Location {
      * @param file the associated file (but see the documentation for
      *            {@link #getFile()} for more information on what the file
      *            represents)
-     * @param start the starting position, never null
+     * @param start the starting position, or null
      * @param end the ending position, or null
      */
-    protected Location(File file, Position start, Position end) {
+    protected Location(@NonNull File file, @Nullable Position start, @Nullable Position end) {
         super();
         this.mFile = file;
         this.mStart = start;
@@ -63,6 +69,7 @@ public class Location {
      *
      * @return the file handle for the location
      */
+    @NonNull
     public File getFile() {
         return mFile;
     }
@@ -70,8 +77,9 @@ public class Location {
     /**
      * The start position of the range
      *
-     * @return the start position of the range, never null
+     * @return the start position of the range, or null
      */
+    @Nullable
     public Position getStart() {
         return mStart;
     }
@@ -81,6 +89,7 @@ public class Location {
      *
      * @return the start position of the range, may be null for an empty range
      */
+    @Nullable
     public Position getEnd() {
         return mEnd;
     }
@@ -91,6 +100,7 @@ public class Location {
      *
      * @return a secondary location or null
      */
+    @Nullable
     public Location getSecondary() {
         return mSecondary;
     }
@@ -100,7 +110,7 @@ public class Location {
      *
      * @param secondary a secondary location associated with this location
      */
-    public void setSecondary(Location secondary) {
+    public void setSecondary(@Nullable Location secondary) {
         this.mSecondary = secondary;
     }
 
@@ -114,7 +124,7 @@ public class Location {
      *
      * @param message the message to apply to this location
      */
-    public void setMessage(String message) {
+    public void setMessage(@NonNull String message) {
         mMessage = message;
     }
 
@@ -129,8 +139,38 @@ public class Location {
      *
      * @return the custom message for this location, or null
      */
+    @Nullable
     public String getMessage() {
         return mMessage;
+    }
+
+    /**
+     * Sets the client data associated with this location. This is an optional
+     * field which can be used by the creator of the {@link Location} to store
+     * temporary state associated with the location.
+     *
+     * @param clientData the data to store with this location
+     */
+    public void setClientData(@Nullable Object clientData) {
+        mClientData = clientData;
+    }
+
+    /**
+     * Returns the client data associated with this location - an optional field
+     * which can be used by the creator of the {@link Location} to store
+     * temporary state associated with the location.
+     *
+     * @return the data associated with this location
+     */
+    @Nullable
+    public Object getClientData() {
+        return mClientData;
+    }
+
+    @Override
+    public String toString() {
+        return "Location [file=" + mFile + ", start=" + mStart + ", end=" + mEnd + ", message="
+                + mMessage + "]";
     }
 
     /**
@@ -139,7 +179,8 @@ public class Location {
      * @param file the file to create a location for
      * @return a new location
      */
-    public static Location create(File file) {
+    @NonNull
+    public static Location create(@NonNull File file) {
         return new Location(file, null /*start*/, null /*end*/);
     }
 
@@ -152,7 +193,11 @@ public class Location {
      * @param end the ending position
      * @return a new location
      */
-    public static Location create(File file, Position start, Position end) {
+    @NonNull
+    public static Location create(
+            @NonNull File file,
+            @NonNull Position start,
+            @Nullable Position end) {
         return new Location(file, start, end);
     }
 
@@ -166,7 +211,12 @@ public class Location {
      * @param endOffset the ending offset
      * @return a new location
      */
-    public static Location create(File file, String contents, int startOffset, int endOffset) {
+    @NonNull
+    public static Location create(
+            @NonNull File file,
+            @Nullable String contents,
+            int startOffset,
+            int endOffset) {
         if (startOffset < 0 || endOffset < startOffset) {
             throw new IllegalArgumentException("Invalid offsets");
         }
@@ -209,7 +259,29 @@ public class Location {
      * @param line the line number (0-based) for the position
      * @return a new location
      */
-    public static Location create(File file, String contents, int line) {
+    @NonNull
+    public static Location create(@NonNull File file, @NonNull String contents, int line) {
+        return create(file, contents, line, null, null);
+    }
+
+    /**
+     * Creates a new location for the given file, with the given contents, for
+     * the given line number.
+     *
+     * @param file the file containing the location
+     * @param contents the current contents of the file
+     * @param line the line number (0-based) for the position
+     * @param patternStart an optional pattern to search for from the line
+     *            match; if found, adjust the column and offsets to begin at the
+     *            pattern start
+     * @param patternEnd an optional pattern to search for behind the start
+     *            pattern; if found, adjust the end offset to match the end of
+     *            the pattern
+     * @return a new location
+     */
+    @NonNull
+    public static Location create(@NonNull File file, @NonNull String contents, int line,
+            @Nullable String patternStart, @Nullable String patternEnd) {
         int currentLine = 0;
         int offset = 0;
         while (currentLine < line) {
@@ -222,11 +294,71 @@ public class Location {
         }
 
         if (line == currentLine) {
+            if (patternStart != null) {
+                int index = contents.indexOf(patternStart, offset);
+                if (index == -1) {
+                    // Allow some flexibility: peek at previous couple of lines
+                    // as well (for example, bytecode line numbers are sometimes
+                    // a few lines off from their location in a source file
+                    // since they are attached to executable lines of code)
+                    int lineStart = offset;
+                    for (int i = 0; i < 4; i++) {
+                        int prevLineStart = contents.lastIndexOf('\n', lineStart - 1);
+                        if (prevLineStart == -1) {
+                            break;
+                        }
+                        index = contents.indexOf(patternStart, prevLineStart);
+                        if (index != -1 || prevLineStart == 0) {
+                            break;
+                        }
+                        lineStart = prevLineStart;
+                    }
+                }
+
+                if (index != -1) {
+                    int lineStart = contents.lastIndexOf('\n', index);
+                    if (lineStart == -1) {
+                        lineStart = 0;
+                    } else {
+                        lineStart++; // was pointing to the previous line's CR, not line start
+                    }
+                    int column = index - lineStart;
+                    if (patternEnd != null) {
+                        int end = contents.indexOf(patternEnd, offset + patternStart.length());
+                        if (end != -1) {
+                            return new Location(file, new DefaultPosition(line, column, index),
+                                    new DefaultPosition(line, -1, end + patternEnd.length()));
+                        }
+                    }
+                    return new Location(file, new DefaultPosition(line, column, index),
+                            new DefaultPosition(line, column, index + patternStart.length()));
+                }
+            }
+
             Position position = new DefaultPosition(line, -1, offset);
             return new Location(file, position, position);
         }
 
         return Location.create(file);
+    }
+
+    /**
+     * Reverses the secondary location list initiated by the given location
+     *
+     * @param location the first location in the list
+     * @return the first location in the reversed list
+     */
+    public static Location reverse(Location location) {
+        Location next = location.getSecondary();
+        location.setSecondary(null);
+        while (next != null) {
+            Location nextNext = next.getSecondary();
+            next.setSecondary(location);
+            location = next;
+            next = nextNext;
+        }
+
+        return location;
     }
 
     /**
@@ -241,7 +373,27 @@ public class Location {
          *
          * @return create a location for this handle
          */
+        @NonNull
         Location resolve();
+
+        /**
+         * Sets the client data associated with this location. This is an optional
+         * field which can be used by the creator of the {@link Location} to store
+         * temporary state associated with the location.
+         *
+         * @param clientData the data to store with this location
+         */
+        public void setClientData(@Nullable Object clientData);
+
+        /**
+         * Returns the client data associated with this location - an optional field
+         * which can be used by the creator of the {@link Location} to store
+         * temporary state associated with the location.
+         *
+         * @return the data associated with this location
+         */
+        @Nullable
+        public Object getClientData();
     }
 
     /** A default {@link Handle} implementation for simple file offsets */
@@ -250,6 +402,7 @@ public class Location {
         private String mContents;
         private int mStartOffset;
         private int mEndOffset;
+        private Object mClientData;
 
         /**
          * Constructs a new {@link DefaultLocationHandle}
@@ -258,15 +411,28 @@ public class Location {
          * @param startOffset the start offset within the file
          * @param endOffset the end offset within the file
          */
-        public DefaultLocationHandle(Context context, int startOffset, int endOffset) {
+        public DefaultLocationHandle(@NonNull Context context, int startOffset, int endOffset) {
             mFile = context.file;
             mContents = context.getContents();
             mStartOffset = startOffset;
             mEndOffset = endOffset;
         }
 
+        @Override
+        @NonNull
         public Location resolve() {
             return Location.create(mFile, mContents, mStartOffset, mEndOffset);
+        }
+
+        @Override
+        public void setClientData(@Nullable Object clientData) {
+            mClientData = clientData;
+        }
+
+        @Override
+        @Nullable
+        public Object getClientData() {
+            return mClientData;
         }
     }
 }

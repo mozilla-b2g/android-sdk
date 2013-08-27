@@ -16,6 +16,7 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
+import com.android.annotations.NonNull;
 import com.android.ide.common.api.INode.IAttribute;
 
 import java.util.regex.Matcher;
@@ -57,17 +58,20 @@ public class SimpleAttribute implements IAttribute {
      * Returns the namespace URI of the attribute.
      * Can be empty for an attribute without a namespace but is never null.
      */
-    public String getUri() {
+    @Override
+    public @NonNull String getUri() {
         return mUri;
     }
 
     /** Returns the XML local name of the attribute. Cannot be null nor empty. */
-    public String getName() {
+    @Override
+    public @NonNull String getName() {
         return mName;
     }
 
     /** Returns the value of the attribute. Cannot be null. Can be empty. */
-    public String getValue() {
+    @Override
+    public @NonNull String getValue() {
         return mValue;
     }
 

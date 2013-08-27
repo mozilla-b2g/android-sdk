@@ -16,9 +16,18 @@
 
 package com.android.tools.lint.client.api;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.tools.lint.detector.api.Context;
+import com.google.common.annotations.Beta;
 
-/** Interface implemented by listeners to be notified of lint events */
+/**
+ * Interface implemented by listeners to be notified of lint events
+ * <p>
+ * <b>NOTE: This is not a public or final API; if you rely on this be prepared
+ * to adjust your code for the next tools release.</b>
+ */
+@Beta
 public interface LintListener {
     /** The various types of events provided to lint listeners */
     public enum EventType {
@@ -28,8 +37,14 @@ public interface LintListener {
         /** Lint is about to check the given project, see {@link Context#getProject()} */
         SCANNING_PROJECT,
 
+        /** Lint is about to check the given library project, see {@link Context#getProject()} */
+        SCANNING_LIBRARY_PROJECT,
+
         /** Lint is about to check the given file, see {@link Context#file} */
         SCANNING_FILE,
+
+        /** A new pass was initiated */
+        NEW_PHASE,
 
         /** The lint check was canceled */
         CANCELED,
@@ -46,8 +61,10 @@ public interface LintListener {
      * {@link EventType#COMPLETED} events which are fired outside of project
      * contexts.)
      *
+     * @param driver the driver running through the checks
      * @param type the type of event that occurred
      * @param context the context providing additional information
      */
-    public void update(EventType type, Context context);
+    public void update(@NonNull LintDriver driver, @NonNull EventType type,
+            @Nullable Context context);
 }

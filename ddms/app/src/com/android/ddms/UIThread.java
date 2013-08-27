@@ -17,20 +17,21 @@
 package com.android.ddms;
 
 import com.android.ddmlib.AndroidDebugBridge;
+import com.android.ddmlib.AndroidDebugBridge.IClientChangeListener;
 import com.android.ddmlib.Client;
 import com.android.ddmlib.ClientData;
-import com.android.ddmlib.IDevice;
-import com.android.ddmlib.Log;
-import com.android.ddmlib.SyncException;
-import com.android.ddmlib.SyncService;
-import com.android.ddmlib.AndroidDebugBridge.IClientChangeListener;
 import com.android.ddmlib.ClientData.IHprofDumpHandler;
 import com.android.ddmlib.ClientData.MethodProfilingStatus;
+import com.android.ddmlib.IDevice;
+import com.android.ddmlib.Log;
 import com.android.ddmlib.Log.ILogOutput;
 import com.android.ddmlib.Log.LogLevel;
+import com.android.ddmlib.SyncException;
+import com.android.ddmlib.SyncService;
 import com.android.ddmuilib.AllocationPanel;
 import com.android.ddmuilib.DdmUiPreferences;
 import com.android.ddmuilib.DevicePanel;
+import com.android.ddmuilib.DevicePanel.IUiSelectionListener;
 import com.android.ddmuilib.EmulatorControlPanel;
 import com.android.ddmuilib.HeapPanel;
 import com.android.ddmuilib.ITableFocusListener;
@@ -41,18 +42,17 @@ import com.android.ddmuilib.ScreenShotDialog;
 import com.android.ddmuilib.SysinfoPanel;
 import com.android.ddmuilib.TablePanel;
 import com.android.ddmuilib.ThreadPanel;
-import com.android.ddmuilib.DevicePanel.IUiSelectionListener;
 import com.android.ddmuilib.actions.ToolItemAction;
 import com.android.ddmuilib.explorer.DeviceExplorer;
 import com.android.ddmuilib.handler.BaseFileHandler;
 import com.android.ddmuilib.handler.MethodProfilingHandler;
 import com.android.ddmuilib.log.event.EventLogPanel;
 import com.android.ddmuilib.logcat.LogCatPanel;
-import com.android.ddmuilib.logcat.LogCatReceiver;
 import com.android.ddmuilib.logcat.LogColors;
 import com.android.ddmuilib.logcat.LogFilter;
 import com.android.ddmuilib.logcat.LogPanel;
 import com.android.ddmuilib.logcat.LogPanel.ILogFilterStorageManager;
+import com.android.ddmuilib.net.NetworkPanel;
 import com.android.menubar.IMenuBarCallback;
 import com.android.menubar.IMenuBarEnhancer;
 import com.android.menubar.IMenuBarEnhancer.MenuBarMode;
@@ -128,19 +128,22 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
 
     private static final int PANEL_SYSINFO = 5;
 
-    private static final int PANEL_COUNT = 6;
+    private static final int PANEL_NETWORK = 6;
+
+    private static final int PANEL_COUNT = 7;
 
     /** Content is setup in the constructor */
     private static TablePanel[] mPanels = new TablePanel[PANEL_COUNT];
 
     private static final String[] mPanelNames = new String[] {
             "Info", "Threads", "VM Heap", "Native Heap",
-            "Allocation Tracker", "Sysinfo"
+            "Allocation Tracker", "Sysinfo", "Network"
     };
 
     private static final String[] mPanelTips = new String[] {
             "Client information", "Thread status", "VM heap status",
-            "Native heap status", "Allocation Tracker", "Sysinfo graphs"
+            "Native heap status", "Allocation Tracker", "Sysinfo graphs",
+            "Network usage"
     };
 
     private static final String PREFERENCE_LOGSASH =
@@ -186,6 +189,7 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
 
     private final class FilterStorage implements ILogFilterStorageManager {
 
+        @Override
         public LogFilter[] getFilterFromStore() {
             String filterPrefs = PrefsDialog.getStore().getString(
                     PREFS_FILTERS);
@@ -208,6 +212,7 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
             return list.toArray(new LogFilter[list.size()]);
         }
 
+        @Override
         public void saveFilters(LogFilter[] filters) {
             StringBuilder sb = new StringBuilder();
             for (LogFilter f : filters) {
@@ -219,6 +224,7 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
             PrefsDialog.getStore().setValue(PREFS_FILTERS, sb.toString());
         }
 
+        @Override
         public boolean requiresDefaultFilter() {
             return true;
         }
@@ -278,6 +284,7 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
 
         private IFocusedTableActivator mCurrentActivator;
 
+        @Override
         public void focusGained(IFocusedTableActivator activator) {
             mCurrentActivator = activator;
             if (mCopyMenuItem.isDisposed() == false) {
@@ -286,6 +293,7 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
             }
         }
 
+        @Override
         public void focusLost(IFocusedTableActivator activator) {
             // if we move from one table to another, it's unclear
             // if the old table lose its focus before the new
@@ -322,8 +330,10 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
             super(parentShell);
         }
 
+        @Override
         public void onEndFailure(final Client client, final String message) {
             mDisplay.asyncExec(new Runnable() {
+                @Override
                 public void run() {
                     try {
                         displayErrorFromUiThread(
@@ -340,8 +350,10 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
             });
         }
 
+        @Override
         public void onSuccess(final String remoteFilePath, final Client client) {
             mDisplay.asyncExec(new Runnable() {
+                @Override
                 public void run() {
                     final IDevice device = client.getDevice();
                     try {
@@ -375,8 +387,10 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
             });
         }
 
+        @Override
         public void onSuccess(final byte[] data, final Client client) {
             mDisplay.asyncExec(new Runnable() {
+                @Override
                 public void run() {
                     promptAndSave(client.getClientData().getClientDescription() + ".hprof", data,
                             "Save HPROF file");
@@ -410,6 +424,7 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
         }
         mPanels[PANEL_ALLOCATIONS] = new AllocationPanel();
         mPanels[PANEL_SYSINFO] = new SysinfoPanel();
+        mPanels[PANEL_NETWORK] = new NetworkPanel();
     }
 
     /**
@@ -454,11 +469,13 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
                 100, 50, null));
 
         Log.setLogOutput(new ILogOutput() {
+            @Override
             public void printAndPromptLog(final LogLevel logLevel, final String tag,
                     final String message) {
                 Log.printLog(logLevel, tag, message);
                 // dialog box only run in UI thread..
                 mDisplay.asyncExec(new Runnable() {
+                    @Override
                     public void run() {
                         Shell activeShell = mDisplay.getActiveShell();
                         if (logLevel == LogLevel.ERROR) {
@@ -470,6 +487,7 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
                 });
             }
 
+            @Override
             public void printLog(LogLevel logLevel, String tag, String message) {
                 Log.printLog(logLevel, tag, message);
             }
@@ -581,6 +599,7 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
 
         // add listener for resize/move
         shell.addControlListener(new ControlListener() {
+            @Override
             public void controlMoved(ControlEvent e) {
                 // get the new x/y
                 Rectangle controlBounds = shell.getBounds();
@@ -590,6 +609,7 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
                 currentPrefs.setValue(PrefsDialog.SHELL_Y, controlBounds.y);
             }
 
+            @Override
             public void controlResized(ControlEvent e) {
                 // get the new w/h
                 Rectangle controlBounds = shell.getBounds();
@@ -649,6 +669,7 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
 
         // add listener for resize/move
         shell.addControlListener(new ControlListener() {
+            @Override
             public void controlMoved(ControlEvent e) {
                 // get the new x/y
                 Rectangle controlBounds = shell.getBounds();
@@ -658,6 +679,7 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
                 currentPrefs.setValue(PrefsDialog.EXPLORER_SHELL_Y, controlBounds.y);
             }
 
+            @Override
             public void controlResized(ControlEvent e) {
                 // get the new w/h
                 Rectangle controlBounds = shell.getBounds();
@@ -720,14 +742,17 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
 
         IMenuBarEnhancer enhancer = MenuBarEnhancer.setupMenu(APP_NAME, fileMenu,
                 new IMenuBarCallback() {
+            @Override
             public void printError(String format, Object... args) {
                 Log.e("DDMS Menu Bar", String.format(format, args));
             }
 
+            @Override
             public void onPreferencesMenuSelected() {
                 PrefsDialog.run(shell);
             }
 
+            @Override
             public void onAboutMenuSelected() {
                 AboutDialog dlg = new AboutDialog(shell);
                 dlg.open();
@@ -1002,6 +1027,7 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
 
         // allow resizes, but cap at minPanelWidth
         sash.addListener(SWT.Selection, new Listener() {
+            @Override
             public void handleEvent(Event e) {
                 Rectangle sashRect = sash.getBounds();
                 Rectangle panelRect = panelArea.getClientArea();
@@ -1200,6 +1226,7 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
 
         // allow resizes, but cap at minPanelWidth
         sash.addListener(SWT.Selection, new Listener() {
+            @Override
             public void handleEvent(Event e) {
                 Rectangle sashRect = sash.getBounds();
                 Rectangle panelRect = comp.getClientArea();
@@ -1580,23 +1607,28 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
             mExplorer.switchDevice(mCurrentDevice);
 
             mExplorerShell.addShellListener(new ShellListener() {
+                @Override
                 public void shellActivated(ShellEvent e) {
                     // pass
                 }
 
+                @Override
                 public void shellClosed(ShellEvent e) {
                     mExplorer = null;
                     mExplorerShell = null;
                 }
 
+                @Override
                 public void shellDeactivated(ShellEvent e) {
                     // pass
                 }
 
+                @Override
                 public void shellDeiconified(ShellEvent e) {
                     // pass
                 }
 
+                @Override
                 public void shellIconified(ShellEvent e) {
                     // pass
                 }
@@ -1619,6 +1651,7 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
     public void setStatusLine(final String str) {
         try {
             mDisplay.asyncExec(new Runnable() {
+                @Override
                 public void run() {
                     doSetStatusLine(str);
                 }
@@ -1644,6 +1677,7 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
     public void displayError(final String msg) {
         try {
             mDisplay.syncExec(new Runnable() {
+                @Override
                 public void run() {
                     MessageDialog.openError(mDisplay.getActiveShell(), "Error",
                             msg);
@@ -1713,6 +1747,7 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
      *
      * @see IUiSelectionListener
      */
+    @Override
     public void selectionChanged(IDevice selectedDevice, Client selectedClient) {
         if (mCurrentDevice != selectedDevice) {
             mCurrentDevice = selectedDevice;
@@ -1750,11 +1785,13 @@ public class UIThread implements IUiSelectionListener, IClientChangeListener {
         }
     }
 
+    @Override
     public void clientChanged(Client client, int changeMask) {
         if ((changeMask & Client.CHANGE_METHOD_PROFILING_STATUS) ==
                 Client.CHANGE_METHOD_PROFILING_STATUS) {
             if (mCurrentClient == client) {
                 mDisplay.asyncExec(new Runnable() {
+                    @Override
                     public void run() {
                         // force refresh of the button enabled state.
                         enableButtons();

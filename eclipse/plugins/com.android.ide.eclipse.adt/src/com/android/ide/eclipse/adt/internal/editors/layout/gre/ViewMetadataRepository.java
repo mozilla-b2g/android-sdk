@@ -16,13 +16,15 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.gre;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
 import static com.android.ide.common.layout.LayoutConstants.FQCN_BUTTON;
 import static com.android.ide.common.layout.LayoutConstants.FQCN_SPINNER;
 import static com.android.ide.common.layout.LayoutConstants.FQCN_TOGGLE_BUTTON;
 import static com.android.ide.common.layout.LayoutConstants.ID_PREFIX;
 import static com.android.ide.common.layout.LayoutConstants.NEW_ID_PREFIX;
+import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.VIEW_FRAGMENT;
+import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.VIEW_INCLUDE;
+import static com.android.util.XmlUtils.ANDROID_URI;
 
 import com.android.annotations.VisibleForTesting;
 import com.android.ide.common.api.IViewMetadata.FillPreference;
@@ -51,6 +53,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -208,7 +211,7 @@ public class ViewMetadataRepository {
                 Document document = builder.parse(is);
                 Map<String, FillPreference> fillTypes = new HashMap<String, FillPreference>();
                 for (FillPreference pref : FillPreference.values()) {
-                    fillTypes.put(pref.toString().toLowerCase(), pref);
+                    fillTypes.put(pref.toString().toLowerCase(Locale.US), pref);
                 }
 
                 NodeList categoryNodes = document.getDocumentElement().getChildNodes();
@@ -440,11 +443,13 @@ public class ViewMetadataRepository {
 
         // Implements Iterable<ViewData> such that we can use for-each on the category to
         // enumerate its views
+        @Override
         public Iterator<ViewData> iterator() {
             return mViews.iterator();
         }
 
         // Implements Comparable<CategoryData> such that categories can be naturally sorted
+        @Override
         public int compareTo(CategoryData other) {
             return mOrdinal - other.mOrdinal;
         }
@@ -514,6 +519,7 @@ public class ViewMetadataRepository {
         }
 
         // Implements Comparable<ViewData> such that views can be sorted naturally
+        @Override
         public int compareTo(ViewData other) {
             return mOrdinal - other.mOrdinal;
         }
@@ -546,7 +552,11 @@ public class ViewMetadataRepository {
                             break;
                         }
                     }
-                    assert found : basename;
+                    if (basename.equals(VIEW_FRAGMENT) || basename.equals(VIEW_INCLUDE)) {
+                        result.add(basename);
+                    } else {
+                        assert found : basename;
+                    }
                 }
 
                 return result;

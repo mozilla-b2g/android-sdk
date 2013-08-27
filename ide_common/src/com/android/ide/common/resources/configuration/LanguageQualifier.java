@@ -16,6 +16,7 @@
 
 package com.android.ide.common.resources.configuration;
 
+import java.util.Locale;
 import java.util.regex.Pattern;
 
 /**
@@ -51,7 +52,7 @@ public final class LanguageQualifier extends ResourceQualifier {
      * @param value the value of the qualifier, as returned by {@link #getValue()}.
      */
     public static String getFolderSegment(String value) {
-        String segment = value.toLowerCase();
+        String segment = value.toLowerCase(Locale.US);
         if (sLanguagePattern.matcher(segment).matches()) {
             return segment;
         }
@@ -83,6 +84,11 @@ public final class LanguageQualifier extends ResourceQualifier {
     @Override
     public String getShortName() {
         return NAME;
+    }
+
+    @Override
+    public int since() {
+        return 1;
     }
 
     @Override

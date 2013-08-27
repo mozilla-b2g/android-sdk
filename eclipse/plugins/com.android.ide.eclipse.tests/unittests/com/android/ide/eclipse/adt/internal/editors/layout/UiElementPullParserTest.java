@@ -44,10 +44,8 @@ public class UiElementPullParserTest extends TestCase {
     private TextAttributeDescriptor createTextAttrDesc(String xmlName) {
         return new TextAttributeDescriptor(
                 xmlName,    // xmlLocalName
-                xmlName,    // uiName
-                SdkConstants.NS_RESOURCES, // ns uri
-                "",         // tooltip
-                new AttributeInfo(xmlName, new Format[] { Format.STRING })
+                SdkConstants.NS_RESOURCES,
+                new AttributeInfo(xmlName, Format.STRING_SET)
                 );
     }
 

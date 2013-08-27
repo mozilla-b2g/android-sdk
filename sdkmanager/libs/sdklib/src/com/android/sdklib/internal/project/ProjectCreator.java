@@ -369,8 +369,8 @@ public class ProjectCreator {
                     keywords);
 
             // install the proguard config file.
-            installTemplate(SdkConstants.FN_PROGUARD_CFG,
-                    new File(projectFolder, SdkConstants.FN_PROGUARD_CFG),
+            installTemplate(SdkConstants.FN_PROJECT_PROGUARD_FILE,
+                    new File(projectFolder, SdkConstants.FN_PROJECT_PROGUARD_FILE),
                     null /*keywords*/);
         } catch (Exception e) {
             mLog.error(e, null);
@@ -751,8 +751,10 @@ public class ProjectCreator {
 
         if (hasProguard == false) {
             try {
-                installTemplate(SdkConstants.FN_PROGUARD_CFG,
-                        new File(projectFolder, SdkConstants.FN_PROGUARD_CFG),
+                installTemplate(SdkConstants.FN_PROJECT_PROGUARD_FILE,
+                        // Write ProGuard config files with the extension .pro which
+                        // is what is used in the ProGuard documentation and samples
+                        new File(projectFolder, SdkConstants.FN_PROJECT_PROGUARD_FILE),
                         null /*placeholderMap*/);
             } catch (ProjectCreateException e) {
                 mLog.error(e, null);
@@ -927,8 +929,9 @@ public class ProjectCreator {
     private Matcher checkFileContainsRegexp(File file, String regexp) {
         Pattern p = Pattern.compile(regexp);
 
+        BufferedReader in = null;
         try {
-            BufferedReader in = new BufferedReader(new FileReader(file));
+            in = new BufferedReader(new FileReader(file));
             String line;
 
             while ((line = in.readLine()) != null) {
@@ -941,6 +944,14 @@ public class ProjectCreator {
             in.close();
         } catch (Exception e) {
             // ignore
+        } finally {
+            if (in != null) {
+                try {
+                    in.close();
+                } catch (IOException e) {
+                    // ignore
+                }
+            }
         }
 
         return null;
@@ -1151,6 +1162,8 @@ public class ProjectCreator {
 
         boolean installedIcon = false;
 
+        installedIcon |= installIcon(templateFolder, "ic_launcher_xhdpi.png", resourceFolder,
+                "drawable-xhdpi");
         installedIcon |= installIcon(templateFolder, "ic_launcher_hdpi.png", resourceFolder,
                 "drawable-hdpi");
         installedIcon |= installIcon(templateFolder, "ic_launcher_mdpi.png", resourceFolder,

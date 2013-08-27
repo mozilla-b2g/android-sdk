@@ -16,9 +16,16 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.gre;
 
+import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
+import static com.android.ide.common.layout.LayoutConstants.NEW_ID_PREFIX;
 import static com.android.sdklib.SdkConstants.CLASS_FRAGMENT;
 import static com.android.sdklib.SdkConstants.CLASS_V4_FRAGMENT;
+import static com.android.tools.lint.detector.api.LintConstants.AUTO_URI;
+import static com.android.tools.lint.detector.api.LintConstants.URI_PREFIX;
+import static com.android.util.XmlUtils.ANDROID_URI;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.api.IClientRulesEngine;
 import com.android.ide.common.api.INode;
 import com.android.ide.common.api.IValidator;
@@ -26,22 +33,28 @@ import com.android.ide.common.api.IViewMetadata;
 import com.android.ide.common.api.IViewRule;
 import com.android.ide.common.api.Margins;
 import com.android.ide.common.api.Rect;
+import com.android.ide.common.layout.BaseViewRule;
 import com.android.ide.common.resources.ResourceRepository;
 import com.android.ide.eclipse.adt.AdtPlugin;
-import com.android.ide.eclipse.adt.internal.actions.AddCompatibilityJarAction;
+import com.android.ide.eclipse.adt.internal.actions.AddSupportJarAction;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.DescriptorsUtils;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.configuration.ConfigurationComposite;
+import com.android.ide.eclipse.adt.internal.editors.layout.gle2.CanvasViewInfo;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.GraphicalEditorPart;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.LayoutCanvas;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.RenderService;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.SelectionManager;
+import com.android.ide.eclipse.adt.internal.editors.layout.gle2.ViewHierarchy;
 import com.android.ide.eclipse.adt.internal.editors.manifest.ManifestInfo;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiDocumentNode;
 import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper;
 import com.android.ide.eclipse.adt.internal.resources.CyclicDependencyValidator;
+import com.android.ide.eclipse.adt.internal.resources.ResourceNameValidator;
 import com.android.ide.eclipse.adt.internal.resources.manager.ResourceManager;
 import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetData;
+import com.android.ide.eclipse.adt.internal.sdk.ProjectState;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.ide.eclipse.adt.internal.ui.MarginChooser;
 import com.android.ide.eclipse.adt.internal.ui.ReferenceChooserDialog;
@@ -85,11 +98,17 @@ import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Shell;
 import org.eclipse.ui.dialogs.SelectionDialog;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -105,32 +124,39 @@ class ClientRulesEngine implements IClientRulesEngine {
         mFqcn = fqcn;
     }
 
-    public String getFqcn() {
+    @Override
+    public @NonNull String getFqcn() {
         return mFqcn;
     }
 
-    public void debugPrintf(String msg, Object... params) {
+    @Override
+    public void debugPrintf(@NonNull String msg, Object... params) {
         AdtPlugin.printToConsole(
                 mFqcn == null ? "<unknown>" : mFqcn,
                 String.format(msg, params)
                 );
     }
 
-    public IViewRule loadRule(String fqcn) {
+    @Override
+    public IViewRule loadRule(@NonNull String fqcn) {
         return mRulesEngine.loadRule(fqcn, fqcn);
     }
 
-    public void displayAlert(String message) {
+    @Override
+    public void displayAlert(@NonNull String message) {
         MessageDialog.openInformation(
                 AdtPlugin.getDisplay().getActiveShell(),
                 mFqcn,  // title
                 message);
     }
 
-    public String displayInput(String message, String value, final IValidator filter) {
+    @Override
+    public String displayInput(@NonNull String message, @Nullable String value,
+            final @Nullable IValidator filter) {
         IInputValidator validator = null;
         if (filter != null) {
             validator = new IInputValidator() {
+                @Override
                 public String isValid(String newText) {
                     // IValidator has the same interface as SWT's IInputValidator
                     try {
@@ -155,48 +181,120 @@ class ClientRulesEngine implements IClientRulesEngine {
         return null;
     }
 
-    public IViewMetadata getMetadata(final String fqcn) {
+    @Override
+    @Nullable
+    public Object getViewObject(@NonNull INode node) {
+        ViewHierarchy views = mRulesEngine.getEditor().getCanvasControl().getViewHierarchy();
+        CanvasViewInfo vi = views.findViewInfoFor(node);
+        if (vi != null) {
+            return vi.getViewObject();
+        }
+
+        return null;
+    }
+
+    @Override
+    public @NonNull IViewMetadata getMetadata(final @NonNull String fqcn) {
         return new IViewMetadata() {
-            public String getDisplayName() {
+            @Override
+            public @NonNull String getDisplayName() {
                 // This also works when there is no "."
                 return fqcn.substring(fqcn.lastIndexOf('.') + 1);
             }
 
-            public FillPreference getFillPreference() {
+            @Override
+            public @NonNull FillPreference getFillPreference() {
                 return ViewMetadataRepository.get().getFillPreference(fqcn);
             }
 
-            public Margins getInsets() {
+            @Override
+            public @NonNull Margins getInsets() {
                 return mRulesEngine.getEditor().getCanvasControl().getInsets(fqcn);
             }
 
-            public List<String> getTopAttributes() {
+            @Override
+            public @NonNull List<String> getTopAttributes() {
                 return ViewMetadataRepository.get().getTopAttributes(fqcn);
             }
         };
     }
 
+    @Override
     public int getMinApiLevel() {
         Sdk currentSdk = Sdk.getCurrent();
         if (currentSdk != null) {
             IAndroidTarget target = currentSdk.getTarget(mRulesEngine.getEditor().getProject());
-            return target.getVersion().getApiLevel();
+            if (target != null) {
+                return target.getVersion().getApiLevel();
+            }
         }
 
         return -1;
     }
 
-    public IValidator getResourceValidator() {
-        // When https://review.source.android.com/#change,20168 is integrated,
-        // change this to
-        //return ResourceNameValidator.create(false, mEditor.getProject(), ResourceType.ID);
-        return null;
+    @Override
+    public IValidator getResourceValidator(
+            @NonNull final String resourceTypeName, final boolean uniqueInProject,
+            final boolean uniqueInLayout, final boolean exists, final String... allowed) {
+        return new IValidator() {
+            private ResourceNameValidator mValidator;
+
+            @Override
+            public String validate(@NonNull String text) {
+                if (mValidator == null) {
+                    ResourceType type = ResourceType.getEnum(resourceTypeName);
+                    if (uniqueInLayout) {
+                        assert !uniqueInProject;
+                        assert !exists;
+                        Set<String> existing = new HashSet<String>();
+                        Document doc = mRulesEngine.getEditor().getModel().getXmlDocument();
+                        if (doc != null) {
+                            addIds(doc, existing);
+                        }
+                        for (String s : allowed) {
+                            existing.remove(s);
+                        }
+                        mValidator = ResourceNameValidator.create(false, existing, type);
+                    } else {
+                        assert allowed.length == 0;
+                        IProject project = mRulesEngine.getEditor().getProject();
+                        mValidator = ResourceNameValidator.create(false, project, type);
+                        if (uniqueInProject) {
+                            mValidator.unique();
+                        }
+                    }
+                    if (exists) {
+                        mValidator.exist();
+                    }
+                }
+
+                return mValidator.isValid(text);
+            }
+        };
     }
 
-    public String displayReferenceInput(String currentValue) {
+    /** Find declared ids under the given DOM node */
+    private static void addIds(Node node, Set<String> ids) {
+        if (node.getNodeType() == Node.ELEMENT_NODE) {
+            Element element = (Element) node;
+            String id = element.getAttributeNS(ANDROID_URI, ATTR_ID);
+            if (id != null && id.startsWith(NEW_ID_PREFIX)) {
+                ids.add(BaseViewRule.stripIdPrefix(id));
+            }
+        }
+
+        NodeList children = node.getChildNodes();
+        for (int i = 0, n = children.getLength(); i < n; i++) {
+            Node child = children.item(i);
+            addIds(child, ids);
+        }
+    }
+
+    @Override
+    public String displayReferenceInput(@Nullable String currentValue) {
         GraphicalEditorPart graphicalEditor = mRulesEngine.getEditor();
-        AndroidXmlEditor editor = graphicalEditor.getLayoutEditor();
-        IProject project = editor.getProject();
+        LayoutEditorDelegate delegate = graphicalEditor.getEditorDelegate();
+        IProject project = delegate.getEditor().getProject();
         if (project != null) {
             // get the resource repository for this project and the system resources.
             ResourceRepository projectRepository =
@@ -221,63 +319,31 @@ class ClientRulesEngine implements IClientRulesEngine {
         return null;
     }
 
-    public String displayResourceInput(String resourceTypeName, String currentValue) {
+    @Override
+    public String displayResourceInput(@NonNull String resourceTypeName,
+            @Nullable String currentValue) {
         return displayResourceInput(resourceTypeName, currentValue, null);
     }
 
     private String displayResourceInput(String resourceTypeName, String currentValue,
             IInputValidator validator) {
-        GraphicalEditorPart graphicalEditor = mRulesEngine.getEditor();
-        AndroidXmlEditor editor = graphicalEditor.getLayoutEditor();
-        IProject project = editor.getProject();
         ResourceType type = ResourceType.getEnum(resourceTypeName);
-        if (project != null) {
-            // get the resource repository for this project and the system resources.
-            ResourceRepository projectRepository = ResourceManager.getInstance()
-                    .getProjectResources(project);
-            Shell shell = AdtPlugin.getDisplay().getActiveShell();
-            if (shell == null) {
-                return null;
-            }
-
-            AndroidTargetData data = editor.getTargetData();
-            ResourceRepository systemRepository = data.getFrameworkResources();
-
-            // open a resource chooser dialog for specified resource type.
-            ResourceChooser dlg = new ResourceChooser(project, type, projectRepository,
-                    systemRepository, shell);
-            dlg.setPreviewHelper(new ResourcePreviewHelper(dlg, graphicalEditor));
-
-            if (validator != null) {
-                // Ensure wide enough to accommodate validator error message
-                dlg.setSize(85, 10);
-                dlg.setInputValidator(validator);
-            }
-
-            dlg.setCurrentResource(currentValue);
-
-            int result = dlg.open();
-            if (result == ResourceChooser.CLEAR_RETURN_CODE) {
-                return ""; //$NON-NLS-1$
-            } else if (result == Window.OK) {
-                return dlg.getCurrentResource();
-            }
-        }
-
-        return null;
+        GraphicalEditorPart graphicalEditor = mRulesEngine.getEditor();
+        return ResourceChooser.chooseResource(graphicalEditor, type, currentValue, validator);
     }
 
-    public String[] displayMarginInput(String all, String left, String right, String top,
-            String bottom) {
-        AndroidXmlEditor editor = mRulesEngine.getEditor().getLayoutEditor();
+    @Override
+    public String[] displayMarginInput(@Nullable String all, @Nullable String left,
+            @Nullable String right, @Nullable String top, @Nullable String bottom) {
+        GraphicalEditorPart editor = mRulesEngine.getEditor();
         IProject project = editor.getProject();
         if (project != null) {
             Shell shell = AdtPlugin.getDisplay().getActiveShell();
             if (shell == null) {
                 return null;
             }
-            AndroidTargetData data = editor.getTargetData();
-            MarginChooser dialog = new MarginChooser(shell, project, data, all, left, right,
+            AndroidTargetData data = editor.getEditorDelegate().getEditor().getTargetData();
+            MarginChooser dialog = new MarginChooser(shell, editor, data, all, left, right,
                     top, bottom);
             if (dialog.open() == Window.OK) {
                 return dialog.getMargins();
@@ -287,13 +353,15 @@ class ClientRulesEngine implements IClientRulesEngine {
         return null;
     }
 
+    @Override
     public String displayIncludeSourceInput() {
-        AndroidXmlEditor editor = mRulesEngine.getEditor().getLayoutEditor();
+        AndroidXmlEditor editor = mRulesEngine.getEditor().getEditorDelegate().getEditor();
         IInputValidator validator = CyclicDependencyValidator.create(editor.getInputFile());
         return displayResourceInput(ResourceType.LAYOUT.getName(), null, validator);
     }
 
-    public void select(final Collection<INode> nodes) {
+    @Override
+    public void select(final @NonNull Collection<INode> nodes) {
         LayoutCanvas layoutCanvas = mRulesEngine.getEditor().getCanvasControl();
         final SelectionManager selectionManager = layoutCanvas.getSelectionManager();
         selectionManager.select(nodes);
@@ -301,12 +369,14 @@ class ClientRulesEngine implements IClientRulesEngine {
         // may not be selectable. We can't ONLY run an async exec since
         // code may depend on operating on the selection.
         layoutCanvas.getDisplay().asyncExec(new Runnable() {
+            @Override
             public void run() {
                 selectionManager.select(nodes);
             }
         });
     }
 
+    @Override
     public String displayFragmentSourceInput() {
         try {
             // Compute a search scope: We need to merge all the subclasses
@@ -320,6 +390,7 @@ class ClientRulesEngine implements IClientRulesEngine {
                 // First check to make sure fragments are available, and if not,
                 // warn the user.
                 IAndroidTarget target = Sdk.getCurrent().getTarget(project);
+                // No, this should be using the min SDK instead!
                 if (target.getVersion().getApiLevel() < 11 && oldFragmentType == null) {
                     // Compatibility library must be present
                     MessageDialog dialog =
@@ -335,8 +406,7 @@ class ClientRulesEngine implements IClientRulesEngine {
                           1 /* default button: Cancel */);
                       int answer = dialog.open();
                       if (answer == 0) {
-                          if (!AddCompatibilityJarAction.install(project,
-                                  true /*waitForFinish*/)) {
+                          if (!AddSupportJarAction.install(project)) {
                               return null;
                           }
                       } else {
@@ -402,6 +472,7 @@ class ClientRulesEngine implements IClientRulesEngine {
                         @Override
                         public ITypeInfoFilterExtension getFilterExtension() {
                             return new ITypeInfoFilterExtension() {
+                                @Override
                                 public boolean select(ITypeInfoRequestor typeInfoRequestor) {
                                     int modifiers = typeInfoRequestor.getModifiers();
                                     if (!Flags.isPublic(modifiers)
@@ -437,16 +508,19 @@ class ClientRulesEngine implements IClientRulesEngine {
         return null;
     }
 
+    @Override
     public void redraw() {
         mRulesEngine.getEditor().getCanvasControl().redraw();
     }
 
+    @Override
     public void layout() {
         mRulesEngine.getEditor().recomputeLayout();
     }
 
-    public Map<INode, Rect> measureChildren(INode parent,
-            IClientRulesEngine.AttributeFilter filter) {
+    @Override
+    public Map<INode, Rect> measureChildren(@NonNull INode parent,
+            @Nullable IClientRulesEngine.AttributeFilter filter) {
         RenderService renderService = RenderService.create(mRulesEngine.getEditor());
         Map<INode, Rect> map = renderService.measureChildren(parent, filter);
         if (map == null) {
@@ -455,18 +529,21 @@ class ClientRulesEngine implements IClientRulesEngine {
         return map;
     }
 
+    @Override
     public int pxToDp(int px) {
         ConfigurationComposite config = mRulesEngine.getEditor().getConfigurationComposite();
         float dpi = config.getDensity().getDpiValue();
         return (int) (px * 160 / dpi);
     }
 
+    @Override
     public int dpToPx(int dp) {
         ConfigurationComposite config = mRulesEngine.getEditor().getConfigurationComposite();
         float dpi = config.getDensity().getDpiValue();
         return (int) (dp * dpi / 160);
     }
 
+    @Override
     public int screenToLayout(int pixels) {
         return (int) (pixels / mRulesEngine.getEditor().getCanvasControl().getScale());
     }
@@ -503,15 +580,24 @@ class ClientRulesEngine implements IClientRulesEngine {
         }
     }
 
-    public String getUniqueId(String fqcn) {
+    @Override
+    public @NonNull String getUniqueId(@NonNull String fqcn) {
         UiDocumentNode root = mRulesEngine.getEditor().getModel();
         String prefix = fqcn.substring(fqcn.lastIndexOf('.') + 1);
         prefix = Character.toLowerCase(prefix.charAt(0)) + prefix.substring(1);
         return DescriptorsUtils.getFreeWidgetId(root, prefix);
     }
 
-    public String getAppNameSpace() {
-        ManifestInfo info = ManifestInfo.get(mRulesEngine.getEditor().getProject());
-        return info.getPackage();
+    @Override
+    public @NonNull String getAppNameSpace() {
+        IProject project = mRulesEngine.getEditor().getProject();
+
+        ProjectState projectState = Sdk.getProjectState(project);
+        if (projectState != null && projectState.isLibrary()) {
+            return AUTO_URI;
+        }
+
+        ManifestInfo info = ManifestInfo.get(project);
+        return URI_PREFIX + info.getPackage();
     }
 }

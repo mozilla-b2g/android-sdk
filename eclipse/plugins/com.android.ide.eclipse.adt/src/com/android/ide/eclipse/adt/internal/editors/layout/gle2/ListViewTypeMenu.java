@@ -20,9 +20,11 @@ import static com.android.ide.eclipse.adt.internal.editors.layout.gle2.LayoutMet
 import static com.android.ide.eclipse.adt.internal.editors.layout.gle2.LayoutMetadata.KEY_LV_HEADER;
 import static com.android.ide.eclipse.adt.internal.editors.layout.gle2.LayoutMetadata.KEY_LV_ITEM;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.rendering.api.Capability;
 import com.android.ide.common.resources.ResourceRepository;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.uimodel.UiViewElementNode;
 import com.android.ide.eclipse.adt.internal.resources.CyclicDependencyValidator;
 import com.android.ide.eclipse.adt.internal.resources.manager.ResourceManager;
@@ -70,7 +72,7 @@ public class ListViewTypeMenu extends SubmenuAction {
 
     @Override
     protected void addMenuItems(Menu menu) {
-        GraphicalEditorPart graphicalEditor = mCanvas.getLayoutEditor().getGraphicalEditor();
+        GraphicalEditorPart graphicalEditor = mCanvas.getEditorDelegate().getGraphicalEditor();
         if (graphicalEditor.renderingSupports(Capability.ADAPTER_BINDING)) {
             IAction action = new PickLayoutAction("Choose Layout...", KEY_LV_ITEM);
             new ActionContributionItem(action).fill(menu, -1);
@@ -148,7 +150,9 @@ public class ListViewTypeMenu extends SubmenuAction {
 
         @Override
         public void run() {
-            setNewType(KEY_LV_ITEM, ANDROID_LAYOUT_PREFIX + mLayout);
+            if (isChecked()) {
+                setNewType(KEY_LV_ITEM, ANDROID_LAYOUT_PREFIX + mLayout);
+            }
         }
     }
 
@@ -166,21 +170,22 @@ public class ListViewTypeMenu extends SubmenuAction {
 
         @Override
         public void run() {
-            LayoutEditor editor = mCanvas.getLayoutEditor();
-            IProject project = editor.getProject();
+            LayoutEditorDelegate delegate = mCanvas.getEditorDelegate();
+            IProject project = delegate.getEditor().getProject();
             // get the resource repository for this project and the system resources.
             ResourceRepository projectRepository = ResourceManager.getInstance()
                     .getProjectResources(project);
             Shell shell = mCanvas.getShell();
 
-            AndroidTargetData data = editor.getTargetData();
+            AndroidTargetData data = delegate.getEditor().getTargetData();
             ResourceRepository systemRepository = data.getFrameworkResources();
 
             ResourceChooser dlg = new ResourceChooser(project,
                     ResourceType.LAYOUT, projectRepository,
                     systemRepository, shell);
 
-            IInputValidator validator = CyclicDependencyValidator.create(editor.getInputFile());
+            IInputValidator validator =
+                CyclicDependencyValidator.create(delegate.getEditor().getInputFile());
 
             if (validator != null) {
                 // Ensure wide enough to accommodate validator error message
@@ -203,33 +208,35 @@ public class ListViewTypeMenu extends SubmenuAction {
         }
     }
 
+    @Nullable
     private String getSelectedLayout() {
         String layout = null;
-        LayoutEditor editor = mCanvas.getLayoutEditor();
-        LayoutMetadata metadata = LayoutMetadata.get();
         SelectionManager selectionManager = mCanvas.getSelectionManager();
         for (SelectionItem item : selectionManager.getSelections()) {
             UiViewElementNode node = item.getViewInfo().getUiViewNode();
-
-            Node xmlNode = node.getXmlNode();
-            layout = metadata.getProperty(editor, xmlNode, KEY_LV_ITEM);
-            if (layout != null) {
-                return layout;
+            if (node != null) {
+                Node xmlNode = node.getXmlNode();
+                layout = LayoutMetadata.getProperty(xmlNode, KEY_LV_ITEM);
+                if (layout != null) {
+                    return layout;
+                }
             }
         }
+
         return null;
     }
 
-    public void setNewType(String type, String layout) {
-        LayoutEditor editor = mCanvas.getLayoutEditor();
-        GraphicalEditorPart graphicalEditor = editor.getGraphicalEditor();
-        LayoutMetadata metadata = LayoutMetadata.get();
+    private void setNewType(@NonNull String type, @Nullable String layout) {
+        LayoutEditorDelegate delegate = mCanvas.getEditorDelegate();
+        GraphicalEditorPart graphicalEditor = delegate.getGraphicalEditor();
         SelectionManager selectionManager = mCanvas.getSelectionManager();
 
-        for (SelectionItem item : selectionManager.getSelections()) {
+        for (SelectionItem item : selectionManager.getSnapshot()) {
             UiViewElementNode node = item.getViewInfo().getUiViewNode();
-            Node xmlNode = node.getXmlNode();
-            metadata.setProperty(editor, xmlNode, type, layout);
+            if (node != null) {
+                Node xmlNode = node.getXmlNode();
+                LayoutMetadata.setProperty(delegate.getEditor(), xmlNode, type, layout);
+            }
         }
 
         // Refresh

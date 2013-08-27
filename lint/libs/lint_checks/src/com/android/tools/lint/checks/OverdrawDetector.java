@@ -16,7 +16,6 @@
 
 package com.android.tools.lint.checks;
 
-import static com.android.tools.lint.detector.api.LintConstants.ANDROID_STYLE_RESOURCE_PREFIX;
 import static com.android.tools.lint.detector.api.LintConstants.ANDROID_URI;
 import static com.android.tools.lint.detector.api.LintConstants.ATTR_BACKGROUND;
 import static com.android.tools.lint.detector.api.LintConstants.ATTR_NAME;
@@ -36,16 +35,16 @@ import static com.android.tools.lint.detector.api.LintConstants.TRANSPARENT_COLO
 import static com.android.tools.lint.detector.api.LintConstants.VALUE_DISABLED;
 import static com.android.tools.lint.detector.api.LintUtils.endsWith;
 
+import com.android.annotations.NonNull;
 import com.android.resources.ResourceFolderType;
-import com.android.tools.lint.client.api.IDomParser;
 import com.android.tools.lint.detector.api.Category;
 import com.android.tools.lint.detector.api.Context;
 import com.android.tools.lint.detector.api.Detector;
 import com.android.tools.lint.detector.api.Issue;
+import com.android.tools.lint.detector.api.JavaContext;
 import com.android.tools.lint.detector.api.LayoutDetector;
 import com.android.tools.lint.detector.api.LintUtils;
 import com.android.tools.lint.detector.api.Location;
-import com.android.tools.lint.detector.api.Position;
 import com.android.tools.lint.detector.api.Project;
 import com.android.tools.lint.detector.api.Scope;
 import com.android.tools.lint.detector.api.Severity;
@@ -62,6 +61,7 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -69,12 +69,21 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import lombok.ast.AstVisitor;
+import lombok.ast.ClassDeclaration;
+import lombok.ast.CompilationUnit;
+import lombok.ast.Expression;
+import lombok.ast.ForwardingAstVisitor;
+import lombok.ast.MethodInvocation;
+import lombok.ast.Select;
+import lombok.ast.StrictListAccessor;
+import lombok.ast.VariableReference;
+
 /**
  * Check which looks for overdraw problems where view areas are painted and then
  * painted over, meaning that the bottom paint operation is a waste of time.
  */
 public class OverdrawDetector extends LayoutDetector implements Detector.JavaScanner {
-    private static final String R_LAYOUT_PREFIX = "R.layout.";  //$NON-NLS-1$
     private static final String R_STYLE_PREFIX = "R.style.";    //$NON-NLS-1$
     private static final String SET_THEME = "setTheme";         //$NON-NLS-1$
 
@@ -140,7 +149,7 @@ public class OverdrawDetector extends LayoutDetector implements Detector.JavaSca
     }
 
     @Override
-    public boolean appliesTo(ResourceFolderType folderType) {
+    public boolean appliesTo(@NonNull ResourceFolderType folderType) {
         // Look in layouts for drawable resources
         return super.appliesTo(folderType)
                 // and in resource files for theme definitions
@@ -150,12 +159,12 @@ public class OverdrawDetector extends LayoutDetector implements Detector.JavaSca
     }
 
     @Override
-    public boolean appliesTo(Context context, File file) {
+    public boolean appliesTo(@NonNull Context context, @NonNull File file) {
         return LintUtils.isXmlFile(file) || LintUtils.endsWith(file.getName(), DOT_JAVA);
     }
 
     @Override
-    public Speed getSpeed() {
+    public @NonNull Speed getSpeed() {
         return Speed.FAST;
     }
 
@@ -186,10 +195,17 @@ public class OverdrawDetector extends LayoutDetector implements Detector.JavaSca
     }
 
     @Override
-    public void afterCheckProject(Context context) {
+    public void afterCheckProject(@NonNull Context context) {
         if (mRootAttributes != null) {
             for (Pair<Location, String> pair : mRootAttributes) {
                 Location location = pair.getFirst();
+
+                Object clientData = location.getClientData();
+                if (clientData instanceof Node) {
+                    if (context.getDriver().isSuppressed(ISSUE, (Node) clientData)) {
+                        return;
+                    }
+                }
 
                 String layoutName = location.getFile().getName();
                 if (endsWith(layoutName, DOT_XML)) {
@@ -203,6 +219,7 @@ public class OverdrawDetector extends LayoutDetector implements Detector.JavaSca
                             "Possible overdraw: Root element paints background %1$s with " +
                             "a theme that also paints a background (inferred theme is %2$s)",
                             drawable, theme);
+                    // TODO: Compute applicable scope node
                     context.report(ISSUE, location, message, null);
                 }
 
@@ -228,7 +245,7 @@ public class OverdrawDetector extends LayoutDetector implements Detector.JavaSca
             return mManifestTheme;
         }
 
-        Project project = context.getProject();
+        Project project = context.getMainProject();
         int apiLevel = project.getTargetSdk();
         if (apiLevel == -1) {
             apiLevel = project.getMinSdk();
@@ -244,7 +261,7 @@ public class OverdrawDetector extends LayoutDetector implements Detector.JavaSca
     // ---- Implements XmlScanner ----
 
     @Override
-    public void visitAttribute(XmlContext context, Attr attribute) {
+    public void visitAttribute(@NonNull XmlContext context, @NonNull Attr attribute) {
         // Only consider the root element's background
         if (attribute.getOwnerDocument().getDocumentElement() == attribute.getOwnerElement()) {
             // If the drawable is a non-repeated pattern then the overdraw might be
@@ -273,6 +290,7 @@ public class OverdrawDetector extends LayoutDetector implements Detector.JavaSca
             }
 
             Location location = context.getLocation(attribute);
+            location.setClientData(attribute);
             if (mRootAttributes == null) {
                 mRootAttributes = new ArrayList<Pair<Location,String>>();
             }
@@ -282,15 +300,15 @@ public class OverdrawDetector extends LayoutDetector implements Detector.JavaSca
 
     @Override
     public Collection<String> getApplicableAttributes() {
-        return Arrays.asList(new String[] {
+        return Collections.singletonList(
                 // Layouts: Look for background attributes on root elements for possible overdraw
-                ATTR_BACKGROUND,
-        });
+                ATTR_BACKGROUND
+        );
     }
 
     @Override
     public Collection<String> getApplicableElements() {
-        return Arrays.asList(new String[] {
+        return Arrays.asList(
                 // Manifest: Look at theme registrations
                 TAG_ACTIVITY,
                 TAG_APPLICATION,
@@ -300,11 +318,11 @@ public class OverdrawDetector extends LayoutDetector implements Detector.JavaSca
 
                 // Bitmaps
                 TAG_BITMAP
-        });
+        );
     }
 
     @Override
-    public void beforeCheckFile(Context context) {
+    public void beforeCheckFile(@NonNull Context context) {
         if (endsWith(context.file.getName(), DOT_XML)) {
             // Drawable XML files should not be considered for overdraw, except for <bitmap>'s.
             // The bitmap elements are handled in the scanBitmap() method; it will clear
@@ -322,7 +340,7 @@ public class OverdrawDetector extends LayoutDetector implements Detector.JavaSca
     }
 
     @Override
-    public void visitElement(XmlContext context, Element element) {
+    public void visitElement(@NonNull XmlContext context, @NonNull Element element) {
         String tag = element.getTagName();
         if (tag.equals(TAG_STYLE)) {
             scanTheme(element);
@@ -385,6 +403,10 @@ public class OverdrawDetector extends LayoutDetector implements Detector.JavaSca
         // Look for theme definitions, and record themes that provide a null background.
         String styleName = element.getAttribute(ATTR_NAME);
         String parent = element.getAttribute(ATTR_PARENT);
+        if (parent == null) {
+            // Eclipse DOM workaround
+            parent = "";
+        }
 
         if (parent.length() == 0) {
             int index = styleName.lastIndexOf('.');
@@ -439,121 +461,92 @@ public class OverdrawDetector extends LayoutDetector implements Detector.JavaSca
     // ---- Implements JavaScanner ----
 
     @Override
-    public void checkJavaSources(Context context, List<File> sourceFolders) {
-        if (mActivities == null) {
-            return;
-        }
-
-        // For right now, this is hacked via String scanning in .java files instead.
-        for (File dir : sourceFolders) {
-            scanJavaFile(context, dir, null);
-        }
+    public List<Class<? extends lombok.ast.Node>> getApplicableNodeTypes() {
+        // This detector does not specify specific node types; this means
+        // that the infrastructure will run the full visitor on the compilation
+        // unit rather than on individual nodes. This is important since this
+        // detector relies on pruning (if it gets to a class declaration that is
+        // not an activity, it skips everything inside).
+        return null;
     }
 
-    // TODO: Use a proper Java AST... Not only does this rely on string pattern
-    // matching, it also does not track inheritance so if you inherit code from another
-    // activity (such as setTheme) calls those won't be reflected in all the children...
-    private void scanJavaFile(Context context, File file, String pkg) {
-        String fileName = file.getName();
-        if (fileName.endsWith(DOT_JAVA) && file.exists()) {
-            String clz = fileName.substring(0, fileName.length() - DOT_JAVA.length());
-            String fqn = pkg + '.' + clz;
+    @Override
+    public AstVisitor createJavaVisitor(@NonNull JavaContext context) {
+        return new OverdrawVisitor();
+    }
 
-            if (mActivities.contains(fqn) || fqn.endsWith("Activity")) { //$NON-NLS-1$
-                String code = context.getClient().readFile(file);
-                scanLayoutReferences(code, fqn);
-                scanThemeReferences(code, fqn);
-            }
-        } else if (file.isDirectory()) {
-            File[] children = file.listFiles();
-            if (children != null) {
-                String subPackage;
-                if (pkg == null) {
-                    subPackage = "";
-                } else if (pkg.length() == 0) {
-                    subPackage = file.getName();
-                } else {
-                    subPackage = pkg + '.' + file.getName();
+    private class OverdrawVisitor extends ForwardingAstVisitor {
+        private static final String ACTIVITY = "Activity"; //$NON-NLS-1$
+        private String mClassFqn;
+
+        @Override
+        public boolean visitClassDeclaration(ClassDeclaration node) {
+            String name = node.getDescription();
+
+            if (mActivities != null && mActivities.contains(mClassFqn) || name.endsWith(ACTIVITY)
+                    || node.astExtending() != null &&
+                        node.astExtending().getDescription().endsWith(ACTIVITY)) {
+                String packageName = "";
+                if (node.getParent() instanceof CompilationUnit) {
+                    CompilationUnit compilationUnit = (CompilationUnit) node.getParent();
+                    packageName = compilationUnit.astPackageDeclaration().getPackageName();
                 }
-                for (File child : children) {
-                    scanJavaFile(context, child, subPackage);
+                mClassFqn = (packageName.length() > 0 ? (packageName + '.') : "") + name;
+
+                return false;
+            }
+
+            return true; // Done: No need to look inside this class
+        }
+
+        // Store R.layout references in activity classes in a map mapping back layouts
+        // to activities
+        @Override
+        public boolean visitSelect(Select node) {
+            if (node.astIdentifier().astValue().equals("layout") //$NON-NLS-1$
+                    && node.astOperand() instanceof VariableReference
+                    && ((VariableReference) node.astOperand()).astIdentifier().astValue()
+                        .equals("R")                             //$NON-NLS-1$
+                    && node.getParent() instanceof Select) {
+                String layout = ((Select) node.getParent()).astIdentifier().astValue();
+                if (mLayoutToActivity == null) {
+                    mLayoutToActivity = new HashMap<String, List<String>>();
+                }
+                List<String> list = mLayoutToActivity.get(layout);
+                if (list == null) {
+                    list = new ArrayList<String>();
+                    mLayoutToActivity.put(layout, list);
+                }
+                list.add(mClassFqn);
+            }
+
+            return false;
+        }
+
+
+        // Look for setTheme(R.style.whatever) and register as a theme registration
+        // for the current activity
+        @Override
+        public boolean visitMethodInvocation(MethodInvocation node) {
+            if (node.astName().astValue().equals(SET_THEME)) {
+                // Look at argument
+                StrictListAccessor<Expression, MethodInvocation> args = node.astArguments();
+                if (args.size() == 1) {
+                    Expression arg = args.first();
+                    if (arg instanceof Select) {
+                        String resource = arg.toString();
+                        if (resource.startsWith(R_STYLE_PREFIX)) {
+                            if (mActivityToTheme == null) {
+                                mActivityToTheme = new HashMap<String, String>();
+                            }
+                            String name = ((Select) arg).astIdentifier().astValue();
+                            mActivityToTheme.put(mClassFqn, STYLE_RESOURCE_PREFIX + name);
+                        }
+                    }
                 }
             }
-        }
-    }
 
-    /** Look for setTheme references in this file and if found store activity-to-theme mapping */
-    private void scanThemeReferences(String code, String fqn) {
-        int index = 0;
-        int length = code.length();
-        // Search for R.layout references based on simple string patterns.
-        // This needs to be replaced with a proper AST search as soon as we
-        // have AST support in lint.
-        while (index < length) {
-            index = code.indexOf(SET_THEME, index);
-            if (index == -1) {
-                break;
-            }
-
-            index += SET_THEME.length();
-            index = code.indexOf(R_STYLE_PREFIX, index);
-            if (index == -1) {
-                break;
-            }
-            int styleStart = index;
-            index += R_STYLE_PREFIX.length();
-
-            int start = index;
-            while (index < length && Character.isJavaIdentifierPart(code.charAt(index))) {
-                index++;
-            }
-            String style = code.substring(start, index);
-
-            String resource;
-            String androidPkgPrefix = "android."; //$NON-NLS-1$
-            if (styleStart > androidPkgPrefix.length() &&
-                    code.regionMatches(styleStart - androidPkgPrefix.length(),
-                            androidPkgPrefix, 0, androidPkgPrefix.length())) {
-                resource = ANDROID_STYLE_RESOURCE_PREFIX + style;
-            } else {
-                resource = STYLE_RESOURCE_PREFIX + style;
-            }
-            if (mActivityToTheme == null) {
-                mActivityToTheme = new HashMap<String, String>();
-            }
-            mActivityToTheme.put(fqn, resource);
-        }
-    }
-
-    /** Look for layout references in this file and if found store layout-to-activity mapping */
-    private void scanLayoutReferences(String code, String fqn) {
-        int index = 0;
-        int length = code.length();
-        // Search for R.layout references based on simple string patterns.
-        // This needs to be replaced with a proper AST search as soon as we
-        // have AST support in lint.
-        while (index < length) {
-            index = code.indexOf(R_LAYOUT_PREFIX, index);
-            if (index == -1) {
-                break;
-            }
-
-            index += R_LAYOUT_PREFIX.length();
-            int start = index;
-            while (index < length && Character.isJavaIdentifierPart(code.charAt(index))) {
-                index++;
-            }
-            String layout = code.substring(start, index);
-
-            if (mLayoutToActivity == null) {
-                mLayoutToActivity = new HashMap<String, List<String>>();
-            }
-            List<String> list = mLayoutToActivity.get(layout);
-            if (list == null) {
-                list = new ArrayList<String>();
-                mLayoutToActivity.put(layout, list);
-            }
-            list.add(fqn);
+            return false;
         }
     }
 }

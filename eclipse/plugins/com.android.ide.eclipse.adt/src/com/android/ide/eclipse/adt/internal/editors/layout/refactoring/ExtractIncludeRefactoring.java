@@ -16,8 +16,6 @@
 package com.android.ide.eclipse.adt.internal.editors.layout.refactoring;
 
 import static com.android.AndroidConstants.FD_RES_LAYOUT;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_NS_NAME;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_HEIGHT;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_PREFIX;
@@ -28,19 +26,22 @@ import static com.android.ide.common.layout.LayoutConstants.VALUE_WRAP_CONTENT;
 import static com.android.ide.eclipse.adt.AdtConstants.DOT_XML;
 import static com.android.ide.eclipse.adt.AdtConstants.EXT_XML;
 import static com.android.ide.eclipse.adt.AdtConstants.WS_SEP;
-import static com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor.XMLNS;
-import static com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor.XMLNS_COLON;
 import static com.android.resources.ResourceType.LAYOUT;
 import static com.android.sdklib.SdkConstants.FD_RES;
+import static com.android.util.XmlUtils.ANDROID_NS_NAME;
+import static com.android.util.XmlUtils.ANDROID_URI;
+import static com.android.util.XmlUtils.XMLNS;
+import static com.android.util.XmlUtils.XMLNS_COLON;
 
 import com.android.AndroidConstants;
+import com.android.annotations.NonNull;
 import com.android.annotations.VisibleForTesting;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.editors.formatting.XmlFormatPreferences;
 import com.android.ide.eclipse.adt.internal.editors.formatting.XmlFormatStyle;
 import com.android.ide.eclipse.adt.internal.editors.formatting.XmlPrettyPrinter;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.CanvasViewInfo;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.DomUtilities;
@@ -48,6 +49,7 @@ import com.android.ide.eclipse.adt.internal.editors.layout.uimodel.UiViewElement
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
 import com.android.ide.eclipse.adt.internal.resources.ResourceNameValidator;
 import com.android.sdklib.SdkConstants;
+import com.android.util.XmlUtils;
 
 import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
@@ -89,6 +91,7 @@ import org.w3c.dom.Node;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -114,13 +117,16 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
         mReplaceOccurrences  = Boolean.parseBoolean(arguments.get(KEY_OCCURRENCES));
     }
 
-    public ExtractIncludeRefactoring(IFile file, LayoutEditor editor, ITextSelection selection,
+    public ExtractIncludeRefactoring(
+            IFile file,
+            LayoutEditorDelegate delegate,
+            ITextSelection selection,
             ITreeSelection treeSelection) {
-        super(file, editor, selection, treeSelection);
+        super(file, delegate, selection, treeSelection);
     }
 
     @VisibleForTesting
-    ExtractIncludeRefactoring(List<Element> selectedElements, LayoutEditor editor) {
+    ExtractIncludeRefactoring(List<Element> selectedElements, LayoutEditorDelegate editor) {
         super(selectedElements, editor);
     }
 
@@ -216,7 +222,7 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
     // ---- Actual implementation of Extract as Include modification computation ----
 
     @Override
-    protected List<Change> computeChanges(IProgressMonitor monitor) {
+    protected @NonNull List<Change> computeChanges(IProgressMonitor monitor) {
         String extractedText = getExtractedText();
 
         String namespaceDeclarations = computeNamespaceDeclarations();
@@ -232,8 +238,11 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
         List<Change> changes = new ArrayList<Change>();
 
         String newFileName = mLayoutName + DOT_XML;
-        IProject project = mEditor.getProject();
-        IFile sourceFile = mEditor.getInputFile();
+        IProject project = mDelegate.getEditor().getProject();
+        IFile sourceFile = mDelegate.getEditor().getInputFile();
+        if (sourceFile == null) {
+            return changes;
+        }
 
         // Replace extracted elements by <include> tag
         handleIncludingFile(changes, sourceFile, mSelectionStart, mSelectionEnd,
@@ -423,8 +432,9 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
             // id null check for https://bugs.eclipse.org/bugs/show_bug.cgi?id=272378
             if (id != null && (id.startsWith(ID_PREFIX) || id.startsWith(NEW_ID_PREFIX))) {
                 // Use everything following the id/, and make it lowercase since that is
-                // the convention for layouts
-                defaultName = id.substring(id.indexOf('/') + 1).toLowerCase();
+                // the convention for layouts (and use Locale.US to ensure that "Image" becomes
+                // "image" etc)
+                defaultName = id.substring(id.indexOf('/') + 1).toLowerCase(Locale.US);
 
                 IInputValidator validator = ResourceNameValidator.create(true, mProject, LAYOUT);
 
@@ -447,16 +457,17 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
             public Change perform(IProgressMonitor pm) throws CoreException {
                 Display display = AdtPlugin.getDisplay();
                 display.asyncExec(new Runnable() {
+                    @Override
                     public void run() {
                         openFile(file);
-                        mEditor.getGraphicalEditor().refreshProjectResources();
+                        mDelegate.getGraphicalEditor().refreshProjectResources();
                         // Save file to trigger include finder scanning (as well as making
                         // the
                         // actual show-include feature work since it relies on reading
                         // files from
                         // disk, not a live buffer)
-                        IWorkbenchPage page = mEditor.getEditorSite().getPage();
-                        page.saveEditor(mEditor, false);
+                        IWorkbenchPage page = mDelegate.getEditor().getEditorSite().getPage();
+                        page.saveEditor(mDelegate.getEditor(), false);
                     }
                 });
 
@@ -487,7 +498,7 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
                         androidNsPrefix = androidNsPrefix.substring(XMLNS_COLON.length());
                     }
                 }
-                sb.append(DomUtilities.toXmlAttributeValue(value));
+                sb.append(XmlUtils.toXmlAttributeValue(value));
                 sb.append('"');
             }
         }
@@ -576,7 +587,7 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
             sb.append(':');
             sb.append(ATTR_LAYOUT_WIDTH);
             sb.append('=').append('"');
-            sb.append(DomUtilities.toXmlAttributeValue(width));
+            sb.append(XmlUtils.toXmlAttributeValue(width));
             sb.append('"');
         }
         if (height != null) {
@@ -585,7 +596,7 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
             sb.append(':');
             sb.append(ATTR_LAYOUT_HEIGHT);
             sb.append('=').append('"');
-            sb.append(DomUtilities.toXmlAttributeValue(height));
+            sb.append(XmlUtils.toXmlAttributeValue(height));
             sb.append('"');
         }
 
@@ -607,7 +618,7 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
                     sb.append(':');
                     sb.append(name);
                     sb.append('=').append('"');
-                    sb.append(DomUtilities.toXmlAttributeValue(attr.getNodeValue()));
+                    sb.append(XmlUtils.toXmlAttributeValue(attr.getNodeValue()));
                     sb.append('"');
                 }
             }
@@ -642,7 +653,7 @@ public class ExtractIncludeRefactoring extends VisualRefactoring {
 
     @Override
     VisualRefactoringWizard createWizard() {
-        return new ExtractIncludeWizard(this, mEditor);
+        return new ExtractIncludeWizard(this, mDelegate);
     }
 
     public static class Descriptor extends VisualRefactoringDescriptor {

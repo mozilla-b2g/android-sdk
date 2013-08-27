@@ -18,6 +18,7 @@ package com.android.tools.lint.checks;
 
 import static com.android.tools.lint.detector.api.LintConstants.ANDROID_URI;
 
+import com.android.annotations.NonNull;
 import com.android.resources.ResourceFolderType;
 import com.android.tools.lint.detector.api.Category;
 import com.android.tools.lint.detector.api.Issue;
@@ -57,17 +58,17 @@ public class StateListDetector extends ResourceXmlDetector {
     }
 
     @Override
-    public boolean appliesTo(ResourceFolderType folderType) {
+    public boolean appliesTo(@NonNull ResourceFolderType folderType) {
         return folderType == ResourceFolderType.DRAWABLE;
     }
 
     @Override
-    public Speed getSpeed() {
+    public @NonNull Speed getSpeed() {
         return Speed.FAST;
     }
 
     @Override
-    public void visitDocument(XmlContext context, Document document) {
+    public void visitDocument(@NonNull XmlContext context, @NonNull Document document) {
         // TODO: Look for views that don't specify
         // Display the error token somewhere so it can be suppressed
         // Emit warning at the end "run with --help to learn how to suppress types of errors/checks";
@@ -82,6 +83,9 @@ public class StateListDetector extends ResourceXmlDetector {
                 NamedNodeMap attributes = child.getAttributes();
                 for (int j = 0; j < attributes.getLength(); j++) {
                     Attr attribute = (Attr) attributes.item(j);
+                    if (attribute.getLocalName() == null) {
+                        continue;
+                    }
                     if (attribute.getLocalName().startsWith("state_")) {
                         hasState = true;
                         break;
@@ -98,7 +102,7 @@ public class StateListDetector extends ResourceXmlDetector {
                     }
                 }
                 if (!hasState) {
-                    context.report(ISSUE, context.getLocation(child),
+                    context.report(ISSUE, child, context.getLocation(child),
                         String.format("No android:state_ attribute found on <item> %1$d, later states not reachable",
                                 i), null);
                 }

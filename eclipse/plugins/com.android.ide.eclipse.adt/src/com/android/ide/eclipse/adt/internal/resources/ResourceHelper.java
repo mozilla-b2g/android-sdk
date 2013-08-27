@@ -17,15 +17,14 @@
 package com.android.ide.eclipse.adt.internal.resources;
 
 import static com.android.AndroidConstants.FD_RES_VALUES;
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
+import static com.android.util.XmlUtils.ANDROID_URI;
 import static com.android.ide.common.resources.ResourceResolver.PREFIX_ANDROID_STYLE;
+import static com.android.ide.common.resources.ResourceResolver.PREFIX_RESOURCE_REF;
 import static com.android.ide.common.resources.ResourceResolver.PREFIX_STYLE;
 import static com.android.ide.eclipse.adt.AdtConstants.ANDROID_PKG;
 import static com.android.ide.eclipse.adt.AdtConstants.DOT_XML;
 import static com.android.ide.eclipse.adt.AdtConstants.EXT_XML;
 import static com.android.ide.eclipse.adt.AdtConstants.WS_SEP;
-import static com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors.NAME_ATTR;
-import static com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors.TYPE_ATTR;
 import static com.android.sdklib.SdkConstants.FD_RESOURCES;
 
 import com.android.ide.common.rendering.api.ResourceValue;
@@ -55,11 +54,11 @@ import com.android.ide.common.resources.configuration.UiModeQualifier;
 import com.android.ide.common.resources.configuration.VersionQualifier;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
+import com.android.ide.eclipse.adt.internal.editors.Hyperlinks;
 import com.android.ide.eclipse.adt.internal.editors.IconFactory;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.ImageUtils;
 import com.android.ide.eclipse.adt.internal.editors.layout.refactoring.VisualRefactoring;
-import com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors;
-import com.android.ide.eclipse.adt.internal.editors.xml.Hyperlinks;
+import com.android.ide.eclipse.adt.internal.editors.values.descriptors.ValuesDescriptors;
 import com.android.ide.eclipse.adt.internal.wizards.newxmlfile.NewXmlFileWizard;
 import com.android.resources.FolderTypeRelationship;
 import com.android.resources.ResourceFolderType;
@@ -408,9 +407,9 @@ public class ResourceHelper {
                                 elementImpl.setEmptyTag(true);
                             }
                         }
-                        element.setAttribute(NAME_ATTR, name);
+                        element.setAttribute(ValuesDescriptors.NAME_ATTR, name);
                         if (!tagName.equals(typeName)) {
-                            element.setAttribute(TYPE_ATTR, typeName);
+                            element.setAttribute(ValuesDescriptors.TYPE_ATTR, typeName);
                         }
                         root.insertBefore(element, nextChild);
                         IRegion region = null;
@@ -447,7 +446,7 @@ public class ResourceHelper {
             String prolog = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"; //$NON-NLS-1$
             StringBuilder sb = new StringBuilder(prolog);
 
-            String root = ResourcesDescriptors.ROOT_ELEMENT;
+            String root = ValuesDescriptors.ROOT_ELEMENT;
             sb.append('<').append(root).append('>').append('\n');
             sb.append("    "); //$NON-NLS-1$
             sb.append('<');
@@ -509,8 +508,27 @@ public class ResourceHelper {
             style = style.substring(PREFIX_STYLE.length());
         } else if (style.startsWith(PREFIX_ANDROID_STYLE)) {
             style = style.substring(PREFIX_ANDROID_STYLE.length());
+        } else if (style.startsWith(PREFIX_RESOURCE_REF)) {
+            // @package:style/foo
+            int index = style.indexOf('/');
+            if (index != -1) {
+                style = style.substring(index + 1);
+            }
         }
         return style;
+    }
+
+    /**
+     * Returns true if the given style represents a project theme
+     *
+     * @param style a theme style string
+     * @return true if the style string represents a project theme, as opposed
+     *         to a framework theme
+     */
+    public static boolean isProjectStyle(String style) {
+        assert style.startsWith(PREFIX_STYLE) || style.startsWith(PREFIX_ANDROID_STYLE) : style;
+
+        return style.startsWith(PREFIX_STYLE);
     }
 
     /**

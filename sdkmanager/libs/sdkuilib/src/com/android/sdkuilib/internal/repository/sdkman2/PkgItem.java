@@ -16,11 +16,12 @@
 
 package com.android.sdkuilib.internal.repository.sdkman2;
 
-import com.android.sdklib.internal.repository.Archive;
-import com.android.sdklib.internal.repository.IPackageVersion;
-import com.android.sdklib.internal.repository.Package;
-import com.android.sdklib.internal.repository.SdkSource;
-import com.android.sdklib.internal.repository.Package.UpdateInfo;
+import com.android.sdklib.internal.repository.archives.Archive;
+import com.android.sdklib.internal.repository.packages.FullRevision;
+import com.android.sdklib.internal.repository.packages.IAndroidVersionProvider;
+import com.android.sdklib.internal.repository.packages.Package;
+import com.android.sdklib.internal.repository.packages.Package.UpdateInfo;
+import com.android.sdklib.internal.repository.sources.SdkSource;
 
 /**
  * A {@link PkgItem} represents one main {@link Package} combined with its state
@@ -40,8 +41,8 @@ public class PkgItem implements Comparable<PkgItem> {
      * a given remote package and the local repository.
      */
     public enum PkgState {
-        // Implementation detail: order matters. Installed items must be dealt with before
-        // new items and the order of PkgState.values() matters.
+        // Implementation detail: if this is changed then PackageDiffLogic#STATES
+        // and PackageDiffLogic#processSource() need to be changed accordingly.
 
         /**
          * Package is locally installed and may or may not have an update.
@@ -89,7 +90,7 @@ public class PkgItem implements Comparable<PkgItem> {
         return mMainPkg.getListDescription();
     }
 
-    public int getRevision() {
+    public FullRevision getRevision() {
         return mMainPkg.getRevision();
     }
 
@@ -110,8 +111,8 @@ public class PkgItem implements Comparable<PkgItem> {
     }
 
     public int getApi() {
-        return mMainPkg instanceof IPackageVersion ?
-                ((IPackageVersion) mMainPkg).getVersion().getApiLevel() :
+        return mMainPkg instanceof IAndroidVersionProvider ?
+                ((IAndroidVersionProvider) mMainPkg).getAndroidVersion().getApiLevel() :
                     -1;
     }
 
@@ -119,6 +120,7 @@ public class PkgItem implements Comparable<PkgItem> {
         return mMainPkg.getArchives();
     }
 
+    @Override
     public int compareTo(PkgItem pkg) {
         return getMainPackage().compareTo(pkg.getMainPackage());
     }
@@ -148,24 +150,24 @@ public class PkgItem implements Comparable<PkgItem> {
 
     /**
      * Checks whether the main packages are of the same type and are
-     * not an update of each other.
+     * not an update of each other and have the same revision number.
      */
     public boolean isSameMainPackageAs(Package pkg) {
         if (mMainPkg.canBeUpdatedBy(pkg) == UpdateInfo.NOT_UPDATE) {
             // package revision numbers must match
-            return mMainPkg.getRevision() == pkg.getRevision();
+            return mMainPkg.getRevision().equals(pkg.getRevision());
         }
         return false;
     }
 
     /**
      * Checks whether the update packages are of the same type and are
-     * not an update of each other.
+     * not an update of each other and have the same revision numbers.
      */
     public boolean isSameUpdatePackageAs(Package pkg) {
         if (mUpdatePkg != null && mUpdatePkg.canBeUpdatedBy(pkg) == UpdateInfo.NOT_UPDATE) {
             // package revision numbers must match
-            return mUpdatePkg.getRevision() == pkg.getRevision();
+            return mUpdatePkg.getRevision().equals(pkg.getRevision());
         }
         return false;
     }

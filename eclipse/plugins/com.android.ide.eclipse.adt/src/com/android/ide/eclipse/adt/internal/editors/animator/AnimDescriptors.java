@@ -15,13 +15,13 @@
  */
 package com.android.ide.eclipse.adt.internal.editors.animator;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_NS_NAME;
+import static com.android.util.XmlUtils.ANDROID_NS_NAME;
+import static com.android.util.XmlUtils.ANDROID_URI;
 
 import com.android.ide.common.resources.platform.DeclareStyleableInfo;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.IDescriptorProvider;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor;
-import com.android.sdklib.SdkConstants;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -37,6 +37,7 @@ public class AnimDescriptors implements IDescriptorProvider {
     private Map<String, ElementDescriptor> nameToDescriptor;
 
     /** @return the root descriptor. */
+    @Override
     public ElementDescriptor getDescriptor() {
         if (mDescriptor == null) {
             mDescriptor = new ElementDescriptor("", getRootElementDescriptors()); //$NON-NLS-1$
@@ -45,6 +46,7 @@ public class AnimDescriptors implements IDescriptorProvider {
         return mDescriptor;
     }
 
+    @Override
     public ElementDescriptor[] getRootElementDescriptors() {
         return mRootDescriptors;
     }
@@ -70,7 +72,7 @@ public class AnimDescriptors implements IDescriptorProvider {
         }
 
         XmlnsAttributeDescriptor xmlns = new XmlnsAttributeDescriptor(ANDROID_NS_NAME,
-                SdkConstants.NS_RESOURCES);
+                ANDROID_URI);
 
         List<ElementDescriptor> descriptors = new ArrayList<ElementDescriptor>();
 

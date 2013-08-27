@@ -19,6 +19,7 @@ package com.android.sdkmanager;
 import com.android.sdklib.ISdkLog;
 import com.android.sdklib.SdkManager;
 import com.android.sdklib.repository.SdkRepoConstants;
+import com.android.sdklib.util.CommandLineParser;
 
 import java.util.Arrays;
 
@@ -26,7 +27,7 @@ import java.util.Arrays;
 /**
  * Specific command-line flags for the {@link SdkManager}.
  */
-class SdkCommandLine extends CommandLineProcessor {
+class SdkCommandLine extends CommandLineParser {
 
     /*
      * Steps needed to add a new action:
@@ -79,7 +80,7 @@ class SdkCommandLine extends CommandLineProcessor {
     public static final String KEY_PROXY_PORT   = "proxy-port";                     //$NON-NLS-1$
     public static final String KEY_PROXY_HOST   = "proxy-host";                     //$NON-NLS-1$
     public static final String KEY_DRY_MODE     = "dry-mode";                       //$NON-NLS-1$
-    public static final String KEY_OBSOLETE     = "obsolete";                       //$NON-NLS-1$
+    public static final String KEY_ALL          = "all";                            //$NON-NLS-1$
     public static final String KEY_EXTENDED     = "extended";                       //$NON-NLS-1$
     public static final String KEY_SNAPSHOT     = "snapshot";                       //$NON-NLS-1$
     public static final String KEY_COMPACT      = "compact";                        //$NON-NLS-1$
@@ -90,6 +91,7 @@ class SdkCommandLine extends CommandLineProcessor {
     public static final String KEY_ALIAS        = "alias";                          //$NON-NLS-1$
     public static final String KEY_STOREPASS    = "storepass";                      //$NON-NLS-1$
     public static final String KEY_KEYPASS      = "keypass";                        //$NON-NLS-1$
+    public static final String KEY_CLEAR_CACHE   = "clear-cache";                   //$NON-NLS-1$
 
     /**
      * Action definitions for SdkManager command line.
@@ -163,6 +165,12 @@ class SdkCommandLine extends CommandLineProcessor {
         super(logger, ACTIONS);
 
         // The following defines the parameters of the actions defined in mAction.
+
+        // --- generic actions that can work on any verb ---
+
+        define(Mode.BOOLEAN, false,
+                GLOBAL_FLAG_VERB, NO_VERB_OBJECT, ""/*shortName*/, KEY_CLEAR_CACHE, //$NON-NLS-1$
+                "Clear the SDK Manager repository manifest cache.", false);         //$NON-NLS-1$
 
         // --- list avds ---
 
@@ -259,8 +267,13 @@ class SdkCommandLine extends CommandLineProcessor {
                 null);
 
         define(Mode.BOOLEAN, false,
-                VERB_LIST, OBJECT_SDK, "o", KEY_OBSOLETE,                           //$NON-NLS-1$
-                "Lists all packages (including obsolete and installed ones)",
+                VERB_LIST, OBJECT_SDK, "a", KEY_ALL,                                //$NON-NLS-1$
+                "Lists all available packages (including obsolete and installed ones)",
+                false);
+
+        define(Mode.BOOLEAN, false,
+                VERB_LIST, OBJECT_SDK, "o", "obsolete",                             //$NON-NLS-1$
+                "Deprecated. Please use --all instead.",
                 false);
 
         define(Mode.BOOLEAN, false,
@@ -301,8 +314,13 @@ class SdkCommandLine extends CommandLineProcessor {
                 null);
 
         define(Mode.BOOLEAN, false,
-                VERB_UPDATE, OBJECT_SDK, "o", KEY_OBSOLETE,                         //$NON-NLS-1$
-                "Installs obsolete packages.",
+                VERB_UPDATE, OBJECT_SDK, "a", KEY_ALL,                              //$NON-NLS-1$
+                "Includes all packages (such as obsolete and non-dependent ones.)",
+                false);
+
+        define(Mode.BOOLEAN, false,
+                VERB_UPDATE, OBJECT_SDK, "p", "obsolete",                             //$NON-NLS-1$
+                "Deprecated. Please use --all instead.",
                 false);
 
         define(Mode.BOOLEAN, false,
@@ -427,6 +445,12 @@ class SdkCommandLine extends CommandLineProcessor {
 
     // -- some helpers for generic action flags
 
+    /** Helper that returns true if --verbose was requested. */
+    public boolean hasClearCache() {
+        return
+            ((Boolean) getValue(GLOBAL_FLAG_VERB, NO_VERB_OBJECT, KEY_CLEAR_CACHE)).booleanValue();
+    }
+
     /** Helper to retrieve the --path value. */
     public String getParamLocationPath() {
         return (String) getValue(null, null, KEY_PATH);
@@ -533,7 +557,12 @@ class SdkCommandLine extends CommandLineProcessor {
 
     /** Helper to retrieve the --obsolete flag. */
     public boolean getFlagObsolete() {
-        return ((Boolean) getValue(null, null, KEY_OBSOLETE)).booleanValue();
+        return ((Boolean) getValue(null, null, "obsolete")).booleanValue();
+    }
+
+    /** Helper to retrieve the --all flag. */
+    public boolean getFlagAll() {
+        return ((Boolean) getValue(null, null, KEY_ALL)).booleanValue();
     }
 
     /** Helper to retrieve the --extended flag. */

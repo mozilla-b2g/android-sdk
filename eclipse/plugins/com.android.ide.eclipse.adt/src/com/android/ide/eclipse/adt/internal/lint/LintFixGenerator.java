@@ -15,6 +15,9 @@
  */
 package com.android.ide.eclipse.adt.internal.lint;
 
+import static com.android.ide.eclipse.adt.AdtConstants.DOT_JAVA;
+import static com.android.ide.eclipse.adt.AdtConstants.DOT_XML;
+
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.AdtUtils;
@@ -24,6 +27,7 @@ import com.android.tools.lint.client.api.Configuration;
 import com.android.tools.lint.client.api.DefaultConfiguration;
 import com.android.tools.lint.client.api.IssueRegistry;
 import com.android.tools.lint.detector.api.Issue;
+import com.android.tools.lint.detector.api.Project;
 import com.android.tools.lint.detector.api.Severity;
 
 import org.eclipse.core.resources.IFile;
@@ -33,6 +37,8 @@ import org.eclipse.core.resources.IResource;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.text.IDocument;
+import org.eclipse.jface.text.IRegion;
+import org.eclipse.jface.text.Region;
 import org.eclipse.jface.text.contentassist.ICompletionProposal;
 import org.eclipse.jface.text.contentassist.IContextInformation;
 import org.eclipse.jface.text.quickassist.IQuickAssistInvocationContext;
@@ -41,14 +47,20 @@ import org.eclipse.jface.text.source.Annotation;
 import org.eclipse.jface.text.source.ISourceViewer;
 import org.eclipse.swt.graphics.Image;
 import org.eclipse.swt.graphics.Point;
+import org.eclipse.ui.IEditorInput;
+import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.IMarkerResolution;
 import org.eclipse.ui.IMarkerResolution2;
 import org.eclipse.ui.IMarkerResolutionGenerator2;
 import org.eclipse.ui.ISharedImages;
+import org.eclipse.ui.PartInitException;
 import org.eclipse.ui.PlatformUI;
+import org.eclipse.ui.part.FileEditorInput;
+import org.eclipse.wst.sse.core.internal.provisional.text.IStructuredDocument;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -93,6 +105,7 @@ public class LintFixGenerator implements IMarkerResolutionGenerator2, IQuickAssi
 
     // ---- Implements IMarkerResolutionGenerator2 ----
 
+    @Override
     public boolean hasResolutions(IMarker marker) {
         try {
             assert marker.getType().equals(AdtConstants.MARKER_LINT);
@@ -102,55 +115,82 @@ public class LintFixGenerator implements IMarkerResolutionGenerator2, IQuickAssi
         return true;
     }
 
+    @Override
     public IMarkerResolution[] getResolutions(IMarker marker) {
-        String id = marker.getAttribute(LintRunner.MARKER_CHECKID_PROPERTY,
+        String id = marker.getAttribute(EclipseLintRunner.MARKER_CHECKID_PROPERTY,
                 ""); //$NON-NLS-1$
         IResource resource = marker.getResource();
-        return new IMarkerResolution[] {
-                new MoreInfoProposal(id, marker.getAttribute(IMarker.MESSAGE, null)),
-                new SuppressProposal(resource, id, false),
-                new SuppressProposal(resource.getProject(), id, true /* all */),
-                new SuppressProposal(resource, id, true /* all */),
-                new ClearMarkersProposal(resource, true /* all */),
-        };
+
+        List<IMarkerResolution> resolutions = new ArrayList<IMarkerResolution>();
+
+        if (resource.getName().endsWith(DOT_JAVA)) {
+            AddSuppressAnnotation.createFixes(marker, id, resolutions);
+        }
+
+        resolutions.add(new MoreInfoProposal(id, marker.getAttribute(IMarker.MESSAGE, null)));
+        resolutions.add(new SuppressProposal(resource, id, false));
+        resolutions.add(new SuppressProposal(resource.getProject(), id, true /* all */));
+        resolutions.add(new SuppressProposal(resource, id, true /* all */));
+        resolutions.add(new ClearMarkersProposal(resource, true /* all */));
+
+        if (resolutions.size() > 0) {
+            return resolutions.toArray(new IMarkerResolution[resolutions.size()]);
+        }
+
+        return null;
     }
 
     // ---- Implements IQuickAssistProcessor ----
 
+    @Override
     public String getErrorMessage() {
         return "Disable Lint Error";
     }
 
+    @Override
     public boolean canFix(Annotation annotation) {
         return true;
     }
 
+    @Override
     public boolean canAssist(IQuickAssistInvocationContext invocationContext) {
         return true;
     }
 
+    @Override
     public ICompletionProposal[] computeQuickAssistProposals(
             IQuickAssistInvocationContext invocationContext) {
         ISourceViewer sourceViewer = invocationContext.getSourceViewer();
-        AndroidXmlEditor editor = AndroidXmlEditor.getAndroidXmlEditor(sourceViewer);
+        AndroidXmlEditor editor = AndroidXmlEditor.fromTextViewer(sourceViewer);
         if (editor != null) {
             IFile file = editor.getInputFile();
+            if (file == null) {
+                return null;
+            }
             IDocument document = sourceViewer.getDocument();
             List<IMarker> markers = AdtUtils.findMarkersOnLine(AdtConstants.MARKER_LINT,
                     file, document, invocationContext.getOffset());
             List<ICompletionProposal> proposals = new ArrayList<ICompletionProposal>();
             if (markers.size() > 0) {
                 for (IMarker marker : markers) {
-                    String id = marker.getAttribute(LintRunner.MARKER_CHECKID_PROPERTY,
+                    String id = marker.getAttribute(EclipseLintRunner.MARKER_CHECKID_PROPERTY,
                             ""); //$NON-NLS-1$
+
                     // TODO: Allow for more than one fix?
-                    ICompletionProposal fix = LintFix.getFix(id, marker);
-                    if (fix != null) {
-                        proposals.add(fix);
+                    List<LintFix> fixes = LintFix.getFixes(id, marker);
+                    if (fixes != null) {
+                        for (LintFix fix : fixes) {
+                            proposals.add(fix);
+                        }
                     }
 
                     String message = marker.getAttribute(IMarker.MESSAGE, null);
                     proposals.add(new MoreInfoProposal(id, message));
+
+                    ICompletionProposal fix = AddSuppressAttribute.createFix(editor, marker, id);
+                    if (fix != null) {
+                        proposals.add(fix);
+                    }
 
                     proposals.add(new SuppressProposal(file, id, false));
                     proposals.add(new SuppressProposal(file.getProject(), id, true /* all */));
@@ -180,8 +220,15 @@ public class LintFixGenerator implements IMarkerResolutionGenerator2, IQuickAssi
         IssueRegistry registry = EclipseLintClient.getRegistry();
         Issue issue = registry.getIssue(id);
         if (issue != null) {
-            EclipseLintClient mClient = new EclipseLintClient(registry, resource, null, false);
-            Configuration configuration = mClient.getConfiguration(null);
+            EclipseLintClient mClient = new EclipseLintClient(registry,
+                    Collections.singletonList(resource), null, false);
+            Project project = null;
+            IProject eclipseProject = resource.getProject();
+            if (eclipseProject != null) {
+                File dir = AdtUtils.getAbsolutePath(eclipseProject).toFile();
+                project = mClient.getProject(dir, dir);
+            }
+            Configuration configuration = mClient.getConfigurationFor(project);
             if (thisFileOnly && configuration instanceof DefaultConfiguration) {
                 File file = AdtUtils.getAbsolutePath(resource).toFile();
                 ((DefaultConfiguration) configuration).ignore(issue, file);
@@ -192,6 +239,73 @@ public class LintFixGenerator implements IMarkerResolutionGenerator2, IQuickAssi
 
         if (updateMarkers) {
             EclipseLintClient.removeMarkers(resource, id);
+        }
+    }
+
+    /**
+     * Adds a suppress lint annotation or attribute depending on whether the
+     * error is in a Java or XML file.
+     *
+     * @param marker the marker pointing to the error to be suppressed
+     */
+    @SuppressWarnings("restriction") // XML model
+    public static void addSuppressAnnotation(IMarker marker) {
+        String id = EclipseLintClient.getId(marker);
+        if (id != null) {
+            IResource resource = marker.getResource();
+            if (!(resource instanceof IFile)) {
+                return;
+            }
+            IFile file = (IFile) resource;
+            boolean isJava = file.getName().endsWith(DOT_JAVA);
+            boolean isXml = AdtUtils.endsWith(file.getName(), DOT_XML);
+            if (!isJava && !isXml) {
+                return;
+            }
+
+            try {
+                // See if the current active file is the one containing this marker;
+                // if so we can take some shortcuts
+                IEditorPart activeEditor = AdtUtils.getActiveEditor();
+                IEditorPart part = null;
+                if (activeEditor != null) {
+                    IEditorInput input = activeEditor.getEditorInput();
+                    if (input instanceof FileEditorInput
+                            && ((FileEditorInput)input).getFile().equals(file)) {
+                        part = activeEditor;
+                    }
+                }
+                if (part == null) {
+                    IRegion region = null;
+                    int start = marker.getAttribute(IMarker.CHAR_START, -1);
+                    int end = marker.getAttribute(IMarker.CHAR_END, -1);
+                    if (start != -1 && end != -1) {
+                        region = new Region(start, end - start);
+                    }
+                    part = AdtPlugin.openFile(file, region, true /* showEditor */);
+                }
+
+                if (isJava) {
+                    List<IMarkerResolution> resolutions = new ArrayList<IMarkerResolution>();
+                    AddSuppressAnnotation.createFixes(marker, id, resolutions);
+                    if (resolutions.size() > 0) {
+                        resolutions.get(0).run(marker);
+                    }
+                } else {
+                    assert isXml;
+                    if (part instanceof AndroidXmlEditor) {
+                        AndroidXmlEditor editor = (AndroidXmlEditor) part;
+                        AddSuppressAttribute fix = AddSuppressAttribute.createFix(editor,
+                                marker, id);
+                        if (fix != null) {
+                            IStructuredDocument document = editor.getStructuredDocument();
+                            fix.apply(document);
+                        }
+                    }
+                }
+            } catch (PartInitException pie) {
+                AdtPlugin.log(pie, null);
+            }
         }
     }
 
@@ -210,6 +324,7 @@ public class LintFixGenerator implements IMarkerResolutionGenerator2, IQuickAssi
             suppressDetector(mId, true, mResource, !mGlobal);
         }
 
+        @Override
         public String getDisplayString() {
             if (mResource instanceof IProject) {
                 return "Disable Check in This Project";
@@ -222,28 +337,34 @@ public class LintFixGenerator implements IMarkerResolutionGenerator2, IQuickAssi
 
         // ---- Implements MarkerResolution2 ----
 
+        @Override
         public String getLabel() {
             return getDisplayString();
         }
 
+        @Override
         public void run(IMarker marker) {
             perform();
         }
 
+        @Override
         public String getDescription() {
             return getAdditionalProposalInfo();
         }
 
         // ---- Implements ICompletionProposal ----
 
+        @Override
         public void apply(IDocument document) {
             perform();
         }
 
+        @Override
         public Point getSelection(IDocument document) {
             return null;
         }
 
+        @Override
         public String getAdditionalProposalInfo() {
             StringBuilder sb = new StringBuilder(200);
             if (mResource instanceof IProject) {
@@ -259,11 +380,13 @@ public class LintFixGenerator implements IMarkerResolutionGenerator2, IQuickAssi
             return sb.toString();
         }
 
+        @Override
         public Image getImage() {
             ISharedImages sharedImages = PlatformUI.getWorkbench().getSharedImages();
             return sharedImages.getImage(ISharedImages.IMG_OBJS_WARN_TSK);
         }
 
+        @Override
         public IContextInformation getContextInformation() {
             return null;
         }
@@ -283,34 +406,41 @@ public class LintFixGenerator implements IMarkerResolutionGenerator2, IQuickAssi
             EclipseLintClient.clearMarkers(resource);
         }
 
+        @Override
         public String getDisplayString() {
             return mGlobal ? "Clear All Lint Markers" : "Clear Markers in This File Only";
         }
 
         // ---- Implements MarkerResolution2 ----
 
+        @Override
         public String getLabel() {
             return getDisplayString();
         }
 
+        @Override
         public void run(IMarker marker) {
             perform();
         }
 
+        @Override
         public String getDescription() {
             return getAdditionalProposalInfo();
         }
 
         // ---- Implements ICompletionProposal ----
 
+        @Override
         public void apply(IDocument document) {
             perform();
         }
 
+        @Override
         public Point getSelection(IDocument document) {
             return null;
         }
 
+        @Override
         public String getAdditionalProposalInfo() {
             StringBuilder sb = new StringBuilder(200);
             if (mGlobal) {
@@ -331,11 +461,13 @@ public class LintFixGenerator implements IMarkerResolutionGenerator2, IQuickAssi
             return sb.toString();
         }
 
+        @Override
         public Image getImage() {
             ISharedImages sharedImages = PlatformUI.getWorkbench().getSharedImages();
             return sharedImages.getImage(ISharedImages.IMG_ELCL_REMOVE);
         }
 
+        @Override
         public IContextInformation getContextInformation() {
             return null;
         }
@@ -376,46 +508,54 @@ public class LintFixGenerator implements IMarkerResolutionGenerator2, IQuickAssi
                     sb.toString());
         }
 
+        @Override
         public String getDisplayString() {
             return "Explain Issue";
         }
 
         // ---- Implements MarkerResolution2 ----
 
+        @Override
         public String getLabel() {
             return getDisplayString();
         }
 
+        @Override
         public void run(IMarker marker) {
             perform();
         }
 
+        @Override
         public String getDescription() {
             return getAdditionalProposalInfo();
         }
 
         // ---- Implements ICompletionProposal ----
 
+        @Override
         public void apply(IDocument document) {
             perform();
         }
 
+        @Override
         public Point getSelection(IDocument document) {
             return null;
         }
 
+        @Override
         public String getAdditionalProposalInfo() {
             return "Provides more information about this issue";
         }
 
+        @Override
         public Image getImage() {
             ISharedImages sharedImages = PlatformUI.getWorkbench().getSharedImages();
             return sharedImages.getImage(ISharedImages.IMG_OBJS_INFO_TSK);
         }
 
+        @Override
         public IContextInformation getContextInformation() {
             return null;
         }
     }
-
 }

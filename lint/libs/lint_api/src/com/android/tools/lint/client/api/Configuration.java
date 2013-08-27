@@ -16,10 +16,13 @@
 
 package com.android.tools.lint.client.api;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.tools.lint.detector.api.Context;
 import com.android.tools.lint.detector.api.Issue;
 import com.android.tools.lint.detector.api.Location;
 import com.android.tools.lint.detector.api.Severity;
+import com.google.common.annotations.Beta;
 
 /**
  * Lint configuration for an Android project such as which specific rules to include,
@@ -28,6 +31,7 @@ import com.android.tools.lint.detector.api.Severity;
  * <b>NOTE: This is not a public or final API; if you rely on this be prepared
  * to adjust your code for the next tools release.</b>
  */
+@Beta
 public abstract class Configuration {
     /**
      * Checks whether this issue should be ignored because the user has already
@@ -40,12 +44,16 @@ public abstract class Configuration {
      * @param location the location of the issue
      * @param message the associated user message
      * @param data additional information about an issue (see
-     *            {@link LintClient#report(Context, Issue, Location, String, Object)} for
-     *            more information
+     *            {@link LintClient#report(Context, Issue, Severity, Location, String, Object)}
+     *            for more information
      * @return true if this issue should be suppressed
      */
-    public boolean isIgnored(Context context, Issue issue, Location location,
-            String message, Object data) {
+    public boolean isIgnored(
+            @NonNull Context context,
+            @NonNull Issue issue,
+            @Nullable Location location,
+            @NonNull String message,
+            @Nullable Object data) {
         return false;
     }
 
@@ -56,7 +64,7 @@ public abstract class Configuration {
      * @param issue the issue to check
      * @return false if the issue has been disabled
      */
-    public boolean isEnabled(Issue issue) {
+    public boolean isEnabled(@NonNull Issue issue) {
         return getSeverity(issue) != Severity.IGNORE;
     }
 
@@ -68,7 +76,7 @@ public abstract class Configuration {
      * @param issue the issue to look up the severity from
      * @return the severity use for issues for the given detector
      */
-    public Severity getSeverity(Issue issue) {
+    public Severity getSeverity(@NonNull Issue issue) {
         return issue.getDefaultSeverity();
     }
 
@@ -79,12 +87,16 @@ public abstract class Configuration {
      *
      * @param context The scanning context
      * @param issue the issue to be ignored
-     * @param location The location to ignore the warning at
+     * @param location The location to ignore the warning at, if any
      * @param message The message for the warning
      * @param data The corresponding data, or null
      */
-    public abstract void ignore(Context context, Issue issue, Location location,
-            String message, Object data);
+    public abstract void ignore(
+            @NonNull Context context,
+            @NonNull Issue issue,
+            @Nullable Location location,
+            @NonNull String message,
+            @Nullable Object data);
 
     /**
      * Sets the severity to be used for this issue.
@@ -93,7 +105,7 @@ public abstract class Configuration {
      * @param severity the severity to associate with this issue, or null to
      *            reset the severity to the default
      */
-    public abstract void setSeverity(Issue issue, Severity severity);
+    public abstract void setSeverity(@NonNull Issue issue, @Nullable Severity severity);
 
     // Bulk editing support
 

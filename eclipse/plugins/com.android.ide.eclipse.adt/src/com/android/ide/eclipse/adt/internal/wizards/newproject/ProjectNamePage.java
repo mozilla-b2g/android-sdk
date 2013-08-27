@@ -18,8 +18,11 @@ package com.android.ide.eclipse.adt.internal.wizards.newproject;
 import static com.android.ide.eclipse.adt.AdtUtils.capitalize;
 import static com.android.ide.eclipse.adt.AdtUtils.stripWhitespace;
 import static com.android.ide.eclipse.adt.internal.wizards.newproject.ApplicationInfoPage.ACTIVITY_NAME_SUFFIX;
+import static com.android.sdklib.SdkConstants.FN_PROJECT_PROGUARD_FILE;
+import static com.android.sdklib.SdkConstants.OS_SDK_TOOLS_LIB_FOLDER;
 
 import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.ide.eclipse.adt.internal.VersionCheck;
 import com.android.ide.eclipse.adt.internal.project.AndroidManifestHelper;
 import com.android.ide.eclipse.adt.internal.wizards.newproject.NewProjectWizardState.Mode;
 import com.android.sdklib.SdkConstants;
@@ -37,6 +40,7 @@ import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.jface.dialogs.IMessageProvider;
 import org.eclipse.jface.viewers.IStructuredSelection;
+import org.eclipse.jface.wizard.IWizardPage;
 import org.eclipse.jface.wizard.WizardPage;
 import org.eclipse.osgi.util.TextProcessor;
 import org.eclipse.swt.SWT;
@@ -62,7 +66,7 @@ import java.util.regex.Pattern;
  * Initial page shown when creating projects which asks for the project name,
  * the the location of the project, working sets, etc.
  */
-class ProjectNamePage extends WizardPage implements SelectionListener, ModifyListener {
+public class ProjectNamePage extends WizardPage implements SelectionListener, ModifyListener {
     private final NewProjectWizardState mValues;
     /** Flag used when setting button/text state manually to ignore listener updates */
     private boolean mIgnore;
@@ -79,12 +83,20 @@ class ProjectNamePage extends WizardPage implements SelectionListener, ModifyLis
     private Text mProjectNameText;
     private Text mLocationText;
     private Button mCreateSampleRadioButton;
-    private Button mCreateExistingRadioButton;
     private Button mCreateNewButton;
     private Button mUseDefaultCheckBox;
     private Button mBrowseButton;
     private Label mLocationLabel;
     private WorkingSetGroup mWorkingSetGroup;
+    /**
+     * Whether we've made sure the Tools are up to date (enough that all the
+     * resources required by the New Project wizard are present -- we don't
+     * necessarily check for newer versions than that here; that's done by
+     * {@link VersionCheck}, though that check doesn't <b>enforce</b> an update
+     * since it needs to allow the user to proceed to access the SDK manager
+     * etc.)
+     */
+    private boolean mCheckedSdkUptodate;
 
     /**
      * Create the wizard.
@@ -108,6 +120,7 @@ class ProjectNamePage extends WizardPage implements SelectionListener, ModifyLis
      * Create contents of the wizard.
      * @param parent the parent to add the page to
      */
+    @Override
     public void createControl(Composite parent) {
         Composite container = new Composite(parent, SWT.NULL);
         container.setLayout(new GridLayout(3, false));
@@ -119,20 +132,14 @@ class ProjectNamePage extends WizardPage implements SelectionListener, ModifyLis
         mProjectNameText.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1));
         mProjectNameText.addModifyListener(this);
 
-        mCreateNewButton = new Button(container, SWT.RADIO);
-        mCreateNewButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false, 3, 1));
-        mCreateNewButton.setText("Create new project in workspace");
-        mCreateNewButton.addSelectionListener(this);
-
-        mCreateExistingRadioButton = new Button(container, SWT.RADIO);
-        mCreateExistingRadioButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false,
-                3, 1));
-        mCreateExistingRadioButton.setText("Create project from existing source");
-        mCreateExistingRadioButton.addSelectionListener(this);
-
-        // TBD: Should we hide this completely, and make samples something you only invoke
-        // from the "New Sample Project" wizard?
         if (mValues.mode != Mode.TEST) {
+            mCreateNewButton = new Button(container, SWT.RADIO);
+            mCreateNewButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false, 3, 1));
+            mCreateNewButton.setText("Create new project in workspace");
+            mCreateNewButton.addSelectionListener(this);
+
+            // TBD: Should we hide this completely, and make samples something you only invoke
+            // from the "New Sample Project" wizard?
             mCreateSampleRadioButton = new Button(container, SWT.RADIO);
             mCreateSampleRadioButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false,
                     3, 1));
@@ -170,29 +177,35 @@ class ProjectNamePage extends WizardPage implements SelectionListener, ModifyLis
         super.setVisible(visible);
 
         if (visible) {
-            if (mValues.projectName != null) {
-                mProjectNameText.setText(mValues.projectName);
-                mProjectNameText.setFocus();
-            }
-            if (mValues.mode == Mode.ANY || mValues.mode == Mode.TEST) {
-                if (mValues.useExisting) {
-                    mCreateExistingRadioButton.setSelection(true);
-                } else {
-                    mCreateNewButton.setSelection(true);
+            try {
+                mIgnore = true;
+                if (mValues.projectName != null) {
+                        mProjectNameText.setText(mValues.projectName);
+                    mProjectNameText.setFocus();
                 }
-            } else if (mValues.mode == Mode.SAMPLE) {
-                mCreateSampleRadioButton.setSelection(true);
+                if (mValues.mode == Mode.ANY || mValues.mode == Mode.TEST) {
+                    if (mValues.useExisting) {
+                        assert false; // This is now handled by the separate import wizard
+                    } else if (mCreateNewButton != null) {
+                        mCreateNewButton.setSelection(true);
+                    }
+                } else if (mValues.mode == Mode.SAMPLE) {
+                    mCreateSampleRadioButton.setSelection(true);
+                }
+                if (mValues.projectLocation != null) {
+                    mLocationText.setText(mValues.projectLocation.getPath());
+                }
+                mUseDefaultCheckBox.setSelection(mValues.useDefaultLocation);
+                updateLocationState();
+            } finally {
+                mIgnore = false;
             }
-            if (mValues.projectLocation != null) {
-                mLocationText.setText(mValues.projectLocation.getPath());
-            }
-            mUseDefaultCheckBox.setSelection(mValues.useDefaultLocation);
-            updateLocationState();
         }
 
         validatePage();
     }
 
+    @Override
     public void modifyText(ModifyEvent e) {
         if (mIgnore) {
             return;
@@ -238,9 +251,12 @@ class ProjectNamePage extends WizardPage implements SelectionListener, ModifyLis
             mValues.testProjectName =
                     ApplicationInfoPage.suggestTestProjectName(mValues.projectName);
         }
-        updateLocationPathField(null);
+        if (!mValues.projectLocationModifiedByUser) {
+            updateLocationPathField(null);
+        }
     }
 
+    @Override
     public void widgetSelected(SelectionEvent e) {
         if (mIgnore) {
             return;
@@ -248,25 +264,16 @@ class ProjectNamePage extends WizardPage implements SelectionListener, ModifyLis
 
         Object source = e.getSource();
 
-        if (source == mCreateNewButton && mCreateNewButton.getSelection()) {
+        if (source == mCreateNewButton && mCreateNewButton != null
+                && mCreateNewButton.getSelection()) {
             mValues.useExisting = false;
-            mValues.mode = Mode.ANY;
-            updateLocationState();
-        } else if (source == mCreateExistingRadioButton
-                && mCreateExistingRadioButton.getSelection()) {
-            mValues.useExisting = true;
-            mValues.mode = Mode.ANY;
-            if (!mValues.activityNameModifiedByUser) {
-                mValues.createActivity = false;
+            if (mValues.mode == Mode.SAMPLE) {
+                // Only reset the mode if we're toggling from sample back to create new
+                // or create existing. We can only come to the sample state when we're in
+                // ANY mode. (In particular, we don't want to switch to ANY if you're
+                // in test mode.
+                mValues.mode = Mode.ANY;
             }
-            try {
-                mIgnore = true;
-                mValues.useDefaultLocation = false;
-                mUseDefaultCheckBox.setSelection(mValues.useDefaultLocation);
-            } finally {
-                mIgnore = false;
-            }
-
             updateLocationState();
         } else if (source == mCreateSampleRadioButton && mCreateSampleRadioButton.getSelection()) {
             mValues.useExisting = true;
@@ -338,6 +345,7 @@ class ProjectNamePage extends WizardPage implements SelectionListener, ModifyLis
         }
     }
 
+    @Override
     public void widgetDefaultSelected(SelectionEvent e) {
     }
 
@@ -346,7 +354,7 @@ class ProjectNamePage extends WizardPage implements SelectionListener, ModifyLis
      *
      * @return the selected working sets to which the new project should be added
      */
-    public IWorkingSet[] getWorkingSets() {
+    private IWorkingSet[] getWorkingSets() {
         return mWorkingSetGroup.getSelectedWorkingSets();
     }
 
@@ -355,7 +363,7 @@ class ProjectNamePage extends WizardPage implements SelectionListener, ModifyLis
      *
      * @param workingSets the initial selected working sets
      */
-    public void setWorkingSets(IWorkingSet[] workingSets) {
+    private void setWorkingSets(IWorkingSet[] workingSets) {
         assert workingSets != null;
         mWorkingSetGroup.setWorkingSets(workingSets);
     }
@@ -439,6 +447,20 @@ class ProjectNamePage extends WizardPage implements SelectionListener, ModifyLis
             IStatus validLocation = validateLocation();
             if (validLocation != null) {
                 status = validLocation;
+            }
+        }
+
+        if (!mCheckedSdkUptodate) {
+            // Ensure that we have a recent enough version of the Tools that the right templates
+            // are available
+            File file = new File(AdtPlugin.getOsSdkFolder(), OS_SDK_TOOLS_LIB_FOLDER
+                    + File.separator + FN_PROJECT_PROGUARD_FILE);
+            if (!file.exists()) {
+                status = new Status(IStatus.ERROR, AdtPlugin.PLUGIN_ID,
+                        String.format("You do not have the latest version of the "
+                        + "SDK Tools installed: Please update. (Missing %1$s)", file.getPath()));
+            } else {
+                mCheckedSdkUptodate = true;
             }
         }
 
@@ -555,7 +577,7 @@ class ProjectNamePage extends WizardPage implements SelectionListener, ModifyLis
         return null;
     }
 
-    static IStatus validateProjectName(String projectName) {
+    public static IStatus validateProjectName(String projectName) {
         if (projectName == null || projectName.length() == 0) {
             return new Status(IStatus.ERROR, AdtPlugin.PLUGIN_ID,
                     "Project name must be specified");
@@ -580,11 +602,11 @@ class ProjectNamePage extends WizardPage implements SelectionListener, ModifyLis
     }
 
     @Override
-    public boolean canFlipToNextPage() {
+    public IWizardPage getNextPage() {
         // Sync working set data to the value object, since the WorkingSetGroup
         // doesn't let us add listeners to do this lazily
         mValues.workingSets = getWorkingSets();
 
-        return super.canFlipToNextPage();
+        return super.getNextPage();
     }
 }

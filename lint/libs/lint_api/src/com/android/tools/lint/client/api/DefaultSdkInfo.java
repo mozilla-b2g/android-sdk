@@ -22,6 +22,7 @@ import static com.android.tools.lint.detector.api.LintConstants.ABS_SEEK_BAR;
 import static com.android.tools.lint.detector.api.LintConstants.ABS_SPINNER;
 import static com.android.tools.lint.detector.api.LintConstants.ADAPTER_VIEW;
 import static com.android.tools.lint.detector.api.LintConstants.BUTTON;
+import static com.android.tools.lint.detector.api.LintConstants.CHECKED_TEXT_VIEW;
 import static com.android.tools.lint.detector.api.LintConstants.CHECK_BOX;
 import static com.android.tools.lint.detector.api.LintConstants.COMPOUND_BUTTON;
 import static com.android.tools.lint.detector.api.LintConstants.EDIT_TEXT;
@@ -42,6 +43,7 @@ import static com.android.tools.lint.detector.api.LintConstants.SCROLL_VIEW;
 import static com.android.tools.lint.detector.api.LintConstants.SEEK_BAR;
 import static com.android.tools.lint.detector.api.LintConstants.SPINNER;
 import static com.android.tools.lint.detector.api.LintConstants.SURFACE_VIEW;
+import static com.android.tools.lint.detector.api.LintConstants.SWITCH;
 import static com.android.tools.lint.detector.api.LintConstants.TABLE_LAYOUT;
 import static com.android.tools.lint.detector.api.LintConstants.TABLE_ROW;
 import static com.android.tools.lint.detector.api.LintConstants.TAB_HOST;
@@ -54,20 +56,35 @@ import static com.android.tools.lint.detector.api.LintConstants.VIEW_GROUP;
 import static com.android.tools.lint.detector.api.LintConstants.VIEW_PKG_PREFIX;
 import static com.android.tools.lint.detector.api.LintConstants.VIEW_STUB;
 import static com.android.tools.lint.detector.api.LintConstants.VIEW_SWITCHER;
+import static com.android.tools.lint.detector.api.LintConstants.WEB_VIEW;
 import static com.android.tools.lint.detector.api.LintConstants.WIDGET_PKG_PREFIX;
+
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
+import com.google.common.annotations.Beta;
 
 import java.util.HashMap;
 import java.util.Map;
 
-/** Default simple implementation of an {@link SdkInfo} */
+/**
+ * Default simple implementation of an {@link SdkInfo}
+ * <p>
+ * <b>NOTE: This is not a public or final API; if you rely on this be prepared
+ * to adjust your code for the next tools release.</b>
+ */
+@Beta
 class DefaultSdkInfo extends SdkInfo {
     @Override
-    public String getParentViewName(String name) {
+    @Nullable
+    public String getParentViewName(@NonNull String name) {
+        name = getRawType(name);
+
         return PARENTS.get(name);
     }
 
     @Override
-    public String getParentViewClass(String fqcn) {
+    @Nullable
+    public String getParentViewClass(@NonNull String fqcn) {
         int index = fqcn.lastIndexOf('.');
         if (index != -1) {
             fqcn = fqcn.substring(index + 1);
@@ -86,7 +103,10 @@ class DefaultSdkInfo extends SdkInfo {
     }
 
     @Override
-    public boolean isSubViewOf(String parent, String child) {
+    public boolean isSubViewOf(@NonNull String parentType, @NonNull String childType) {
+        String parent = getRawType(parentType);
+        String child = getRawType(childType);
+
         // Do analysis just on non-fqcn paths
         if (parent.indexOf('.') != -1) {
             parent = parent.substring(parent.lastIndexOf('.') + 1);
@@ -94,6 +114,11 @@ class DefaultSdkInfo extends SdkInfo {
         if (child.indexOf('.') != -1) {
             child = child.substring(child.lastIndexOf('.') + 1);
         }
+
+        if (parent.equals(VIEW)) {
+            return true;
+        }
+
         while (!child.equals(VIEW)) {
             if (parent.equals(child)) {
                 return true;
@@ -108,10 +133,25 @@ class DefaultSdkInfo extends SdkInfo {
         return false;
     }
 
-    private static final int CLASS_COUNT = 56;
+    // Strip off type parameters, e.g. AdapterView<?> => AdapterView
+    private static String getRawType(String type) {
+        if (type != null) {
+            int index = type.indexOf('<');
+            if (index != -1) {
+                type = type.substring(0, index);
+            }
+        }
+
+        return type;
+    }
+
+    private static final int CLASS_COUNT = 59;
+
+    @NonNull
     private static final Map<String, String> PARENTS = new HashMap<String, String>(CLASS_COUNT);
+
     static {
-        PARENTS.put(COMPOUND_BUTTON, VIEW);
+        PARENTS.put(COMPOUND_BUTTON, BUTTON);
         PARENTS.put(ABS_SPINNER, ADAPTER_VIEW);
         PARENTS.put(ABS_LIST_VIEW, ADAPTER_VIEW);
         PARENTS.put(ABS_SEEK_BAR, ADAPTER_VIEW);
@@ -119,6 +159,7 @@ class DefaultSdkInfo extends SdkInfo {
         PARENTS.put(VIEW_GROUP, VIEW);
 
         PARENTS.put(TEXT_VIEW, VIEW);
+        PARENTS.put(CHECKED_TEXT_VIEW, TEXT_VIEW);
         PARENTS.put(RADIO_BUTTON, COMPOUND_BUTTON);
         PARENTS.put(SPINNER, ABS_SPINNER);
         PARENTS.put(IMAGE_BUTTON, IMAGE_VIEW);
@@ -130,6 +171,7 @@ class DefaultSdkInfo extends SdkInfo {
         PARENTS.put(BUTTON, TEXT_VIEW);
         PARENTS.put(SEEK_BAR, ABS_SEEK_BAR);
         PARENTS.put(CHECK_BOX, COMPOUND_BUTTON);
+        PARENTS.put(SWITCH, COMPOUND_BUTTON);
         PARENTS.put(GALLERY, ABS_SPINNER);
         PARENTS.put(SURFACE_VIEW, VIEW);
         PARENTS.put(ABSOLUTE_LAYOUT, VIEW_GROUP);
@@ -148,6 +190,7 @@ class DefaultSdkInfo extends SdkInfo {
         PARENTS.put(TABLE_LAYOUT, LINEAR_LAYOUT);
         PARENTS.put(SCROLL_VIEW, FRAME_LAYOUT);
         PARENTS.put(GRID_VIEW, ABS_LIST_VIEW);
+        PARENTS.put(WEB_VIEW, ABSOLUTE_LAYOUT);
 
         PARENTS.put("CheckedTextView", TEXT_VIEW);        //$NON-NLS-1$
         PARENTS.put("MediaController", FRAME_LAYOUT);     //$NON-NLS-1$
@@ -171,13 +214,11 @@ class DefaultSdkInfo extends SdkInfo {
         PARENTS.put("MultiAutoCompleteTextView",          //$NON-NLS-1$
                 "AutoCompleteTextView");                  //$NON-NLS-1$
 
-        assert PARENTS.size() == CLASS_COUNT;
+        assert PARENTS.size() <= CLASS_COUNT : PARENTS.size();
 
         /*
         // Check that all widgets lead to the root view
-        boolean assertionsEnabled = false;
-        assert assertionsEnabled = true; // Intentional side-effect
-        if (assertionsEnabled) {
+        if (LintUtils.assertionsEnabled()) {
             for (String key : PARENTS.keySet()) {
                 String parent = PARENTS.get(key);
                 if (!parent.equals(VIEW)) {

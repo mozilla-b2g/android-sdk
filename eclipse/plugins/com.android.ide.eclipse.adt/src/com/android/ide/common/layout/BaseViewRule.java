@@ -16,7 +16,6 @@
 
 package com.android.ide.common.layout;
 
-import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_CLASS;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_HINT;
 import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
@@ -28,11 +27,16 @@ import static com.android.ide.common.layout.LayoutConstants.ATTR_TEXT;
 import static com.android.ide.common.layout.LayoutConstants.DOT_LAYOUT_PARAMS;
 import static com.android.ide.common.layout.LayoutConstants.ID_PREFIX;
 import static com.android.ide.common.layout.LayoutConstants.NEW_ID_PREFIX;
+import static com.android.ide.common.layout.LayoutConstants.VALUE_FALSE;
 import static com.android.ide.common.layout.LayoutConstants.VALUE_FILL_PARENT;
 import static com.android.ide.common.layout.LayoutConstants.VALUE_MATCH_PARENT;
+import static com.android.ide.common.layout.LayoutConstants.VALUE_TRUE;
 import static com.android.ide.common.layout.LayoutConstants.VALUE_WRAP_CONTENT;
 import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.VIEW_FRAGMENT;
+import static com.android.util.XmlUtils.ANDROID_URI;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.common.api.AbstractViewRule;
 import com.android.ide.common.api.IAttributeInfo;
 import com.android.ide.common.api.IAttributeInfo.Format;
@@ -55,10 +59,12 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
@@ -88,7 +94,7 @@ public class BaseViewRule extends AbstractViewRule {
         new HashMap<String, Map<String, Prop>>();
 
     @Override
-    public boolean onInitialize(String fqcn, IClientRulesEngine engine) {
+    public boolean onInitialize(@NonNull String fqcn, @NonNull IClientRulesEngine engine) {
         this.mRulesEngine = engine;
 
         // This base rule can handle any class so we don't need to filter on
@@ -118,7 +124,8 @@ public class BaseViewRule extends AbstractViewRule {
      * - List of all other simple toggle attributes.
      */
     @Override
-    public void addContextMenuActions(List<RuleAction> actions, final INode selectedNode) {
+    public void addContextMenuActions(@NonNull List<RuleAction> actions,
+            final @NonNull INode selectedNode) {
         String width = null;
         String currentWidth = selectedNode.getStringAttr(ANDROID_URI, ATTR_LAYOUT_WIDTH);
 
@@ -147,10 +154,11 @@ public class BaseViewRule extends AbstractViewRule {
         final String newHeight = height;
 
         final IMenuCallback onChange = new IMenuCallback() {
+            @Override
             public void action(
-                    final RuleAction action,
-                    final List<? extends INode> selectedNodes,
-                    final String valueId, final Boolean newValue) {
+                    final @NonNull RuleAction action,
+                    final @NonNull List<? extends INode> selectedNodes,
+                    final @Nullable String valueId, final @Nullable Boolean newValue) {
                 String fullActionId = action.getId();
                 boolean isProp = fullActionId.startsWith(PROP_PREFIX);
                 final String actionId = isProp ?
@@ -186,7 +194,11 @@ public class BaseViewRule extends AbstractViewRule {
                         // Strip off the @id prefix stuff
                         String oldId = node.getStringAttr(ANDROID_URI, ATTR_ID);
                         oldId = stripIdPrefix(ensureValidString(oldId));
-                        IValidator validator = mRulesEngine.getResourceValidator();
+                        IValidator validator = mRulesEngine.getResourceValidator("id",//$NON-NLS-1$
+                                false /*uniqueInProject*/,
+                                true /*uniqueInLayout*/,
+                                false /*exists*/,
+                                oldId);
                         String newId = mRulesEngine.displayInput("New Id:", oldId, validator);
                         if (newId != null && newId.trim().length() > 0) {
                             if (!newId.startsWith(NEW_ID_PREFIX)) {
@@ -226,7 +238,8 @@ public class BaseViewRule extends AbstractViewRule {
                                         ? ResourceType.STYLE.getName()
                                         : ResourceType.STRING.getName();
                                 String oldValue = selectedNodes.size() == 1
-                                    ? firstNode.getStringAttr(null, ATTR_STYLE)
+                                    ? (isStyle ? firstNode.getStringAttr(ATTR_STYLE, actionId)
+                                            : firstNode.getStringAttr(ANDROID_URI, actionId))
                                     : ""; //$NON-NLS-1$
                                 oldValue = ensureValidString(oldValue);
                                 v = mRulesEngine.displayResourceInput(resourceTypeName, oldValue);
@@ -312,7 +325,7 @@ public class BaseViewRule extends AbstractViewRule {
                 oldValue = ensureValidString(oldValue);
                 IAttributeInfo attributeInfo = node.getAttributeInfo(ANDROID_URI, attribute);
                 if (attributeInfo != null
-                        && IAttributeInfo.Format.REFERENCE.in(attributeInfo.getFormats())) {
+                        && attributeInfo.getFormats().contains(Format.REFERENCE)) {
                     return mRulesEngine.displayReferenceInput(oldValue);
                 } else {
                     // A single resource type? If so use a resource chooser initialized
@@ -363,7 +376,9 @@ public class BaseViewRule extends AbstractViewRule {
                     null, 10, true));
         }
 
-        actions.add(RuleAction.createAction(ATTR_ID, "Edit ID...", onChange, null, 20, true));
+        String editIdLabel = selectedNode.getStringAttr(ANDROID_URI, ATTR_ID) != null ?
+                "Edit ID..." : "Assign ID...";
+        actions.add(RuleAction.createAction(ATTR_ID, editIdLabel, onChange, null, 20, true));
 
         addCommonPropertyActions(actions, selectedNode, onChange, 21);
 
@@ -414,13 +429,15 @@ public class BaseViewRule extends AbstractViewRule {
         RuleAction properties = RuleAction.createChoices("properties", "Other Properties", //$NON-NLS-1$
                 onChange /*callback*/, null /*icon*/, 50,
                 true /*supportsMultipleNodes*/, new ActionProvider() {
-            public List<RuleAction> getNestedActions(INode node) {
+            @Override
+            public @NonNull List<RuleAction> getNestedActions(@NonNull INode node) {
                 List<RuleAction> propertyActionTypes = new ArrayList<RuleAction>();
                 propertyActionTypes.add(RuleAction.createChoices(
                         "recent", "Recent", //$NON-NLS-1$
                         onChange /*callback*/, null /*icon*/, 10,
                         true /*supportsMultipleNodes*/, new ActionProvider() {
-                            public List<RuleAction> getNestedActions(INode n) {
+                            @Override
+                            public @NonNull List<RuleAction> getNestedActions(@NonNull INode n) {
                                 List<RuleAction> propertyActions = new ArrayList<RuleAction>();
                                 addRecentPropertyActions(propertyActions, n, onChange);
                                 return propertyActions;
@@ -436,7 +453,8 @@ public class BaseViewRule extends AbstractViewRule {
                         "layoutparams", "Layout Parameters", //$NON-NLS-1$
                         onChange /*callback*/, null /*icon*/, 60,
                         true /*supportsMultipleNodes*/, new ActionProvider() {
-                            public List<RuleAction> getNestedActions(INode n) {
+                            @Override
+                            public @NonNull List<RuleAction> getNestedActions(@NonNull INode n) {
                                 List<RuleAction> propertyActions = new ArrayList<RuleAction>();
                                 addPropertyActions(propertyActions, n, onChange, null, true);
                                 return propertyActions;
@@ -449,7 +467,8 @@ public class BaseViewRule extends AbstractViewRule {
                         "allprops", "All By Name", //$NON-NLS-1$
                         onChange /*callback*/, null /*icon*/, 80,
                         true /*supportsMultipleNodes*/, new ActionProvider() {
-                            public List<RuleAction> getNestedActions(INode n) {
+                            @Override
+                            public @NonNull List<RuleAction> getNestedActions(@NonNull INode n) {
                                 List<RuleAction> propertyActions = new ArrayList<RuleAction>();
                                 addPropertyActions(propertyActions, n, onChange, null, false);
                                 return propertyActions;
@@ -512,7 +531,8 @@ public class BaseViewRule extends AbstractViewRule {
                     label,
                     onChange /*callback*/, null /*icon*/, sortPriority++,
                     true /*supportsMultipleNodes*/, new ActionProvider() {
-                        public List<RuleAction> getNestedActions(INode n) {
+                        @Override
+                        public @NonNull List<RuleAction> getNestedActions(@NonNull INode n) {
                             List<RuleAction> propertyActions = new ArrayList<RuleAction>();
                             addPropertyActions(propertyActions, n, onChange, definedBy, false);
                             return propertyActions;
@@ -622,6 +642,7 @@ public class BaseViewRule extends AbstractViewRule {
         // The properties are coming out of map key order which isn't right, so sort
         // alphabetically instead
         Collections.sort(actions, new Comparator<RuleAction>() {
+            @Override
             public int compare(RuleAction action1, RuleAction action2) {
                 return action1.getTitle().compareTo(action2.getTitle());
             }
@@ -634,11 +655,12 @@ public class BaseViewRule extends AbstractViewRule {
             // Toggles are handled as a multiple-choice between true, false
             // and nothing (clear)
             String value = selectedNode.getStringAttr(ANDROID_URI, id);
-            if (value != null)
-                value = value.toLowerCase();
-            if ("true".equals(value)) {         //$NON-NLS-1$
+            if (value != null) {
+                value = value.toLowerCase(Locale.US);
+            }
+            if (VALUE_TRUE.equals(value)) {
                 value = TRUE_ID;
-            } else if ("false".equals(value)) { //$NON-NLS-1$
+            } else if (VALUE_FALSE.equals(value)) {
                 value = FALSE_ID;
             } else {
                 value = CLEAR_ID;
@@ -682,17 +704,17 @@ public class BaseViewRule extends AbstractViewRule {
                     // Layout width/height are already handled at the root level
                     continue;
                 }
-                Format[] formats = attrInfo != null ? attrInfo.getFormats() : null;
-                if (formats == null) {
+                if (attrInfo == null) {
                     continue;
                 }
+                EnumSet<Format> formats = attrInfo.getFormats();
 
                 String title = getAttributeDisplayName(id);
 
                 String definedBy = attrInfo != null ? attrInfo.getDefinedBy() : null;
-                if (IAttributeInfo.Format.BOOLEAN.in(formats)) {
+                if (formats.contains(IAttributeInfo.Format.BOOLEAN)) {
                     props.put(id, new Prop(title, true, definedBy));
-                } else if (IAttributeInfo.Format.ENUM.in(formats)) {
+                } else if (formats.contains(IAttributeInfo.Format.ENUM)) {
                     // Convert each enum into a map id=>title
                     Map<String, String> values = new HashMap<String, String>();
                     if (attrInfo != null) {
@@ -702,7 +724,7 @@ public class BaseViewRule extends AbstractViewRule {
                     }
 
                     props.put(id, new Prop(title, false, false, values, definedBy));
-                } else if (IAttributeInfo.Format.FLAG.in(formats)) {
+                } else if (formats.contains(IAttributeInfo.Format.FLAG)) {
                     // Convert each flag into a map id=>title
                     Map<String, String> values = new HashMap<String, String>();
                     if (attrInfo != null) {
@@ -726,7 +748,9 @@ public class BaseViewRule extends AbstractViewRule {
      * values for a boolean property: true, false, or "default".
      */
     private static ChoiceProvider BOOLEAN_CHOICE_PROVIDER = new ChoiceProvider() {
-        public void addChoices(List<String> titles, List<URL> iconUrls, List<String> ids) {
+        @Override
+        public void addChoices(@NonNull List<String> titles, @NonNull List<URL> iconUrls,
+                @NonNull List<String> ids) {
             titles.add("True");
             ids.add(TRUE_ID);
 
@@ -753,7 +777,9 @@ public class BaseViewRule extends AbstractViewRule {
             this.mProperty = property;
         }
 
-        public void addChoices(List<String> titles, List<URL> iconUrls, List<String> ids) {
+        @Override
+        public void addChoices(@NonNull List<String> titles, @NonNull List<URL> iconUrls,
+                @NonNull List<String> ids) {
             for (Entry<String, String> entry : mProperty.getChoices().entrySet()) {
                 ids.add(entry.getKey());
                 titles.add(entry.getValue());
@@ -869,7 +895,8 @@ public class BaseViewRule extends AbstractViewRule {
      * an indication of where to paste.
      */
     @Override
-    public void onPaste(INode targetNode, Object targetView, IDragElement[] elements) {
+    public void onPaste(@NonNull INode targetNode, @Nullable Object targetView,
+            @NonNull IDragElement[] elements) {
         //
         INode parent = targetNode.getParent();
         if (parent != null) {
@@ -954,7 +981,8 @@ public class BaseViewRule extends AbstractViewRule {
      * @param id attribute to be stripped
      * @return the id name without the {@code @+id} or {@code @id} prefix
      */
-    public static String stripIdPrefix(String id) {
+    @NonNull
+    public static String stripIdPrefix(@Nullable String id) {
         if (id == null) {
             return ""; //$NON-NLS-1$
         } else if (id.startsWith(NEW_ID_PREFIX)) {

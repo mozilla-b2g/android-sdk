@@ -16,11 +16,21 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.uimodel;
 
+import static com.android.ide.common.layout.LayoutConstants.ATTR_CLASS;
+import static com.android.ide.common.layout.LayoutConstants.ATTR_ORIENTATION;
 import static com.android.ide.common.layout.LayoutConstants.FQCN_FRAME_LAYOUT;
+import static com.android.ide.common.layout.LayoutConstants.LINEAR_LAYOUT;
+import static com.android.ide.common.layout.LayoutConstants.VALUE_VERTICAL;
+import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.VIEW_VIEWTAG;
+import static com.android.util.XmlUtils.ANDROID_URI;
 
-import com.android.ide.common.layout.LayoutConstants;
+import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
+import com.android.ide.eclipse.adt.internal.editors.IconFactory;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.AttributeDescriptor;
+import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.ViewElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiDocumentNode;
@@ -28,9 +38,13 @@ import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
 import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetData;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.sdklib.IAndroidTarget;
-import com.android.sdklib.SdkConstants;
+import com.android.util.XmlUtils;
 
+import org.eclipse.core.resources.IMarker;
 import org.eclipse.core.resources.IProject;
+import org.eclipse.swt.graphics.Image;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
 
 /**
  * Specialized version of {@link UiElementNode} for the {@link ViewElementDescriptor}s.
@@ -52,6 +66,9 @@ public class UiViewElementNode extends UiElementNode {
      */
     @Override
     public AttributeDescriptor[] getAttributeDescriptors() {
+        if (!getDescriptor().syncAttributes()) {
+            mCachedAttributeDescriptors = null;
+        }
         if (mCachedAttributeDescriptors != null) {
             return mCachedAttributeDescriptors;
         }
@@ -60,6 +77,7 @@ public class UiViewElementNode extends UiElementNode {
         AttributeDescriptor[] direct_attrs = super.getAttributeDescriptors();
         mCachedAttributeDescriptors = direct_attrs;
 
+        // Compute layout attributes: These depend on the *parent* this widget is within
         AttributeDescriptor[] layout_attrs = null;
         boolean need_xmlns = false;
 
@@ -108,12 +126,70 @@ public class UiViewElementNode extends UiElementNode {
                 layout_attrs.length);
         if (need_xmlns) {
             AttributeDescriptor desc = new XmlnsAttributeDescriptor(
-                    LayoutConstants.ANDROID_NS_NAME,
-                    SdkConstants.NS_RESOURCES);
+                    XmlUtils.ANDROID_NS_NAME,
+                    XmlUtils.ANDROID_URI);
             mCachedAttributeDescriptors[direct_attrs.length + layout_attrs.length] = desc;
         }
 
         return mCachedAttributeDescriptors;
+    }
+
+    public Image getIcon() {
+        ElementDescriptor desc = getDescriptor();
+        if (desc != null) {
+            Image img = null;
+            // Special case for the common case of vertical linear layouts:
+            // show vertical linear icon (the default icon shows horizontal orientation)
+            String uiName = desc.getUiName();
+            IconFactory icons = IconFactory.getInstance();
+            if (uiName.equals(LINEAR_LAYOUT)) {
+                Element e = (Element) getXmlNode();
+                if (VALUE_VERTICAL.equals(e.getAttributeNS(ANDROID_URI,
+                        ATTR_ORIENTATION))) {
+                    IconFactory factory = icons;
+                    img = factory.getIcon("VerticalLinearLayout"); //$NON-NLS-1$
+                }
+            } else if (uiName.equals(VIEW_VIEWTAG)) {
+                Node xmlNode = getXmlNode();
+                if (xmlNode instanceof Element) {
+                    String className = ((Element) xmlNode).getAttribute(ATTR_CLASS);
+                    if (className != null && className.length() > 0) {
+                        int index = className.lastIndexOf('.');
+                        if (index != -1) {
+                            className = className.substring(index + 1);
+                        }
+                        img = icons.getIcon(className);
+                    }
+                }
+            }
+            if (img == null) {
+                img = desc.getGenericIcon();
+            }
+
+            if (img != null) {
+                AndroidXmlEditor editor = getEditor();
+                if (editor != null) {
+                    LayoutEditorDelegate delegate = LayoutEditorDelegate.fromEditor(editor);
+                    if (delegate != null) {
+                        IMarker marker = delegate.getIssueForNode(this);
+                        if (marker != null) {
+                            int severity = marker.getAttribute(IMarker.SEVERITY, 0);
+                            if (severity == IMarker.SEVERITY_ERROR) {
+                                return icons.addErrorIcon(img);
+                            } else {
+                                return icons.addWarningIcon(img);
+                            }
+                        }
+                    }
+                }
+
+                return img;
+            }
+
+            return img;
+        }
+
+        return AdtPlugin.getAndroidLogo();
     }
 
     /**

@@ -18,7 +18,7 @@ package com.android.ide.eclipse.adt.internal.editors.layout.refactoring;
 
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
+import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditorDelegate;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.DomUtilities;
 import com.android.ide.eclipse.adt.internal.refactorings.extractstring.ExtractStringRefactoring;
 import com.android.ide.eclipse.adt.internal.refactorings.extractstring.ExtractStringWizard;
@@ -66,24 +66,30 @@ public class RefactoringAssistant implements IQuickAssistProcessor {
     public RefactoringAssistant() {
     }
 
+    @Override
     public boolean canAssist(IQuickAssistInvocationContext invocationContext) {
         return true;
     }
 
+    @Override
     public boolean canFix(Annotation annotation) {
         return true;
     }
 
+    @Override
     public ICompletionProposal[] computeQuickAssistProposals(
             IQuickAssistInvocationContext invocationContext) {
 
         ISourceViewer sourceViewer = invocationContext.getSourceViewer();
-        AndroidXmlEditor xmlEditor = AndroidXmlEditor.getAndroidXmlEditor(sourceViewer);
+        AndroidXmlEditor xmlEditor = AndroidXmlEditor.fromTextViewer(sourceViewer);
         if (xmlEditor == null) {
             return null;
         }
 
         IFile file = xmlEditor.getInputFile();
+        if (file == null) {
+            return null;
+        }
         int offset = invocationContext.getOffset();
 
         // Ensure that we are over a tag name (for element-based refactoring
@@ -169,40 +175,71 @@ public class RefactoringAssistant implements IQuickAssistProcessor {
                             new ExtractStringRefactoring(file, xmlEditor, textSelection)));
                 }
 
-                if (xmlEditor instanceof LayoutEditor) {
-                    LayoutEditor editor = (LayoutEditor) xmlEditor;
-
+                LayoutEditorDelegate delegate = LayoutEditorDelegate.fromEditor(xmlEditor);
+                if (delegate != null) {
                     boolean showStyleFirst = isValue || (isAttributeName && isStylableAttribute);
                     if (showStyleFirst) {
-                        proposals.add(new RefactoringProposal(editor,
-                                new ExtractStyleRefactoring(file, editor, originalSelection,
+                        proposals.add(new RefactoringProposal(
+                                xmlEditor,
+                                new ExtractStyleRefactoring(
+                                        file,
+                                        delegate,
+                                        originalSelection,
                                         null)));
                     }
 
                     if (selectionOkay) {
-                        proposals.add(new RefactoringProposal(editor,
-                                new WrapInRefactoring(file, editor, textSelection, null)));
-                        proposals.add(new RefactoringProposal(editor,
-                                new UnwrapRefactoring(file, editor, textSelection, null)));
-                        proposals.add(new RefactoringProposal(editor,
-                                new ChangeViewRefactoring(file, editor, textSelection, null)));
-                        proposals.add(new RefactoringProposal(editor,
-                                new ChangeLayoutRefactoring(file, editor, textSelection, null)));
+                        proposals.add(new RefactoringProposal(
+                                xmlEditor,
+                                new WrapInRefactoring(
+                                        file,
+                                        delegate,
+                                        textSelection,
+                                        null)));
+                        proposals.add(new RefactoringProposal(
+                                xmlEditor,
+                                new UnwrapRefactoring(
+                                        file,
+                                        delegate,
+                                        textSelection,
+                                        null)));
+                        proposals.add(new RefactoringProposal(
+                                xmlEditor,
+                                new ChangeViewRefactoring(
+                                        file,
+                                        delegate,
+                                        textSelection,
+                                        null)));
+                        proposals.add(new RefactoringProposal(
+                                xmlEditor,
+                                new ChangeLayoutRefactoring(
+                                        file,
+                                        delegate,
+                                        textSelection,
+                                        null)));
                     }
 
                     // Extract Include must always have an actual block to be extracted
                     if (textSelection.getLength() > 0) {
-                        proposals.add(new RefactoringProposal(editor,
-                                new ExtractIncludeRefactoring(file, editor, textSelection, null)));
+                        proposals.add(new RefactoringProposal(
+                                xmlEditor,
+                                new ExtractIncludeRefactoring(
+                                        file,
+                                        delegate,
+                                        textSelection,
+                                        null)));
                     }
 
                     // If it's not a value or attribute name, don't place it on top
                     if (!showStyleFirst) {
-                        proposals.add(new RefactoringProposal(editor,
-                                new ExtractStyleRefactoring(file, editor, originalSelection,
+                        proposals.add(new RefactoringProposal(
+                                xmlEditor,
+                                new ExtractStyleRefactoring(
+                                        file,
+                                        delegate,
+                                        originalSelection,
                                         null)));
                     }
-
                 }
             }
         }
@@ -214,6 +251,7 @@ public class RefactoringAssistant implements IQuickAssistProcessor {
         }
     }
 
+    @Override
     public String getErrorMessage() {
         return null;
     }
@@ -229,6 +267,7 @@ public class RefactoringAssistant implements IQuickAssistProcessor {
             mRefactoring = refactoring;
         }
 
+        @Override
         public void apply(IDocument document) {
             RefactoringWizard wizard = null;
             if (mRefactoring instanceof VisualRefactoring) {
@@ -248,22 +287,27 @@ public class RefactoringAssistant implements IQuickAssistProcessor {
             }
         }
 
+        @Override
         public String getAdditionalProposalInfo() {
             return String.format("Initiates the \"%1$s\" refactoring", mRefactoring.getName());
         }
 
+        @Override
         public IContextInformation getContextInformation() {
             return null;
         }
 
+        @Override
         public String getDisplayString() {
             return mRefactoring.getName();
         }
 
+        @Override
         public Image getImage() {
             return AdtPlugin.getAndroidLogo();
         }
 
+        @Override
         public Point getSelection(IDocument document) {
             return null;
         }

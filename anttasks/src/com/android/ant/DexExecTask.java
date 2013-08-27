@@ -161,9 +161,12 @@ public class DexExecTask extends SingleDependencyTask {
         task.createArg().setValue("--output");
         task.createArg().setValue(mOutput);
 
-
         for (File f : paths) {
-            task.createArg().setValue(f.getAbsolutePath());
+            String absPath = f.getAbsolutePath();
+            if (mVerbose) {
+                System.out.println("Input: " + absPath);
+            }
+            task.createArg().setValue(absPath);
         }
 
         // execute it.

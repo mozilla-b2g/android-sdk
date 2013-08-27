@@ -17,8 +17,12 @@
 
 package com.android.ide.eclipse.adt.internal.editors;
 
+import com.android.annotations.NonNull;
+import com.android.annotations.Nullable;
 import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.ide.eclipse.adt.internal.editors.ui.ErrorImageComposite;
 import com.android.sdklib.SdkConstants;
+import com.google.common.collect.Maps;
 
 import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.swt.SWT;
@@ -34,7 +38,8 @@ import org.eclipse.swt.widgets.Display;
 import org.eclipse.ui.plugin.AbstractUIPlugin;
 
 import java.net.URL;
-import java.util.HashMap;
+import java.util.IdentityHashMap;
+import java.util.Map;
 
 /**
  * Factory to generate icons for Android Editors.
@@ -53,9 +58,11 @@ public class IconFactory {
 
     private static IconFactory sInstance;
 
-    private HashMap<String, Image> mIconMap = new HashMap<String, Image>();
-    private HashMap<URL, Image> mUrlMap = new HashMap<URL, Image>();
-    private HashMap<String, ImageDescriptor> mImageDescMap = new HashMap<String, ImageDescriptor>();
+    private Map<String, Image> mIconMap = Maps.newHashMap();
+    private Map<URL, Image> mUrlMap = Maps.newHashMap();
+    private Map<String, ImageDescriptor> mImageDescMap = Maps.newHashMap();
+    private Map<Image, Image> mErrorIcons;
+    private Map<Image, Image> mWarningIcons;
 
     private IconFactory() {
     }
@@ -83,6 +90,24 @@ public class IconFactory {
             }
         }
         mUrlMap.clear();
+        if (mErrorIcons != null) {
+            for (Image icon : mErrorIcons.values()) {
+                // The map can contain null values
+                if (icon != null) {
+                    icon.dispose();
+                }
+            }
+            mErrorIcons = null;
+        }
+        if (mWarningIcons != null) {
+            for (Image icon : mWarningIcons.values()) {
+                // The map can contain null values
+                if (icon != null) {
+                    icon.dispose();
+                }
+            }
+            mWarningIcons = null;
+        }
     }
 
     /**
@@ -104,7 +129,7 @@ public class IconFactory {
      * Callers should not dispose it.
      *
      * @param osName The leaf name, without the extension, of an existing icon in the
-     *        editor's "icons" directory. If it doesn't exists, a default icon will be
+     *        editor's "icons" directory. If it doesn't exist, a default icon will be
      *        generated automatically based on the name.
      * @param color The color of the text in the automatically generated icons,
      *        one of COLOR_DEFAULT, COLOR_RED, COLOR_BLUE or COLOR_RED.
@@ -172,6 +197,68 @@ public class IconFactory {
     }
 
     /**
+     * Returns an Image for a given icon name.
+     * <p/>
+     * Callers should not dispose it.
+     *
+     * @param osName The leaf name, without the extension, of an existing icon
+     *            in the editor's "icons" directory. If it doesn't exist, the
+     *            fallback will be used instead.
+     * @param fallback the fallback icon name to use if the primary icon does
+     *            not exist, or null if the method should return null if the
+     *            image does not exist
+     * @return the icon, which should not be disposed by the caller, or null
+     * if the image does not exist *and*
+     */
+    @Nullable
+    public Image getIcon(@NonNull String osName, @Nullable String fallback) {
+        String key = osName;
+        Image icon = mIconMap.get(key);
+        if (icon == null && !mIconMap.containsKey(key)) {
+            ImageDescriptor id = getImageDescriptor(osName, fallback);
+            if (id != null) {
+                icon = id.createImage();
+            }
+            // Note that we store null references in the icon map, to avoid looking them
+            // up every time. If it didn't exist once, it will not exist later.
+            mIconMap.put(key, icon);
+        }
+        return icon;
+    }
+
+    /**
+     * Returns an icon of the given name, or if that image does not exist and
+     * icon of the given fallback name.
+     *
+     * @param key the icon name
+     * @param fallbackKey the fallback image to use if the primary key does not
+     *            exist
+     * @return the image descriptor, or null if the image does not exist and the
+     *         fallbackKey is null
+     */
+    @Nullable
+    public ImageDescriptor getImageDescriptor(@NonNull String key, @Nullable String fallbackKey) {
+        ImageDescriptor id = mImageDescMap.get(key);
+        if (id == null && !mImageDescMap.containsKey(key)) {
+            id = AbstractUIPlugin.imageDescriptorFromPlugin(
+                    AdtPlugin.PLUGIN_ID,
+                    String.format("/icons/%1$s.png", key)); //$NON-NLS-1$
+            if (id == null) {
+                if (fallbackKey == null) {
+                    return null;
+                }
+                id = getImageDescriptor(fallbackKey);
+            }
+
+            // Place the fallback image for this key as well such that we don't keep trying
+            // to load the failed image
+            mImageDescMap.put(key, id);
+        }
+
+        return id;
+    }
+
+    /**
      * Returns the image indicated by the given URL
      *
      * @param url the url to the image resources
@@ -186,6 +273,56 @@ public class IconFactory {
         }
 
         return image;
+    }
+
+    /**
+     * Returns an image with an error icon overlaid on it. The icons are cached,
+     * so the base image should be cached as well, or this method will keep
+     * storing new overlays into its cache.
+     *
+     * @param image the base image
+     * @return the combined image
+     */
+    @NonNull
+    public Image addErrorIcon(@NonNull Image image) {
+        if (mErrorIcons != null) {
+            Image combined = mErrorIcons.get(image);
+            if (combined != null) {
+                return combined;
+            }
+        } else {
+            mErrorIcons = new IdentityHashMap<Image, Image>();
+        }
+
+        Image combined = new ErrorImageComposite(image, false).createImage();
+        mErrorIcons.put(image, combined);
+
+        return combined;
+    }
+
+    /**
+     * Returns an image with a warning icon overlaid on it. The icons are
+     * cached, so the base image should be cached as well, or this method will
+     * keep storing new overlays into its cache.
+     *
+     * @param image the base image
+     * @return the combined image
+     */
+    @NonNull
+    public Image addWarningIcon(@NonNull Image image) {
+        if (mWarningIcons != null) {
+            Image combined = mWarningIcons.get(image);
+            if (combined != null) {
+                return combined;
+            }
+        } else {
+            mWarningIcons = new IdentityHashMap<Image, Image>();
+        }
+
+        Image combined = new ErrorImageComposite(image, true).createImage();
+        mWarningIcons.put(image, combined);
+
+        return combined;
     }
 
     /**
@@ -309,5 +446,4 @@ public class IconFactory {
             return data;
         }
     }
-
 }

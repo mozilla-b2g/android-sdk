@@ -150,9 +150,20 @@ public final class AaptParser {
     /**
      * Error message emitted when aapt skips a file because for example it's name is
      * invalid, such as a layout file name which starts with _.
+     * <p>
+     * This error message is used by AAPT in Tools 19 and earlier.
      */
     private static final Pattern sSkippingPattern =
-        Pattern.compile("    \\(skipping .+ .+ '(.*)'\\)"); //$NON-NLS-1$
+        Pattern.compile("    \\(skipping (.+) .+ '(.*)'\\)"); //$NON-NLS-1$
+
+    /**
+     * Error message emitted when aapt skips a file because for example it's name is
+     * invalid, such as a layout file name which starts with _.
+     * <p>
+     * This error message is used by AAPT in Tools 20 and later.
+     */
+    private static final Pattern sNewSkippingPattern =
+        Pattern.compile("    \\(skipping .+ '(.+)' due to ANDROID_AAPT_IGNORE pattern '.+'\\)"); //$NON-NLS-1$
 
     /**
      * Suffix of error message which points to the first occurrence of a repeated resource
@@ -191,6 +202,9 @@ public final class AaptParser {
     private final static Pattern sPattern9Line1 = Pattern.compile(
             "^Invalid configuration: (.+)$"); //$NON-NLS-1$
 
+    private final static Pattern sXmlBlockPattern = Pattern.compile(
+            "W/ResourceType\\(.*\\): Bad XML block: no root element node found"); //$NON-NLS-1$
+
     /**
      * Parse the output of aapt and mark the incorrect file with error markers
      *
@@ -204,7 +218,7 @@ public final class AaptParser {
             return parseOutput(results.toArray(new String[size]), project);
         }
 
-        return true;
+        return false;
     }
 
     /**
@@ -409,13 +423,18 @@ public final class AaptParser {
                 continue;
             }
 
-            m = sSkippingPattern.matcher(p);
+            m = sNewSkippingPattern.matcher(p);
             if (m.matches()) {
                 String location = m.group(1);
 
+                if (location.startsWith(".")         //$NON-NLS-1$
+                        || location.endsWith("~")) { //$NON-NLS-1$
+                    continue;
+                }
+
                 // check the values and attempt to mark the file.
                 if (checkAndMark(location, null, p.trim(), osRoot, project,
-                        AdtConstants.MARKER_AAPT_COMPILE, IMarker.SEVERITY_ERROR) == false) {
+                        AdtConstants.MARKER_AAPT_COMPILE, IMarker.SEVERITY_WARNING) == false) {
                     return true;
                 }
 
@@ -423,7 +442,42 @@ public final class AaptParser {
                 continue;
             }
 
-            // invalid line format, flag as error, and bail
+            m = sSkippingPattern.matcher(p);
+            if (m.matches()) {
+                String location = m.group(2);
+
+                // Certain files can safely be skipped without marking the project
+                // as having errors. See isHidden() in AaptAssets.cpp:
+                String type = m.group(1);
+                if (type.equals("backup")          //$NON-NLS-1$   // main.xml~, etc
+                        || type.equals("hidden")   //$NON-NLS-1$   // .gitignore, etc
+                        || type.equals("index")) { //$NON-NLS-1$   // thumbs.db, etc
+                    continue;
+                }
+
+                // check the values and attempt to mark the file.
+                if (checkAndMark(location, null, p.trim(), osRoot, project,
+                        AdtConstants.MARKER_AAPT_COMPILE, IMarker.SEVERITY_WARNING) == false) {
+                    return true;
+                }
+
+                // success, go to the next line
+                continue;
+            }
+
+            m = sXmlBlockPattern.matcher(p);
+            if (m.matches()) {
+                // W/ResourceType(12345): Bad XML block: no root element node found
+                // Sadly there's NO filename reference; this error typically describes the
+                // error *after* this line.
+                if (results.length == 1) {
+                    // This is the only error message: dump to console and quit
+                    return true;
+                }
+                // Continue: the real culprit is displayed next and should get a marker
+                continue;
+            }
+
             return true;
         }
 
@@ -718,7 +772,7 @@ public final class AaptParser {
             IResource r = project.findMember(file);
 
             // if the resource is valid, we add the marker
-            if (r.exists()) {
+            if (r != null && r.exists()) {
                 return r;
             }
         }

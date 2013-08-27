@@ -154,6 +154,7 @@ final class AvdStartDialog extends GridDialog {
         mScreenSize.setText(getScreenSize());
         mScreenSize.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
         mScreenSize.addVerifyListener(new VerifyListener() {
+            @Override
             public void verifyText(VerifyEvent event) {
                 // combine the current content and the new text
                 String text = mScreenSize.getText();
@@ -164,6 +165,7 @@ final class AvdStartDialog extends GridDialog {
             }
         });
         mScreenSize.addModifyListener(new ModifyListener() {
+            @Override
             public void modifyText(ModifyEvent event) {
                 onScaleChange();
             }
@@ -180,6 +182,7 @@ final class AvdStartDialog extends GridDialog {
         mMonitorDpi.setLayoutData(gd = new GridData(GridData.FILL_HORIZONTAL));
         gd.widthHint = 50;
         mMonitorDpi.addVerifyListener(new VerifyListener() {
+            @Override
             public void verifyText(VerifyEvent event) {
                 // check for digit only.
                 for (int i = 0 ; i < event.text.length(); i++) {
@@ -192,6 +195,7 @@ final class AvdStartDialog extends GridDialog {
             }
         });
         mMonitorDpi.addModifyListener(new ModifyListener() {
+            @Override
             public void modifyText(ModifyEvent event) {
                 onScaleChange();
             }
@@ -413,7 +417,7 @@ final class AvdStartDialog extends GridDialog {
      */
     private int getMonitorDpi() {
         if (mSettingsController != null) {
-            sMonitorDpi = mSettingsController.getMonitorDensity();
+            sMonitorDpi = mSettingsController.getSettings().getMonitorDensity();
         }
 
         if (sMonitorDpi == -1) { // first time? try to get a value
@@ -511,8 +515,9 @@ final class AvdStartDialog extends GridDialog {
      * @return true if both sizes where found.
      */
     private boolean parseLayoutFile(File layoutFile) {
+        BufferedReader input = null;
         try {
-            BufferedReader input = new BufferedReader(new FileReader(layoutFile));
+            input = new BufferedReader(new FileReader(layoutFile));
             String line;
 
             while ((line = input.readLine()) != null) {
@@ -559,6 +564,14 @@ final class AvdStartDialog extends GridDialog {
             // false is returned below.
         } catch (IOException e) {
             // ignore.
+        } finally {
+            if (input != null) {
+                try {
+                    input.close();
+                } catch (IOException e) {
+                    // ignore
+                }
+            }
         }
 
         return false;

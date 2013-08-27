@@ -18,6 +18,9 @@
 
 package com.android.ide.eclipse.adt.internal.wizards.newxmlfile;
 
+import static com.android.ide.common.layout.LayoutConstants.FQCN_GRID_LAYOUT;
+import static com.android.ide.common.layout.LayoutConstants.GRID_LAYOUT;
+
 import com.android.ide.common.resources.configuration.FolderConfiguration;
 import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
@@ -26,7 +29,9 @@ import com.android.ide.eclipse.adt.internal.editors.IconFactory;
 import com.android.ide.eclipse.adt.internal.editors.formatting.XmlFormatPreferences;
 import com.android.ide.eclipse.adt.internal.editors.formatting.XmlFormatStyle;
 import com.android.ide.eclipse.adt.internal.editors.formatting.XmlPrettyPrinter;
+import com.android.ide.eclipse.adt.internal.editors.manifest.ManifestInfo;
 import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
+import com.android.ide.eclipse.adt.internal.project.SupportLibraryHelper;
 import com.android.ide.eclipse.adt.internal.wizards.newxmlfile.NewXmlFileCreationPage.TypeInfo;
 import com.android.resources.ResourceFolderType;
 import com.android.util.Pair;
@@ -73,6 +78,7 @@ public class NewXmlFileWizard extends Wizard implements INewWizard {
     private ChooseConfigurationPage mConfigPage;
     private Values mValues;
 
+    @Override
     public void init(IWorkbench workbench, IStructuredSelection selection) {
         setHelpAvailable(false); // TODO have help
         setWindowTitle("New Android XML File");
@@ -132,6 +138,7 @@ public class NewXmlFileWizard extends Wizard implements INewWizard {
             // Open the file
             // This has to be delayed in order for focus handling to work correctly
             AdtPlugin.getDisplay().asyncExec(new Runnable() {
+                @Override
                 public void run() {
                     IFile file = created.getFirst();
                     IRegion region = created.getSecond();
@@ -198,6 +205,17 @@ public class NewXmlFileWizard extends Wizard implements INewWizard {
         }
 
         StringBuilder sb = new StringBuilder(XML_HEADER_LINE);
+
+        if (folderType == ResourceFolderType.LAYOUT && root.equals(GRID_LAYOUT)) {
+            IProject project = file.getParent().getProject();
+            int minSdk = ManifestInfo.get(project).getMinSdkVersion();
+            if (minSdk < 14) {
+                root = SupportLibraryHelper.getTagFor(project, FQCN_GRID_LAYOUT);
+                if (root.equals(FQCN_GRID_LAYOUT)) {
+                    root = GRID_LAYOUT;
+                }
+            }
+        }
 
         sb.append('<').append(root);
         if (xmlns != null) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 The Android Open Source Project
+ * Copyright (C) 2010, 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,12 +28,14 @@ import java.util.List;
 /**
  * Task to execute renderscript.
  * <p>
- * It expects 5 attributes:<br>
+ * It expects 7 attributes:<br>
  * 'executable' ({@link Path} with a single path) for the location of the llvm executable<br>
  * 'framework' ({@link Path} with 1 or more paths) for the include paths.<br>
  * 'genFolder' ({@link Path} with a single path) for the location of the gen folder.<br>
  * 'resFolder' ({@link Path} with a single path) for the location of the res folder.<br>
  * 'targetApi' for the -target-api value.<br>
+ * 'optLevel' for the -O optimization level.<br>
+ * 'debug' for -g renderscript debugging.<br>
  * <p>
  * It also expects one or more inner elements called "source" which are identical to {@link Path}
  * elements for where to find .rs files.
@@ -41,11 +43,14 @@ import java.util.List;
 public class RenderScriptTask extends MultiFilesTask {
 
     private String mExecutable;
-    private Path mFramework;
+    private Path mIncludePath;
     private String mGenFolder;
     private String mResFolder;
     private final List<Path> mPaths = new ArrayList<Path>();
     private int mTargetApi = 0;
+    public enum OptLevel { O0, O1, O2, O3 };
+    private OptLevel mOptLevel;
+    private boolean mDebug = false;
 
     private class RenderScriptProcessor implements SourceProcessor {
 
@@ -56,10 +61,12 @@ public class RenderScriptTask extends MultiFilesTask {
             mTargetApiStr = Integer.toString(mTargetApi < 11 ? 11 : mTargetApi);
         }
 
+        @Override
         public String getSourceFileExtension() {
             return "rs";
         }
 
+        @Override
         public void process(String filePath, String sourceFolder, List<String> sourceFolders,
                 Project taskProject) {
             File exe = new File(mExecutable);
@@ -72,7 +79,7 @@ public class RenderScriptTask extends MultiFilesTask {
             task.setExecutable(mExecutable);
             task.setFailonerror(true);
 
-            for (String path : mFramework.list()) {
+            for (String path : mIncludePath.list()) {
                 File res = new File(path);
                 if (res.isDirectory()) {
                     task.createArg().setValue("-I");
@@ -84,6 +91,13 @@ public class RenderScriptTask extends MultiFilesTask {
                 }
 
             }
+
+            if (mDebug) {
+                task.createArg().setValue("-g");
+            }
+
+            task.createArg().setValue("-O");
+            task.createArg().setValue(Integer.toString(mOptLevel.ordinal()));
 
             task.createArg().setValue("-target-api");
             task.createArg().setValue(mTargetApiStr);
@@ -102,6 +116,7 @@ public class RenderScriptTask extends MultiFilesTask {
             task.execute();
         }
 
+        @Override
         public void displayMessage(DisplayType type, int count) {
             switch (type) {
                 case FOUND:
@@ -112,6 +127,7 @@ public class RenderScriptTask extends MultiFilesTask {
                         System.out.println(String.format(
                                 "Compiling %1$d RenderScript files with -target-api %2$d",
                                 count, mTargetApi));
+                        System.out.println(String.format("Optimization Level: %1$d", mOptLevel.ordinal()));
                     } else {
                         System.out.println("No RenderScript files to compile.");
                     }
@@ -147,8 +163,8 @@ public class RenderScriptTask extends MultiFilesTask {
         mExecutable = TaskHelper.checkSinglePath("executable", executable);
     }
 
-    public void setFramework(Path value) {
-        mFramework = value;
+    public void setIncludePath(Path value) {
+        mIncludePath = value;
     }
 
     public void setGenFolder(Path value) {
@@ -170,6 +186,17 @@ public class RenderScriptTask extends MultiFilesTask {
         }
     }
 
+    public void setOptLevel(OptLevel optLevel) {
+        mOptLevel = optLevel;
+    }
+
+    /** Sets the current build type. value is a boolean, true for debug build, false for release */
+    @Override
+    public void setBuildType(String buildType) {
+        super.setBuildType(buildType);
+        mDebug = Boolean.valueOf(buildType);
+    }
+
     public Path createSource() {
         Path p = new Path(getProject());
         mPaths.add(p);
@@ -181,8 +208,8 @@ public class RenderScriptTask extends MultiFilesTask {
         if (mExecutable == null) {
             throw new BuildException("RenderScriptTask's 'executable' is required.");
         }
-        if (mFramework == null) {
-            throw new BuildException("RenderScriptTask's 'framework' is required.");
+        if (mIncludePath == null) {
+            throw new BuildException("RenderScriptTask's 'includePath' is required.");
         }
         if (mGenFolder == null) {
             throw new BuildException("RenderScriptTask's 'genFolder' is required.");

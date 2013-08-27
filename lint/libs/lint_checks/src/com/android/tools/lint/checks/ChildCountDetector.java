@@ -22,6 +22,7 @@ import static com.android.tools.lint.detector.api.LintConstants.LIST_VIEW;
 import static com.android.tools.lint.detector.api.LintConstants.REQUEST_FOCUS;
 import static com.android.tools.lint.detector.api.LintConstants.SCROLL_VIEW;
 
+import com.android.annotations.NonNull;
 import com.android.tools.lint.detector.api.Category;
 import com.android.tools.lint.detector.api.Issue;
 import com.android.tools.lint.detector.api.LayoutDetector;
@@ -74,35 +75,35 @@ public class ChildCountDetector extends LayoutDetector {
     }
 
     @Override
-    public Speed getSpeed() {
+    public @NonNull Speed getSpeed() {
         return Speed.FAST;
     }
 
     @Override
     public Collection<String> getApplicableElements() {
-        return Arrays.asList(new String[] {
+        return Arrays.asList(
                 SCROLL_VIEW,
                 HORIZONTAL_SCROLL_VIEW,
                 LIST_VIEW,
                 GRID_VIEW
                 // TODO: Shouldn't Spinner be in this list too? (Was not there in layoutopt)
-        });
+        );
     }
 
     @Override
-    public void visitElement(XmlContext context, Element element) {
+    public void visitElement(@NonNull XmlContext context, @NonNull Element element) {
         int childCount = LintUtils.getChildCount(element);
         String tagName = element.getTagName();
         if (tagName.equals(SCROLL_VIEW) || tagName.equals(HORIZONTAL_SCROLL_VIEW)) {
             if (childCount > 1 && getAccurateChildCount(element) > 1) {
-                context.report(SCROLLVIEW_ISSUE,
+                context.report(SCROLLVIEW_ISSUE, element,
                         context.getLocation(element), "A scroll view can have only one child",
                         null);
             }
         } else {
             // Adapter view
             if (childCount > 0 && getAccurateChildCount(element) > 0) {
-                context.report(ADAPTERVIEW_ISSUE,
+                context.report(ADAPTERVIEW_ISSUE, element,
                         context.getLocation(element),
                         "A list/grid should have no children declared in XML", null);
             }

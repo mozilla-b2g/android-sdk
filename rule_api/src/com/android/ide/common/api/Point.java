@@ -16,6 +16,9 @@
 
 package com.android.ide.common.api;
 
+import com.google.common.annotations.Beta;
+import com.android.annotations.NonNull;
+
 
 /**
  * Mutable point.
@@ -24,6 +27,7 @@ package com.android.ide.common.api;
  * to adjust your code for the next tools release.</b>
  * </p>
  */
+@Beta
 public class Point {
     public int x, y;
 
@@ -32,7 +36,7 @@ public class Point {
         this.y = y;
     }
 
-    public Point(Point p) {
+    public Point(@NonNull Point p) {
         x = p.x;
         y = p.y;
     }
@@ -44,6 +48,7 @@ public class Point {
     }
 
     /** Returns a new instance of a point with the same values. */
+    @NonNull
     public Point copy() {
         return new Point(x, y);
     }
@@ -52,6 +57,7 @@ public class Point {
      * Offsets this point by adding the given x,y deltas to the x,y coordinates.
      * @return Returns self, for chaining.
      */
+    @NonNull
     public Point offsetBy(int x, int y) {
         this.x += x;
         this.y += y;
