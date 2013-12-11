@@ -238,3 +238,13 @@ emugl-set-shared-library-subpath = \
     $(eval _emugl.$(LOCAL_MODULE).moved := true)\
     $(call emugl-export-outer,ADDITIONAL_DEPENDENCIES,$(LOCAL_MODULE_PATH)/$(LOCAL_MODULE)$(TARGET_SHLIB_SUFFIX))
 
+# OS X 10.6+ needs to be forced to link dylib to avoid problems
+# with the dynamic function lookups in SDL 1.2
+# NOTE: This only adds /usr/lib/dylib1.o to LDLIBS in Darwin if the 10.5/10.6 SDK
+# aren't already installed
+emugl-add-darwin-libs = \
+    $(if $(and $(wildcard /usr/lib/crt1.10.5.o),\
+               $(shell nm -a -j /usr/lib/crt1.10.5.o | grep __dyld_func_lookup)),\
+        ,\
+        $(eval LOCAL_SDL_LDLIBS += /usr/lib/dylib1.o)\
+    )
