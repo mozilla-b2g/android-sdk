@@ -17,9 +17,7 @@ LOCAL_LDLIBS += $(LOCAL_SDL_LDLIBS)
 LOCAL_STATIC_LIBRARIES += libSDL libSDLmain
 
 ifeq ($(HOST_OS),darwin)
-  # OS X 10.6+ needs to be forced to link dylib to avoid problems
-  # with the dynamic function lookups in SDL 1.2
-  LOCAL_LDLIBS += /usr/lib/dylib1.o
+  $(call emugl-add-darwin-libs)
   $(call emugl-import,libMac_view)
 endif
 

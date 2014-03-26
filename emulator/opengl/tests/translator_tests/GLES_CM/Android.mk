@@ -9,9 +9,7 @@ LOCAL_SDL_CFLAGS := $(shell $(LOCAL_SDL_CONFIG) --cflags)
 LOCAL_SDL_LDLIBS := $(filter-out %.a %.lib,$(shell $(LOCAL_SDL_CONFIG) --static-libs))
 
 ifeq ($(HOST_OS),darwin)
-  # OS X 10.6+ needs to be forced to link dylib to avoid problems
-  # with the dynamic function lookups in SDL 1.2
-  LOCAL_SDL_LDLIBS += /usr/lib/dylib1.o
+  $(call emugl-add-darwin-libs)
 endif
 
 LOCAL_SRC_FILES:= \
