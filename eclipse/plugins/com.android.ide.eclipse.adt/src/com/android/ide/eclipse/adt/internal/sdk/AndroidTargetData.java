@@ -16,20 +16,28 @@
 
 package com.android.ide.eclipse.adt.internal.sdk;
 
+import com.android.ide.common.rendering.LayoutLibrary;
+import com.android.ide.common.rendering.api.LayoutLog;
+import com.android.ide.common.resources.ResourceRepository;
+import com.android.ide.common.sdk.LoadStatus;
 import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.ide.eclipse.adt.internal.editors.animator.AnimDescriptors;
+import com.android.ide.eclipse.adt.internal.editors.animator.AnimatorDescriptors;
+import com.android.ide.eclipse.adt.internal.editors.color.ColorDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.IDescriptorProvider;
+import com.android.ide.eclipse.adt.internal.editors.drawable.DrawableDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.manifest.descriptors.AndroidManifestDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.menu.descriptors.MenuDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.resources.descriptors.ResourcesDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.xml.descriptors.XmlDescriptors;
-import com.android.ide.eclipse.adt.internal.resources.IResourceRepository;
 import com.android.ide.eclipse.adt.internal.resources.manager.ProjectResources;
-import com.android.layoutlib.api.ILayoutBridge;
 import com.android.sdklib.IAndroidTarget;
 import com.android.sdklib.IAndroidTarget.IOptionalLibrary;
 
-import java.lang.reflect.Field;
+import org.eclipse.core.runtime.IStatus;
+
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Hashtable;
 import java.util.Map;
@@ -47,42 +55,12 @@ public class AndroidTargetData {
     public final static int DESCRIPTOR_SEARCHABLE = 6;
     public final static int DESCRIPTOR_PREFERENCES = 7;
     public final static int DESCRIPTOR_APPWIDGET_PROVIDER = 8;
-
-    public final static class LayoutBridge {
-        /** Link to the layout bridge */
-        public ILayoutBridge bridge;
-
-        public LoadStatus status = LoadStatus.LOADING;
-
-        public ClassLoader classLoader;
-
-        public int apiLevel;
-
-        /**
-         * Post rendering clean-up that must be done here so that it's done even for older
-         * versions of the layoutlib.
-         */
-        public void cleanUp() {
-            try {
-                Class<?> looperClass = classLoader.loadClass("android.os.Looper"); //$NON-NLS-1$
-                Field threadLocalField = looperClass.getField("sThreadLocal"); //$NON-NLS-1$
-                if (threadLocalField != null) {
-                    threadLocalField.setAccessible(true);
-                    // get object. Field is static so no need to pass an object
-                    ThreadLocal<?> threadLocal = (ThreadLocal<?>) threadLocalField.get(null);
-                    if (threadLocal != null) {
-                        threadLocal.remove();
-                    }
-                }
-            } catch (Exception e) {
-                AdtPlugin.log(e, "Failed to clean up bridge for API level %d", apiLevel);
-            }
-        }
-    }
+    public final static int DESCRIPTOR_DRAWABLE = 9;
+    public final static int DESCRIPTOR_ANIMATOR = 10;
+    public final static int DESCRIPTOR_ANIM = 11;
+    public final static int DESCRIPTOR_COLOR = 12;
 
     private final IAndroidTarget mTarget;
-
-    private DexWrapper mDexWrapper;
 
     /**
      * mAttributeValues is a map { key => list [ values ] }.
@@ -96,17 +74,19 @@ public class AndroidTargetData {
      */
     private Hashtable<String, String[]> mAttributeValues = new Hashtable<String, String[]>();
 
-    private IResourceRepository mSystemResourceRepository;
-
     private AndroidManifestDescriptors mManifestDescriptors;
+    private DrawableDescriptors mDrawableDescriptors;
+    private AnimatorDescriptors mAnimatorDescriptors;
+    private AnimDescriptors mAnimDescriptors;
+    private ColorDescriptors mColorDescriptors;
     private LayoutDescriptors mLayoutDescriptors;
     private MenuDescriptors mMenuDescriptors;
     private XmlDescriptors mXmlDescriptors;
 
     private Map<String, Map<String, Integer>> mEnumValueMap;
 
-    private ProjectResources mFrameworkResources;
-    private LayoutBridge mLayoutBridge;
+    private ResourceRepository mFrameworkResources;
+    private LayoutLibrary mLayoutLibrary;
 
     private boolean mLayoutBridgeInit = false;
 
@@ -114,20 +94,18 @@ public class AndroidTargetData {
         mTarget = androidTarget;
     }
 
-    void setDexWrapper(DexWrapper wrapper) {
-        mDexWrapper = wrapper;
-    }
-
     /**
      * Creates an AndroidTargetData object.
-     * @param platformLibraries
-     * @param optionalLibraries
      */
-    void setExtraData(IResourceRepository systemResourceRepository,
+    void setExtraData(
             AndroidManifestDescriptors manifestDescriptors,
             LayoutDescriptors layoutDescriptors,
             MenuDescriptors menuDescriptors,
             XmlDescriptors xmlDescriptors,
+            DrawableDescriptors drawableDescriptors,
+            AnimatorDescriptors animatorDescriptors,
+            AnimDescriptors animDescriptors,
+            ColorDescriptors colorDescriptors,
             Map<String, Map<String, Integer>> enumValueMap,
             String[] permissionValues,
             String[] activityIntentActionValues,
@@ -136,30 +114,25 @@ public class AndroidTargetData {
             String[] intentCategoryValues,
             String[] platformLibraries,
             IOptionalLibrary[] optionalLibraries,
-            ProjectResources resources,
-            LayoutBridge layoutBridge) {
+            ResourceRepository frameworkResources,
+            LayoutLibrary layoutLibrary) {
 
-        mSystemResourceRepository = systemResourceRepository;
         mManifestDescriptors = manifestDescriptors;
+        mDrawableDescriptors = drawableDescriptors;
+        mAnimatorDescriptors = animatorDescriptors;
+        mAnimDescriptors = animDescriptors;
+        mColorDescriptors = colorDescriptors;
         mLayoutDescriptors = layoutDescriptors;
         mMenuDescriptors = menuDescriptors;
         mXmlDescriptors = xmlDescriptors;
         mEnumValueMap = enumValueMap;
-        mFrameworkResources = resources;
-        mLayoutBridge = layoutBridge;
+        mFrameworkResources = frameworkResources;
+        mLayoutLibrary = layoutLibrary;
 
         setPermissions(permissionValues);
         setIntentFilterActionsAndCategories(activityIntentActionValues, broadcastIntentActionValues,
                 serviceIntentActionValues, intentCategoryValues);
         setOptionalLibraries(platformLibraries, optionalLibraries);
-    }
-
-    public DexWrapper getDexWrapper() {
-        return mDexWrapper;
-    }
-
-    public IResourceRepository getSystemResources() {
-        return mSystemResourceRepository;
     }
 
     /**
@@ -187,6 +160,14 @@ public class AndroidTargetData {
                 return mXmlDescriptors.getAppWidgetProvider();
             case DESCRIPTOR_SEARCHABLE:
                 return mXmlDescriptors.getSearchableProvider();
+            case DESCRIPTOR_DRAWABLE:
+                return mDrawableDescriptors;
+            case DESCRIPTOR_ANIMATOR:
+                return mAnimatorDescriptors;
+            case DESCRIPTOR_ANIM:
+                return mAnimDescriptors;
+            case DESCRIPTOR_COLOR:
+                return mColorDescriptors;
             default :
                  throw new IllegalArgumentException();
         }
@@ -197,6 +178,34 @@ public class AndroidTargetData {
      */
     public AndroidManifestDescriptors getManifestDescriptors() {
         return mManifestDescriptors;
+    }
+
+    /**
+     * Returns the drawable descriptors
+     */
+    public DrawableDescriptors getDrawableDescriptors() {
+        return mDrawableDescriptors;
+    }
+
+    /**
+     * Returns the animation descriptors
+     */
+    public AnimDescriptors getAnimDescriptors() {
+        return mAnimDescriptors;
+    }
+
+    /**
+     * Returns the color descriptors
+     */
+    public ColorDescriptors getColorDescriptors() {
+        return mColorDescriptors;
+    }
+
+    /**
+     * Returns the animator descriptors
+     */
+    public AnimatorDescriptors getAnimatorDescriptors() {
+        return mAnimatorDescriptors;
     }
 
     /**
@@ -277,23 +286,49 @@ public class AndroidTargetData {
     /**
      * Returns the {@link ProjectResources} containing the Framework Resources.
      */
-    public ProjectResources getFrameworkResources() {
+    public ResourceRepository getFrameworkResources() {
         return mFrameworkResources;
     }
 
     /**
-     * Returns a {@link LayoutBridge} object possibly containing a {@link ILayoutBridge} object.
-     * <p/>If {@link LayoutBridge#bridge} is <code>null</code>, {@link LayoutBridge#status} will
-     * contain the reason (either {@link LoadStatus#LOADING} or {@link LoadStatus#FAILED}).
-     * <p/>Valid {@link ILayoutBridge} objects are always initialized before being returned.
+     * Returns a {@link LayoutLibrary} object possibly containing a {@link LayoutBridge} object.
+     * <p/>If {@link LayoutLibrary#getBridge()} is <code>null</code>,
+     * {@link LayoutBridge#getStatus()} will contain the reason (either {@link LoadStatus#LOADING}
+     * or {@link LoadStatus#FAILED}).
+     * <p/>Valid {@link LayoutBridge} objects are always initialized before being returned.
      */
-    public synchronized LayoutBridge getLayoutBridge() {
-        if (mLayoutBridgeInit == false && mLayoutBridge.bridge != null) {
-            mLayoutBridge.bridge.init(mTarget.getPath(IAndroidTarget.FONTS),
-                    getEnumValueMap());
+    public synchronized LayoutLibrary getLayoutLibrary() {
+        if (mLayoutBridgeInit == false && mLayoutLibrary.getStatus() == LoadStatus.LOADED) {
+            boolean ok = mLayoutLibrary.init(
+                    mTarget.getProperties(),
+                    new File(mTarget.getPath(IAndroidTarget.FONTS)),
+                    getEnumValueMap(),
+                    new LayoutLog() {
+
+                        @Override
+                        public void error(String tag, String message, Throwable throwable,
+                                Object data) {
+                            AdtPlugin.log(throwable, message);
+                        }
+
+                        @Override
+                        public void error(String tag, String message, Object data) {
+                            AdtPlugin.log(IStatus.ERROR, message);
+                        }
+
+                        @Override
+                        public void warning(String tag, String message, Object data) {
+                            AdtPlugin.log(IStatus.WARNING, message);
+                        }
+                    });
+            if (!ok) {
+                AdtPlugin.log(IStatus.ERROR,
+                        "LayoutLibrary initialization failed");
+            }
             mLayoutBridgeInit = true;
         }
-        return mLayoutBridge;
+
+        return mLayoutLibrary;
     }
 
     /**
@@ -347,5 +382,11 @@ public class AndroidTargetData {
     private void setValues(String name, String[] values) {
         mAttributeValues.remove(name);
         mAttributeValues.put(name, values);
+    }
+
+    public void dispose() {
+        if (mLayoutLibrary != null) {
+            mLayoutLibrary.dispose();
+        }
     }
 }

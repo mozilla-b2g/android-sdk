@@ -16,11 +16,16 @@
 
 package com.android.ide.eclipse.adt.internal.project;
 
+import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
-import com.android.ide.eclipse.adt.AndroidConstants;
+import com.android.ide.eclipse.adt.internal.build.builders.PostCompilerBuilder;
+import com.android.ide.eclipse.adt.internal.build.builders.PreCompilerBuilder;
+import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
 import com.android.sdklib.SdkConstants;
 import com.android.sdklib.xml.ManifestData;
+import com.android.util.Pair;
 
+import org.eclipse.core.resources.ICommand;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IMarker;
@@ -32,6 +37,7 @@ import org.eclipse.core.resources.IncrementalProjectBuilder;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
+import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.core.runtime.Path;
 import org.eclipse.core.runtime.QualifiedName;
@@ -43,7 +49,10 @@ import org.eclipse.jdt.core.JavaModelException;
 import org.eclipse.jdt.launching.JavaRuntime;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Utility class to manipulate Project parameters/properties.
@@ -56,34 +65,55 @@ public final class ProjectHelper {
 
     /**
      * Adds the corresponding source folder to the class path entries.
+     * This method does not check whether the entry is already defined in the project.
      *
      * @param entries The class path entries to read. A copy will be returned.
-     * @param new_entry The parent source folder to remove.
+     * @param newEntry The new class path entry to add.
      * @return A new class path entries array.
      */
     public static IClasspathEntry[] addEntryToClasspath(
-            IClasspathEntry[] entries, IClasspathEntry new_entry) {
+            IClasspathEntry[] entries, IClasspathEntry newEntry) {
         int n = entries.length;
         IClasspathEntry[] newEntries = new IClasspathEntry[n + 1];
         System.arraycopy(entries, 0, newEntries, 0, n);
-        newEntries[n] = new_entry;
+        newEntries[n] = newEntry;
         return newEntries;
     }
 
     /**
      * Adds the corresponding source folder to the project's class path entries.
+     * This method does not check whether the entry is already defined in the project.
      *
      * @param javaProject The java project of which path entries to update.
-     * @param new_entry The parent source folder to remove.
+     * @param newEntry The new class path entry to add.
      * @throws JavaModelException
      */
-    public static void addEntryToClasspath(
-            IJavaProject javaProject, IClasspathEntry new_entry)
+    public static void addEntryToClasspath(IJavaProject javaProject, IClasspathEntry newEntry)
             throws JavaModelException {
 
         IClasspathEntry[] entries = javaProject.getRawClasspath();
-        entries = addEntryToClasspath(entries, new_entry);
+        entries = addEntryToClasspath(entries, newEntry);
         javaProject.setRawClasspath(entries, new NullProgressMonitor());
+    }
+
+    /**
+     * Checks whether the given class path entry is already defined in the project.
+     *
+     * @param javaProject The java project of which path entries to check.
+     * @param newEntry The parent source folder to remove.
+     * @return True if the class path entry is already defined.
+     * @throws JavaModelException
+     */
+    public static boolean isEntryInClasspath(IJavaProject javaProject, IClasspathEntry newEntry)
+            throws JavaModelException {
+
+        IClasspathEntry[] entries = javaProject.getRawClasspath();
+        for (IClasspathEntry entry : entries) {
+            if (entry.equals(newEntry)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -116,11 +146,11 @@ public final class ProjectHelper {
     public static String getJavaDocPath(String javaDocOSLocation) {
         // first thing we do is convert the \ into /
         String javaDoc = javaDocOSLocation.replaceAll("\\\\", //$NON-NLS-1$
-                AndroidConstants.WS_SEP);
+                AdtConstants.WS_SEP);
 
         // then we add file: at the beginning for unix path, and file:/ for non
         // unix path
-        if (javaDoc.startsWith(AndroidConstants.WS_SEP)) {
+        if (javaDoc.startsWith(AdtConstants.WS_SEP)) {
             return "file:" + javaDoc; //$NON-NLS-1$
         }
 
@@ -241,7 +271,8 @@ public final class ProjectHelper {
         // get the output folder
         IPath outputFolder = javaProject.getOutputLocation();
 
-        boolean foundContainer = false;
+        boolean foundFrameworkContainer = false;
+        boolean foundLibrariesContainer = false;
 
         for (int i = 0 ; i < entries.length ;) {
             // get the entry and kind
@@ -258,8 +289,12 @@ public final class ProjectHelper {
                     continue;
                 }
             } else if (kind == IClasspathEntry.CPE_CONTAINER) {
-                if (AndroidClasspathContainerInitializer.checkPath(entry.getPath())) {
-                    foundContainer = true;
+                String path = entry.getPath().toString();
+                if (AdtConstants.CONTAINER_FRAMEWORK.equals(path)) {
+                    foundFrameworkContainer = true;
+                }
+                if (AdtConstants.CONTAINER_LIBRARIES.equals(path)) {
+                    foundLibrariesContainer = true;
                 }
             }
 
@@ -267,10 +302,17 @@ public final class ProjectHelper {
         }
 
         // if the framework container is not there, we add it
-        if (foundContainer == false) {
+        if (foundFrameworkContainer == false) {
             // add the android container to the array
             entries = ProjectHelper.addEntryToClasspath(entries,
-                    AndroidClasspathContainerInitializer.getContainerEntry());
+                    JavaCore.newContainerEntry(new Path(AdtConstants.CONTAINER_FRAMEWORK)));
+        }
+
+        // same thing for the library container
+        if (foundLibrariesContainer == false) {
+            // add the android container to the array
+            entries = ProjectHelper.addEntryToClasspath(entries,
+                    JavaCore.newContainerEntry(new Path(AdtConstants.CONTAINER_LIBRARIES)));
         }
 
         // set the new list of entries to the project
@@ -286,21 +328,22 @@ public final class ProjectHelper {
     /**
      * Checks the project compiler compliance level is supported.
      * @param javaProject The project to check
-     * @return <ul>
+     * @return A pair with the first integer being an error code, and the second value
+     *   being the invalid value found or null. The error code can be: <ul>
      * <li><code>COMPILER_COMPLIANCE_OK</code> if the project is properly configured</li>
      * <li><code>COMPILER_COMPLIANCE_LEVEL</code> for unsupported compiler level</li>
      * <li><code>COMPILER_COMPLIANCE_SOURCE</code> for unsupported source compatibility</li>
      * <li><code>COMPILER_COMPLIANCE_CODEGEN_TARGET</code> for unsupported .class format</li>
      * </ul>
      */
-    public static final int checkCompilerCompliance(IJavaProject javaProject) {
+    public static final Pair<Integer, String> checkCompilerCompliance(IJavaProject javaProject) {
         // get the project compliance level option
         String compliance = javaProject.getOption(JavaCore.COMPILER_COMPLIANCE, true);
 
         // check it against a list of valid compliance level strings.
         if (checkCompliance(compliance) == false) {
             // if we didn't find the proper compliance level, we return an error
-            return COMPILER_COMPLIANCE_LEVEL;
+            return Pair.of(COMPILER_COMPLIANCE_LEVEL, compliance);
         }
 
         // otherwise we check source compatibility
@@ -309,7 +352,7 @@ public final class ProjectHelper {
         // check it against a list of valid compliance level strings.
         if (checkCompliance(source) == false) {
             // if we didn't find the proper compliance level, we return an error
-            return COMPILER_COMPLIANCE_SOURCE;
+            return Pair.of(COMPILER_COMPLIANCE_SOURCE, source);
         }
 
         // otherwise check codegen level
@@ -318,23 +361,24 @@ public final class ProjectHelper {
         // check it against a list of valid compliance level strings.
         if (checkCompliance(codeGen) == false) {
             // if we didn't find the proper compliance level, we return an error
-            return COMPILER_COMPLIANCE_CODEGEN_TARGET;
+            return Pair.of(COMPILER_COMPLIANCE_CODEGEN_TARGET, codeGen);
         }
 
-        return COMPILER_COMPLIANCE_OK;
+        return Pair.of(COMPILER_COMPLIANCE_OK, null);
     }
 
     /**
      * Checks the project compiler compliance level is supported.
      * @param project The project to check
-     * @return <ul>
+     * @return A pair with the first integer being an error code, and the second value
+     *   being the invalid value found or null. The error code can be: <ul>
      * <li><code>COMPILER_COMPLIANCE_OK</code> if the project is properly configured</li>
      * <li><code>COMPILER_COMPLIANCE_LEVEL</code> for unsupported compiler level</li>
      * <li><code>COMPILER_COMPLIANCE_SOURCE</code> for unsupported source compatibility</li>
      * <li><code>COMPILER_COMPLIANCE_CODEGEN_TARGET</code> for unsupported .class format</li>
      * </ul>
      */
-    public static final int checkCompilerCompliance(IProject project) {
+    public static final Pair<Integer, String> checkCompilerCompliance(IProject project) {
         // get the java project from the IProject resource object
         IJavaProject javaProject = JavaCore.create(project);
 
@@ -349,6 +393,9 @@ public final class ProjectHelper {
      * @param project The project to check and fix.
      */
     public static final void checkAndFixCompilerCompliance(IProject project) {
+        // FIXME This method is never used. Shall we just removed it?
+        // {@link #checkAndFixCompilerCompliance(IJavaProject)} is used instead.
+
         // get the java project from the IProject resource object
         IJavaProject javaProject = JavaCore.create(project);
 
@@ -362,14 +409,15 @@ public final class ProjectHelper {
      * @param javaProject The Java project to check and fix.
      */
     public static final void checkAndFixCompilerCompliance(IJavaProject javaProject) {
-        if (checkCompilerCompliance(javaProject) != COMPILER_COMPLIANCE_OK) {
+        Pair<Integer, String> result = checkCompilerCompliance(javaProject);
+        if (result.getFirst().intValue() != COMPILER_COMPLIANCE_OK) {
             // setup the preferred compiler compliance level.
             javaProject.setOption(JavaCore.COMPILER_COMPLIANCE,
-                    AndroidConstants.COMPILER_COMPLIANCE_PREFERRED);
+                    AdtConstants.COMPILER_COMPLIANCE_PREFERRED);
             javaProject.setOption(JavaCore.COMPILER_SOURCE,
-                    AndroidConstants.COMPILER_COMPLIANCE_PREFERRED);
+                    AdtConstants.COMPILER_COMPLIANCE_PREFERRED);
             javaProject.setOption(JavaCore.COMPILER_CODEGEN_TARGET_PLATFORM,
-                    AndroidConstants.COMPILER_COMPLIANCE_PREFERRED);
+                    AdtConstants.COMPILER_COMPLIANCE_PREFERRED);
 
             // clean the project to make sure we recompile
             try {
@@ -402,7 +450,7 @@ public final class ProjectHelper {
         for (IProject p : projects) {
             if (p.isOpen()) {
                 try {
-                    if (p.hasNature(AndroidConstants.NATURE_DEFAULT) == false) {
+                    if (p.hasNature(AdtConstants.NATURE_DEFAULT) == false) {
                         // ignore non android projects
                         continue;
                     }
@@ -451,16 +499,16 @@ public final class ProjectHelper {
         String[] natures = description.getNatureIds();
 
         // if the android nature is not the first one, we reorder them
-        if (AndroidConstants.NATURE_DEFAULT.equals(natures[0]) == false) {
+        if (AdtConstants.NATURE_DEFAULT.equals(natures[0]) == false) {
             // look for the index
             for (int i = 0 ; i < natures.length ; i++) {
-                if (AndroidConstants.NATURE_DEFAULT.equals(natures[i])) {
+                if (AdtConstants.NATURE_DEFAULT.equals(natures[i])) {
                     // if we try to just reorder the array in one pass, this doesn't do
                     // anything. I guess JDT check that we are actually adding/removing nature.
                     // So, first we'll remove the android nature, and then add it back.
 
                     // remove the android nature
-                    removeNature(project, AndroidConstants.NATURE_DEFAULT);
+                    removeNature(project, AdtConstants.NATURE_DEFAULT);
 
                     // now add it back at the first index.
                     description = project.getDescription();
@@ -469,7 +517,7 @@ public final class ProjectHelper {
                     String[] newNatures = new String[natures.length + 1];
 
                     // first one is android
-                    newNatures[0] = AndroidConstants.NATURE_DEFAULT;
+                    newNatures[0] = AdtConstants.NATURE_DEFAULT;
 
                     // next the rest that was before the android nature
                     System.arraycopy(natures, 0, newNatures, 1, natures.length);
@@ -535,7 +583,7 @@ public final class ProjectHelper {
 
         // test the referenced projects if needed.
         if (includeReferencedProjects) {
-            IProject[] projects = getReferencedProjects(project);
+            List<IProject> projects = getReferencedProjects(project);
 
             for (IProject p : projects) {
                 if (hasError(p, false)) {
@@ -613,6 +661,15 @@ public final class ProjectHelper {
         return defaultValue;
     }
 
+    public static Boolean loadBooleanProperty(IResource resource, String propertyName) {
+        String value = loadStringProperty(resource, propertyName);
+        if (value != null) {
+            return Boolean.valueOf(value);
+        }
+
+        return null;
+    }
+
     /**
      * Saves the path of a resource into the persistent storage of a resource.
      * @param resource The resource into which the resource path is saved.
@@ -651,10 +708,10 @@ public final class ProjectHelper {
     /**
      * Returns the list of referenced project that are opened and Java projects.
      * @param project
-     * @return list of opened referenced java project.
+     * @return a new list object containing the opened referenced java project.
      * @throws CoreException
      */
-    public static IProject[] getReferencedProjects(IProject project) throws CoreException {
+    public static List<IProject> getReferencedProjects(IProject project) throws CoreException {
         IProject[] projects = project.getReferencedProjects();
 
         ArrayList<IProject> list = new ArrayList<IProject>();
@@ -665,7 +722,7 @@ public final class ProjectHelper {
             }
         }
 
-        return list.toArray(new IProject[list.size()]);
+        return list;
     }
 
 
@@ -675,7 +732,7 @@ public final class ProjectHelper {
      * @return true if the option value is supproted.
      */
     private static boolean checkCompliance(String optionValue) {
-        for (String s : AndroidConstants.COMPILER_COMPLIANCE) {
+        for (String s : AdtConstants.COMPILER_COMPLIANCE) {
             if (s != null && s.equals(optionValue)) {
                 return true;
             }
@@ -691,10 +748,10 @@ public final class ProjectHelper {
      */
     public static String getApkFilename(IProject project, String config) {
         if (config != null) {
-            return project.getName() + "-" + config + AndroidConstants.DOT_ANDROID_PACKAGE; //$NON-NLS-1$
+            return project.getName() + "-" + config + AdtConstants.DOT_ANDROID_PACKAGE; //$NON-NLS-1$
         }
 
-        return project.getName() + AndroidConstants.DOT_ANDROID_PACKAGE;
+        return project.getName() + AdtConstants.DOT_ANDROID_PACKAGE;
     }
 
     /**
@@ -718,7 +775,7 @@ public final class ProjectHelper {
 
             //Verify that the project has also the Android Nature
             try {
-                if (!androidJavaProject.getProject().hasNature(AndroidConstants.NATURE_DEFAULT)) {
+                if (!androidJavaProject.getProject().hasNature(AdtConstants.NATURE_DEFAULT)) {
                     continue;
                 }
             } catch (CoreException e) {
@@ -739,7 +796,7 @@ public final class ProjectHelper {
      */
     public static IFile getApplicationPackage(IProject project) {
         // get the output folder
-        IFolder outputLocation = BaseProjectHelper.getOutputFolder(project);
+        IFolder outputLocation = BaseProjectHelper.getAndroidOutputFolder(project);
 
         if (outputLocation == null) {
             AdtPlugin.printErrorToConsole(project,
@@ -750,7 +807,7 @@ public final class ProjectHelper {
 
 
         // get the package path
-        String packageName = project.getName() + AndroidConstants.DOT_ANDROID_PACKAGE;
+        String packageName = project.getName() + AdtConstants.DOT_ANDROID_PACKAGE;
         IResource r = outputLocation.findMember(packageName);
 
         // check the package is present
@@ -772,12 +829,143 @@ public final class ProjectHelper {
      *         is missing.
      */
     public static IFile getManifest(IProject project) {
-        IResource r = project.findMember(AndroidConstants.WS_SEP
+        IResource r = project.findMember(AdtConstants.WS_SEP
                 + SdkConstants.FN_ANDROID_MANIFEST_XML);
 
         if (r == null || r.exists() == false || (r instanceof IFile) == false) {
             return null;
         }
         return (IFile) r;
+    }
+
+    /**
+     * Does a full release build of the application, including the libraries. Do not build the
+     * package.
+     *
+     * @param project The project to be built.
+     * @param monitor A eclipse runtime progress monitor to be updated by the builders.
+     * @throws CoreException
+     */
+    @SuppressWarnings("unchecked")
+    public static void compileInReleaseMode(IProject project, IProgressMonitor monitor)
+            throws CoreException {
+        // Get list of projects that we depend on
+        List<IJavaProject> androidProjectList = new ArrayList<IJavaProject>();
+        try {
+            androidProjectList = getAndroidProjectDependencies(
+                    BaseProjectHelper.getJavaProject(project));
+
+        } catch (JavaModelException e) {
+            AdtPlugin.printErrorToConsole(project, e);
+        }
+
+        // Recursively build dependencies
+        for (IJavaProject dependency : androidProjectList) {
+            IProject libProject = dependency.getProject();
+            compileInReleaseMode(libProject, monitor);
+
+            // force refresh of the dependency.
+            libProject.refreshLocal(IResource.DEPTH_INFINITE, monitor);
+        }
+
+        // do a full build on all the builders to guarantee that the builders are called.
+        // (Eclipse does an optimization where builders are not called if there aren't any
+        // deltas).
+
+        ICommand[] commands = project.getDescription().getBuildSpec();
+        for (ICommand command : commands) {
+            String name = command.getBuilderName();
+            if (PreCompilerBuilder.ID.equals(name)) {
+                Map newArgs = new HashMap();
+                newArgs.put(PreCompilerBuilder.RELEASE_REQUESTED, "");
+                if (command.getArguments() != null) {
+                    newArgs.putAll(command.getArguments());
+                }
+
+                project.build(IncrementalProjectBuilder.FULL_BUILD,
+                        PreCompilerBuilder.ID, newArgs, monitor);
+            } else if (PostCompilerBuilder.ID.equals(name)) {
+                // skip...
+            } else {
+                project.build(IncrementalProjectBuilder.FULL_BUILD, name,
+                        command.getArguments(), monitor);
+            }
+        }
+    }
+
+    /**
+     * Force building the project and all its dependencies.
+     *
+     * @param project the project to build
+     * @param kind the build kind
+     * @param monitor
+     * @throws CoreException
+     */
+    public static void buildWithDeps(IProject project, int kind, IProgressMonitor monitor)
+            throws CoreException {
+        // Get list of projects that we depend on
+        List<IJavaProject> androidProjectList = new ArrayList<IJavaProject>();
+        try {
+            androidProjectList = getAndroidProjectDependencies(
+                    BaseProjectHelper.getJavaProject(project));
+
+        } catch (JavaModelException e) {
+            AdtPlugin.printErrorToConsole(project, e);
+        }
+
+        // Recursively build dependencies
+        for (IJavaProject dependency : androidProjectList) {
+            buildWithDeps(dependency.getProject(), kind, monitor);
+        }
+
+        project.build(kind, monitor);
+    }
+
+
+    /**
+     * Build project incrementally, including making the final packaging even if it is disabled
+     * by default.
+     *
+     * @param project The project to be built.
+     * @param monitor A eclipse runtime progress monitor to be updated by the builders.
+     * @throws CoreException
+     */
+    public static void doFullIncrementalDebugBuild(IProject project, IProgressMonitor monitor)
+            throws CoreException {
+        // Get list of projects that we depend on
+        List<IJavaProject> androidProjectList = new ArrayList<IJavaProject>();
+        try {
+            androidProjectList = getAndroidProjectDependencies(
+                                    BaseProjectHelper.getJavaProject(project));
+        } catch (JavaModelException e) {
+            AdtPlugin.printErrorToConsole(project, e);
+        }
+        // Recursively build dependencies
+        for (IJavaProject dependency : androidProjectList) {
+            doFullIncrementalDebugBuild(dependency.getProject(), monitor);
+        }
+
+        // Do an incremental build to pick up all the deltas
+        project.build(IncrementalProjectBuilder.INCREMENTAL_BUILD, monitor);
+
+        // If the preferences indicate not to use post compiler optimization
+        // then the incremental build will have done everything necessary, otherwise,
+        // we have to run the final builder manually (if requested).
+        if (AdtPrefs.getPrefs().getBuildSkipPostCompileOnFileSave()) {
+            // Create the map to pass to the PostC builder
+            Map<String, String> args = new TreeMap<String, String>();
+            args.put(PostCompilerBuilder.POST_C_REQUESTED, ""); //$NON-NLS-1$
+
+            // call the post compiler manually, forcing FULL_BUILD otherwise Eclipse won't
+            // call the builder since the delta is empty.
+            project.build(IncrementalProjectBuilder.FULL_BUILD,
+                          PostCompilerBuilder.ID, args, monitor);
+        }
+
+        // because the post compiler builder does a delayed refresh due to
+        // library not picking the refresh up if it's done during the build,
+        // we want to force a refresh here as this call is generally asking for
+        // a build to use the apk right after the call.
+        project.refreshLocal(IResource.DEPTH_INFINITE, monitor);
     }
 }

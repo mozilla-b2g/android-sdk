@@ -18,6 +18,8 @@ package com.android.ddmuilib;
 
 import com.android.ddmlib.AllocationInfo;
 import com.android.ddmlib.Client;
+import com.android.ddmlib.AllocationInfo.AllocationSorter;
+import com.android.ddmlib.AllocationInfo.SortMode;
 import com.android.ddmlib.AndroidDebugBridge.IClientChangeListener;
 import com.android.ddmlib.ClientData.AllocationTrackingStatus;
 
@@ -33,6 +35,8 @@ import org.eclipse.jface.viewers.TableViewer;
 import org.eclipse.jface.viewers.Viewer;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.SWTException;
+import org.eclipse.swt.events.ModifyEvent;
+import org.eclipse.swt.events.ModifyListener;
 import org.eclipse.swt.events.SelectionAdapter;
 import org.eclipse.swt.events.SelectionEvent;
 import org.eclipse.swt.graphics.Color;
@@ -44,18 +48,26 @@ import org.eclipse.swt.layout.FormLayout;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Button;
+import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
+import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Event;
 import org.eclipse.swt.widgets.Listener;
 import org.eclipse.swt.widgets.Sash;
 import org.eclipse.swt.widgets.Table;
+import org.eclipse.swt.widgets.TableColumn;
+import org.eclipse.swt.widgets.Text;
+
+import java.util.ArrayList;
+import java.util.Arrays;
 
 /**
  * Base class for our information panels.
  */
 public class AllocationPanel extends TablePanel {
 
+    private final static String PREFS_ALLOC_COL_NUMBER = "allocPanel.Col00"; //$NON-NLS-1$
     private final static String PREFS_ALLOC_COL_SIZE = "allocPanel.Col0"; //$NON-NLS-1$
     private final static String PREFS_ALLOC_COL_CLASS = "allocPanel.Col1"; //$NON-NLS-1$
     private final static String PREFS_ALLOC_COL_THREAD = "allocPanel.Col2"; //$NON-NLS-1$
@@ -78,17 +90,28 @@ public class AllocationPanel extends TablePanel {
     private Table mStackTraceTable;
     private Button mEnableButton;
     private Button mRequestButton;
+    private Button mTraceFilterCheck;
+
+    private final AllocationSorter mSorter = new AllocationSorter();
+    private TableColumn mSortColumn;
+    private Image mSortUpImg;
+    private Image mSortDownImg;
+    private String mFilterText = null;
 
     /**
      * Content Provider to display the allocations of a client.
      * Expected input is a {@link Client} object, elements used in the table are of type
      * {@link AllocationInfo}.
      */
-    private static class AllocationContentProvider implements IStructuredContentProvider {
+    private class AllocationContentProvider implements IStructuredContentProvider {
         public Object[] getElements(Object inputElement) {
             if (inputElement instanceof Client) {
                 AllocationInfo[] allocs = ((Client)inputElement).getClientData().getAllocations();
                 if (allocs != null) {
+                    if (mFilterText != null && mFilterText.length() > 0) {
+                        allocs = getFilteredAllocations(allocs, mFilterText);
+                    }
+                    Arrays.sort(allocs, mSorter);
                     return allocs;
                 }
             }
@@ -120,23 +143,17 @@ public class AllocationPanel extends TablePanel {
                 AllocationInfo alloc = (AllocationInfo)element;
                 switch (columnIndex) {
                     case 0:
-                        return Integer.toString(alloc.getSize());
+                        return Integer.toString(alloc.getAllocNumber());
                     case 1:
-                        return alloc.getAllocatedClass();
+                        return Integer.toString(alloc.getSize());
                     case 2:
-                        return Short.toString(alloc.getThreadId());
+                        return alloc.getAllocatedClass();
                     case 3:
-                        StackTraceElement[] traces = alloc.getStackTrace();
-                        if (traces.length > 0) {
-                            return traces[0].getClassName();
-                        }
-                        break;
+                        return Short.toString(alloc.getThreadId());
                     case 4:
-                        traces = alloc.getStackTrace();
-                        if (traces.length > 0) {
-                            return traces[0].getMethodName();
-                        }
-                        break;
+                        return alloc.getFirstTraceClassName();
+                    case 5:
+                        return alloc.getFirstTraceMethodName();
                 }
             }
 
@@ -168,13 +185,19 @@ public class AllocationPanel extends TablePanel {
     protected Control createControl(Composite parent) {
         final IPreferenceStore store = DdmUiPreferences.getStore();
 
+        Display display = parent.getDisplay();
+
+        // get some images
+        mSortUpImg = ImageLoader.getDdmUiLibLoader().loadImage("sort_up.png", display);
+        mSortDownImg = ImageLoader.getDdmUiLibLoader().loadImage("sort_down.png", display);
+
         // base composite for selected client with enabled thread update.
         mAllocationBase = new Composite(parent, SWT.NONE);
         mAllocationBase.setLayout(new FormLayout());
 
         // table above the sash
         Composite topParent = new Composite(mAllocationBase, SWT.NONE);
-        topParent.setLayout(new GridLayout(2, false));
+        topParent.setLayout(new GridLayout(6, false));
 
         mEnableButton = new Button(topParent, SWT.PUSH);
         mEnableButton.addSelectionListener(new SelectionAdapter() {
@@ -202,47 +225,137 @@ public class AllocationPanel extends TablePanel {
 
         setUpButtons(false /* enabled */, AllocationTrackingStatus.OFF);
 
-        mAllocationTable = new Table(topParent, SWT.MULTI | SWT.FULL_SELECTION);
         GridData gridData;
+
+        Composite spacer = new Composite(topParent, SWT.NONE);
+        spacer.setLayoutData(gridData = new GridData(GridData.FILL_HORIZONTAL));
+
+        new Label(topParent, SWT.NONE).setText("Filter:");
+
+        final Text filterText = new Text(topParent, SWT.BORDER);
+        filterText.setLayoutData(gridData = new GridData(GridData.FILL_HORIZONTAL));
+        gridData.widthHint = 200;
+
+        filterText.addModifyListener(new ModifyListener() {
+            public void modifyText(ModifyEvent arg0) {
+                mFilterText  = filterText.getText().trim();
+                mAllocationViewer.refresh();
+            }
+        });
+
+        mTraceFilterCheck = new Button(topParent, SWT.CHECK);
+        mTraceFilterCheck.setText("Inc. trace");
+        mTraceFilterCheck.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent arg0) {
+                mAllocationViewer.refresh();
+            }
+        });
+
+        mAllocationTable = new Table(topParent, SWT.MULTI | SWT.FULL_SELECTION);
         mAllocationTable.setLayoutData(gridData = new GridData(GridData.FILL_BOTH));
-        gridData.horizontalSpan = 2;
+        gridData.horizontalSpan = 6;
         mAllocationTable.setHeaderVisible(true);
         mAllocationTable.setLinesVisible(true);
 
-        TableHelper.createTableColumn(
+        final TableColumn numberCol = TableHelper.createTableColumn(
+                mAllocationTable,
+                "Alloc Order",
+                SWT.RIGHT,
+                "Alloc Order", //$NON-NLS-1$
+                PREFS_ALLOC_COL_NUMBER, store);
+        numberCol.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent arg0) {
+                setSortColumn(numberCol, SortMode.NUMBER);
+            }
+        });
+
+        final TableColumn sizeCol = TableHelper.createTableColumn(
                 mAllocationTable,
                 "Allocation Size",
                 SWT.RIGHT,
                 "888", //$NON-NLS-1$
                 PREFS_ALLOC_COL_SIZE, store);
+        sizeCol.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent arg0) {
+                setSortColumn(sizeCol, SortMode.SIZE);
+            }
+        });
 
-        TableHelper.createTableColumn(
+        final TableColumn classCol = TableHelper.createTableColumn(
                 mAllocationTable,
                 "Allocated Class",
                 SWT.LEFT,
                 "Allocated Class", //$NON-NLS-1$
                 PREFS_ALLOC_COL_CLASS, store);
+        classCol.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent arg0) {
+                setSortColumn(classCol, SortMode.CLASS);
+            }
+        });
 
-        TableHelper.createTableColumn(
+        final TableColumn threadCol = TableHelper.createTableColumn(
                 mAllocationTable,
                 "Thread Id",
                 SWT.LEFT,
                 "999", //$NON-NLS-1$
                 PREFS_ALLOC_COL_THREAD, store);
+        threadCol.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent arg0) {
+                setSortColumn(threadCol, SortMode.THREAD);
+            }
+        });
 
-        TableHelper.createTableColumn(
+        final TableColumn inClassCol = TableHelper.createTableColumn(
                 mAllocationTable,
                 "Allocated in",
                 SWT.LEFT,
                 "utime", //$NON-NLS-1$
                 PREFS_ALLOC_COL_TRACE_CLASS, store);
+        inClassCol.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent arg0) {
+                setSortColumn(inClassCol, SortMode.IN_CLASS);
+            }
+        });
 
-        TableHelper.createTableColumn(
+        final TableColumn inMethodCol = TableHelper.createTableColumn(
                 mAllocationTable,
                 "Allocated in",
                 SWT.LEFT,
                 "utime", //$NON-NLS-1$
                 PREFS_ALLOC_COL_TRACE_METHOD, store);
+        inMethodCol.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent arg0) {
+                setSortColumn(inMethodCol, SortMode.IN_METHOD);
+            }
+        });
+
+        // init the default sort colum
+        switch (mSorter.getSortMode()) {
+            case SIZE:
+                mSortColumn = sizeCol;
+                break;
+            case CLASS:
+                mSortColumn = classCol;
+                break;
+            case THREAD:
+                mSortColumn = threadCol;
+                break;
+            case IN_CLASS:
+                mSortColumn = inClassCol;
+                break;
+            case IN_METHOD:
+                mSortColumn = inMethodCol;
+                break;
+        }
+
+        mSortColumn.setImage(mSorter.isDescending() ? mSortDownImg : mSortUpImg);
 
         mAllocationViewer = new TableViewer(mAllocationTable);
         mAllocationViewer.setContentProvider(new AllocationContentProvider());
@@ -312,6 +425,13 @@ public class AllocationPanel extends TablePanel {
         });
 
         return mAllocationBase;
+    }
+
+    @Override
+    public void dispose() {
+        mSortUpImg.dispose();
+        mSortDownImg.dispose();
+        super.dispose();
     }
 
     /**
@@ -482,5 +602,44 @@ public class AllocationPanel extends TablePanel {
             mEnableButton.setText("Start Tracking");
         }
     }
+
+    private void setSortColumn(final TableColumn column, SortMode sortMode) {
+        // set the new sort mode
+        mSorter.setSortMode(sortMode);
+
+        mAllocationTable.setRedraw(false);
+
+        // remove image from previous sort colum
+        if (mSortColumn != column) {
+            mSortColumn.setImage(null);
+        }
+
+        mSortColumn = column;
+        if (mSorter.isDescending()) {
+            mSortColumn.setImage(mSortDownImg);
+        } else {
+            mSortColumn.setImage(mSortUpImg);
+        }
+
+        mAllocationTable.setRedraw(true);
+        mAllocationViewer.refresh();
+    }
+
+    private AllocationInfo[] getFilteredAllocations(AllocationInfo[] allocations,
+            String filterText) {
+        ArrayList<AllocationInfo> results = new ArrayList<AllocationInfo>();
+
+        filterText = filterText.toLowerCase();
+        boolean fullTrace = mTraceFilterCheck.getSelection();
+
+        for (AllocationInfo info : allocations) {
+            if (info.filter(filterText, fullTrace)) {
+                results.add(info);
+            }
+        }
+
+        return results.toArray(new AllocationInfo[results.size()]);
+    }
+
 }
 

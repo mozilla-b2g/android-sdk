@@ -18,25 +18,37 @@
 
 package com.android.ide.eclipse.adt.internal.wizards.newxmlfile;
 
+import com.android.ide.common.resources.configuration.FolderConfiguration;
+import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.IconFactory;
+import com.android.ide.eclipse.adt.internal.editors.formatting.XmlFormatPreferences;
+import com.android.ide.eclipse.adt.internal.editors.formatting.XmlFormatStyle;
+import com.android.ide.eclipse.adt.internal.editors.formatting.XmlPrettyPrinter;
+import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
 import com.android.ide.eclipse.adt.internal.wizards.newxmlfile.NewXmlFileCreationPage.TypeInfo;
+import com.android.resources.ResourceFolderType;
+import com.android.util.Pair;
 
 import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFolder;
+import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.IResource;
 import org.eclipse.core.runtime.CoreException;
+import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IStatus;
+import org.eclipse.core.runtime.Path;
 import org.eclipse.jface.resource.ImageDescriptor;
+import org.eclipse.jface.text.IRegion;
+import org.eclipse.jface.text.Region;
 import org.eclipse.jface.viewers.IStructuredSelection;
 import org.eclipse.jface.wizard.Wizard;
+import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.INewWizard;
 import org.eclipse.ui.IWorkbench;
-import org.eclipse.ui.IWorkbenchPage;
-import org.eclipse.ui.IWorkbenchWindow;
 import org.eclipse.ui.PartInitException;
-import org.eclipse.ui.PlatformUI;
-import org.eclipse.ui.ide.IDE;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
@@ -50,24 +62,31 @@ import java.io.UnsupportedEncodingException;
  * the resource folder, resource type and file name. It then creates the XML file.
  */
 public class NewXmlFileWizard extends Wizard implements INewWizard {
+    /** The XML header to write at the top of the XML file */
+    public static final String XML_HEADER_LINE = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"; //$NON-NLS-1$
 
-    private static final String PROJECT_LOGO_LARGE = "android_large"; //$NON-NLS-1$
-    
+    private static final String PROJECT_LOGO_LARGE = "android-64"; //$NON-NLS-1$
+
     protected static final String MAIN_PAGE_NAME = "newAndroidXmlFilePage"; //$NON-NLS-1$
 
     private NewXmlFileCreationPage mMainPage;
+    private ChooseConfigurationPage mConfigPage;
+    private Values mValues;
 
     public void init(IWorkbench workbench, IStructuredSelection selection) {
         setHelpAvailable(false); // TODO have help
         setWindowTitle("New Android XML File");
         setImageDescriptor();
 
-        mMainPage = createMainPage();
+        mValues = new Values();
+        mMainPage = createMainPage(mValues);
         mMainPage.setTitle("New Android XML File");
         mMainPage.setDescription("Creates a new Android XML file.");
         mMainPage.setInitialSelection(selection);
+
+        mConfigPage = new ChooseConfigurationPage(mValues);
     }
-    
+
     /**
      * Creates the wizard page.
      * <p/>
@@ -77,8 +96,8 @@ public class NewXmlFileWizard extends Wizard implements INewWizard {
      * However the contract of this class is private and NO ATTEMPT will be made
      * to maintain compatibility between different versions of the plugin.
      */
-    protected NewXmlFileCreationPage createMainPage() {
-        return new NewXmlFileCreationPage(MAIN_PAGE_NAME);
+    protected NewXmlFileCreationPage createMainPage(NewXmlFileWizard.Values values) {
+        return new NewXmlFileCreationPage(MAIN_PAGE_NAME, values);
     }
 
     // -- Methods inherited from org.eclipse.jface.wizard.Wizard --
@@ -92,6 +111,8 @@ public class NewXmlFileWizard extends Wizard implements INewWizard {
     @Override
     public void addPages() {
         addPage(mMainPage);
+        addPage(mConfigPage);
+
     }
 
     /**
@@ -104,31 +125,64 @@ public class NewXmlFileWizard extends Wizard implements INewWizard {
      */
     @Override
     public boolean performFinish() {
-        IFile file = createXmlFile();
-        if (file == null) {
+        final Pair<IFile, IRegion> created = createXmlFile();
+        if (created == null) {
             return false;
         } else {
-            // Open the file in an editor
-            IWorkbenchWindow win = PlatformUI.getWorkbench().getActiveWorkbenchWindow();
-            if (win != null) {
-                IWorkbenchPage page = win.getActivePage();
-                if (page != null) {
+            // Open the file
+            // This has to be delayed in order for focus handling to work correctly
+            AdtPlugin.getDisplay().asyncExec(new Runnable() {
+                public void run() {
+                    IFile file = created.getFirst();
+                    IRegion region = created.getSecond();
                     try {
-                        IDE.openEditor(page, file);
+                        IEditorPart editor = AdtPlugin.openFile(file, null,
+                                false /*showEditorTab*/);
+                        if (editor instanceof AndroidXmlEditor) {
+                            final AndroidXmlEditor xmlEditor = (AndroidXmlEditor)editor;
+                            if (!xmlEditor.hasMultiplePages()) {
+                                xmlEditor.show(region.getOffset(), region.getLength(),
+                                        true /* showEditorTab */);
+                            }
+                        }
                     } catch (PartInitException e) {
-                        AdtPlugin.log(e, "Failed to create %1$s: missing type",  //$NON-NLS-1$
+                        AdtPlugin.log(e, "Failed to create %1$s: missing type", //$NON-NLS-1$
                                 file.getFullPath().toString());
                     }
-                }
-            }
+                }});
+
             return true;
         }
     }
 
     // -- Custom Methods --
-    
-    private IFile createXmlFile() {
-        IFile file = mMainPage.getDestinationFile();
+
+    private Pair<IFile, IRegion> createXmlFile() {
+        IFile file = mValues.getDestinationFile();
+        TypeInfo type = mValues.type;
+        if (type == null) {
+            // this is not expected to happen
+            String name = file.getFullPath().toString();
+            AdtPlugin.log(IStatus.ERROR, "Failed to create %1$s: missing type", name);  //$NON-NLS-1$
+            return null;
+        }
+        String xmlns = type.getXmlns();
+        String root = mMainPage.getRootElement();
+        if (root == null) {
+            // this is not expected to happen
+            AdtPlugin.log(IStatus.ERROR, "Failed to create %1$s: missing root element", //$NON-NLS-1$
+                    file.toString());
+            return null;
+        }
+
+        String attrs = type.getDefaultAttrs(mValues.project, root);
+        String child = type.getChild(mValues.project, root);
+        return createXmlFile(file, xmlns, root, attrs, child, type.getResFolderType());
+    }
+
+    /** Creates a new file using the given root element, namespace and root attributes */
+    private static Pair<IFile, IRegion> createXmlFile(IFile file, String xmlns,
+            String root, String rootAttributes, String child, ResourceFolderType folderType) {
         String name = file.getFullPath().toString();
         boolean need_delete = false;
 
@@ -142,48 +196,67 @@ public class NewXmlFileWizard extends Wizard implements INewWizard {
         } else {
             createWsParentDirectory(file.getParent());
         }
-        
-        TypeInfo type = mMainPage.getSelectedType();
-        if (type == null) {
-            // this is not expected to happen
-            AdtPlugin.log(IStatus.ERROR, "Failed to create %1$s: missing type", name);  //$NON-NLS-1$
-            return null;
-        }
-        String xmlns = type.getXmlns();
-        String root = mMainPage.getRootElement();
-        if (root == null) {
-            // this is not expected to happen
-            AdtPlugin.log(IStatus.ERROR, "Failed to create %1$s: missing root element", //$NON-NLS-1$
-                    file.toString());
-            return null;
-        }
-        
-        StringBuilder sb = new StringBuilder("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");   //$NON-NLS-1$
+
+        StringBuilder sb = new StringBuilder(XML_HEADER_LINE);
 
         sb.append('<').append(root);
         if (xmlns != null) {
-            sb.append('\n').append("  xmlns:android=\"").append(xmlns).append("\"");  //$NON-NLS-1$ //$NON-NLS-2$
+            sb.append('\n').append("  xmlns:android=\"").append(xmlns).append('"');  //$NON-NLS-1$
         }
-        
-        String attrs = type.getDefaultAttrs();
-        if (attrs != null) {
+
+        if (rootAttributes != null) {
             sb.append("\n  ");                       //$NON-NLS-1$
-            sb.append(attrs.replace("\n", "\n  "));  //$NON-NLS-1$ //$NON-NLS-2$
+            sb.append(rootAttributes.replace("\n", "\n  "));  //$NON-NLS-1$ //$NON-NLS-2$
         }
-        
+
         sb.append(">\n");                            //$NON-NLS-1$
+
+        if (child != null) {
+            sb.append(child);
+        }
+
+        boolean autoFormat = AdtPrefs.getPrefs().getUseCustomXmlFormatter();
+
+        // Insert an indented caret. Since the markup here will be reformatted, we need to
+        // insert text tokens that the formatter will preserve, which we can then turn back
+        // into indentation and a caret offset:
+        final String indentToken = "${indent}"; //$NON-NLS-1$
+        final String caretToken = "${caret}";   //$NON-NLS-1$
+        sb.append(indentToken);
+        sb.append(caretToken);
+        if (!autoFormat) {
+            sb.append('\n');
+        }
+
         sb.append("</").append(root).append(">\n");  //$NON-NLS-1$ //$NON-NLS-2$
 
-        String result = sb.toString();
+        XmlFormatPreferences formatPrefs = XmlFormatPreferences.create();
+        String fileContents;
+        if (!autoFormat) {
+            fileContents = sb.toString();
+        } else {
+            XmlFormatStyle style = XmlFormatStyle.getForFolderType(folderType);
+            fileContents = XmlPrettyPrinter.prettyPrint(sb.toString(), formatPrefs,
+                                style, null /*lineSeparator*/);
+        }
+
+        // Remove marker tokens and replace them with whitespace
+        fileContents = fileContents.replace(indentToken, formatPrefs.getOneIndentUnit());
+        int caretOffset = fileContents.indexOf(caretToken);
+        if (caretOffset != -1) {
+            fileContents = fileContents.replace(caretToken, ""); //$NON-NLS-1$
+        }
+
         String error = null;
         try {
-            byte[] buf = result.getBytes("UTF8");
+            byte[] buf = fileContents.getBytes("UTF8");    //$NON-NLS-1$
             InputStream stream = new ByteArrayInputStream(buf);
             if (need_delete) {
-                file.delete(IFile.KEEP_HISTORY | IFile.FORCE, null /*monitor*/);
+                file.delete(IResource.KEEP_HISTORY | IResource.FORCE, null /*monitor*/);
             }
-            file.create(stream, true /*force*/, null /*progres*/);
-            return file;
+            file.create(stream, true /*force*/, null /*progress*/);
+            IRegion region = caretOffset != -1 ? new Region(caretOffset, 0) : null;
+            return Pair.of(file, region);
         } catch (UnsupportedEncodingException e) {
             error = e.getMessage();
         } catch (CoreException e) {
@@ -195,9 +268,48 @@ public class NewXmlFileWizard extends Wizard implements INewWizard {
         return null;
     }
 
-    private boolean createWsParentDirectory(IContainer wsPath) {
-        if (wsPath.getType() == IContainer.FOLDER) {
-            if (wsPath == null || wsPath.exists()) {
+    /**
+     * Returns true if the New XML Wizard can create new files of the given
+     * {@link ResourceFolderType}
+     *
+     * @param folderType the folder type to create a file for
+     * @return true if this wizard can create new files for the given folder type
+     */
+    public static boolean canCreateXmlFile(ResourceFolderType folderType) {
+        TypeInfo typeInfo = NewXmlFileCreationPage.getTypeInfo(folderType);
+        return typeInfo != null && (typeInfo.getDefaultRoot(null /*project*/) != null ||
+                typeInfo.getRootSeed() instanceof String);
+    }
+
+    /**
+     * Creates a new XML file using the template according to the given folder type
+     *
+     * @param project the project to create the file in
+     * @param file the file to be created
+     * @param folderType the type of folder to look up a template for
+     * @return the created file
+     */
+    public static Pair<IFile, IRegion> createXmlFile(IProject project, IFile file,
+            ResourceFolderType folderType) {
+        TypeInfo type = NewXmlFileCreationPage.getTypeInfo(folderType);
+        String xmlns = type.getXmlns();
+        String root = type.getDefaultRoot(project);
+        if (root == null) {
+            root = type.getRootSeed().toString();
+        }
+        String attrs = type.getDefaultAttrs(project, root);
+        return createXmlFile(file, xmlns, root, attrs, null, folderType);
+    }
+
+    /**
+     * Creates all the directories required for the given path.
+     *
+     * @param wsPath the path to create all the parent directories for
+     * @return true if all the parent directories were created
+     */
+    public static boolean createWsParentDirectory(IContainer wsPath) {
+        if (wsPath.getType() == IResource.FOLDER) {
+            if (wsPath.exists()) {
                 return true;
             }
 
@@ -211,7 +323,7 @@ public class NewXmlFileWizard extends Wizard implements INewWizard {
                 e.printStackTrace();
             }
         }
-        
+
         return false;
     }
 
@@ -223,4 +335,94 @@ public class NewXmlFileWizard extends Wizard implements INewWizard {
         setDefaultPageImageDescriptor(desc);
     }
 
+    /**
+     * Specific New XML File wizard tied to the {@link ResourceFolderType#LAYOUT} type
+     */
+    public static class NewLayoutWizard extends NewXmlFileWizard {
+        /** Creates a new {@link NewLayoutWizard} */
+        public NewLayoutWizard() {
+        }
+
+        @Override
+        public void init(IWorkbench workbench, IStructuredSelection selection) {
+            super.init(workbench, selection);
+            setWindowTitle("New Android Layout XML File");
+            super.mMainPage.setTitle("New Android Layout XML File");
+            super.mMainPage.setDescription("Creates a new Android Layout XML file.");
+            super.mMainPage.setInitialFolderType(ResourceFolderType.LAYOUT);
+        }
+    }
+
+    /**
+     * Specific New XML File wizard tied to the {@link ResourceFolderType#VALUES} type
+     */
+    public static class NewValuesWizard extends NewXmlFileWizard {
+        /** Creates a new {@link NewValuesWizard} */
+        public NewValuesWizard() {
+        }
+
+        @Override
+        public void init(IWorkbench workbench, IStructuredSelection selection) {
+            super.init(workbench, selection);
+            setWindowTitle("New Android Values XML File");
+            super.mMainPage.setTitle("New Android Values XML File");
+            super.mMainPage.setDescription("Creates a new Android Values XML file.");
+            super.mMainPage.setInitialFolderType(ResourceFolderType.VALUES);
+        }
+    }
+
+    /** Value object which holds the current state of the wizard pages */
+    public static class Values {
+        /** The currently selected project, or null */
+        public IProject project;
+        /** The root name of the XML file to create, or null */
+        public String name;
+        /** The type of XML file to create */
+        public TypeInfo type;
+        /** The path within the project to create the new file in */
+        public String folderPath;
+        /** The currently chosen configuration */
+        public FolderConfiguration configuration = new FolderConfiguration();
+
+        /**
+         * Returns the destination filename or an empty string.
+         *
+         * @return the filename, never null.
+         */
+        public String getFileName() {
+            String fileName;
+            if (name == null) {
+                fileName = ""; //$NON-NLS-1$
+            } else {
+                fileName = name.trim();
+                if (fileName.length() > 0 && fileName.indexOf('.') == -1) {
+                    fileName = fileName + AdtConstants.DOT_XML;
+                }
+            }
+
+            return fileName;
+        }
+
+        /**
+         * Returns a {@link IFile} for the destination file.
+         * <p/>
+         * Returns null if the project, filename or folder are invalid and the
+         * destination file cannot be determined.
+         * <p/>
+         * The {@link IFile} is a resource. There might or might not be an
+         * actual real file.
+         *
+         * @return an {@link IFile} for the destination file
+         */
+        public IFile getDestinationFile() {
+            String fileName = getFileName();
+            if (project != null && folderPath != null && folderPath.length() > 0
+                    && fileName.length() > 0) {
+                IPath dest = new Path(folderPath).append(fileName);
+                IFile file = project.getFile(dest);
+                return file;
+            }
+            return null;
+        }
+    }
 }

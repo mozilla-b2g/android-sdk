@@ -18,8 +18,8 @@ package com.android.sdkuilib.internal.repository.icons;
 
 import com.android.sdklib.internal.repository.Archive;
 import com.android.sdklib.internal.repository.Package;
-import com.android.sdklib.internal.repository.RepoSource;
-import com.android.sdkuilib.internal.repository.RepoSourcesAdapter;
+import com.android.sdklib.internal.repository.SdkSource;
+import com.android.sdklib.internal.repository.SdkSourceCategory;
 
 import org.eclipse.swt.SWTException;
 import org.eclipse.swt.graphics.Image;
@@ -28,6 +28,7 @@ import org.eclipse.swt.widgets.Display;
 import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.Map;
 
 
 /**
@@ -37,7 +38,7 @@ import java.util.Iterator;
 public class ImageFactory {
 
     private final Display mDisplay;
-    private final HashMap<String, Image> mImages = new HashMap<String, Image>();
+    private final Map<String, Image> mImages = new HashMap<String, Image>();
 
     public ImageFactory(Display display) {
         mDisplay = display;
@@ -46,6 +47,7 @@ public class ImageFactory {
     /**
      * Loads an image given its filename (with its extension).
      * Might return null if the image cannot be loaded.
+     * The image is cached. Successive calls will return the <em>same</em> object.
      *
      * @param imageName The filename (with extension) of the image to load.
      * @return A new or existing {@link Image}. The caller must NOT dispose the image (the
@@ -78,11 +80,12 @@ public class ImageFactory {
 
     /**
      * Loads and returns the appropriate image for a given package, archive or source object.
+     * The image is cached. Successive calls will return the <em>same</em> object.
      *
-     * @param object A {@link RepoSource} or {@link Package} or {@link Archive}.
+     * @param object A {@link SdkSource} or {@link Package} or {@link Archive}.
      * @return A new or existing {@link Image}. The caller must NOT dispose the image (the
      *  image will disposed by {@link #dispose()}). The returned image can be null if the
-     *  expected file is missing.
+     *  object is of an unknown type.
      */
     public Image getImageForObject(Object object) {
 
@@ -90,21 +93,31 @@ public class ImageFactory {
             return null;
         }
 
+        if (object instanceof Image) {
+            return (Image) object;
+        }
+
         String clz = object.getClass().getSimpleName();
         if (clz.endsWith(Package.class.getSimpleName())) {
-            String name = clz.replaceFirst(Package.class.getSimpleName(), "").toLowerCase() + //$NON-NLS-1$
-                            "_pkg_16.png";                                      //$NON-NLS-1$
+            String name = clz.replaceFirst(Package.class.getSimpleName(), "")   //$NON-NLS-1$
+                             .replace("SystemImage", "sysimg")    //$NON-NLS-1$ //$NON-NLS-2$
+                             .toLowerCase();
+            name += "_pkg_16.png";                                              //$NON-NLS-1$
             return getImageByName(name);
         }
 
-        if (object instanceof RepoSource) {
+        if (object instanceof SdkSourceCategory) {
+            return getImageByName("source_cat_icon16.png");                     //$NON-NLS-1$
+
+        } else if (object instanceof SdkSource) {
             return getImageByName("source_icon16.png");                         //$NON-NLS-1$
 
-        } else if (object instanceof RepoSourcesAdapter.RepoSourceError) {
-            return getImageByName("error_icon16.png");                          //$NON-NLS-1$
-
-        } else if (object instanceof RepoSourcesAdapter.RepoSourceEmpty) {
-            return getImageByName("nopkg_icon16.png");                          //$NON-NLS-1$
+        // TODO reintroduce this in SDK Manager 2 in repository view
+        // } else if (object instanceof RepoSourcesAdapter.RepoSourceError) {
+        //     return getImageByName("error_icon16.png");                       //$NON-NLS-1$
+        //
+        // } else if (object instanceof RepoSourcesAdapter.RepoSourceEmpty) {
+        //     return getImageByName("nopkg_icon16.png");                       //$NON-NLS-1$
         }
 
         if (object instanceof Archive) {
@@ -113,6 +126,10 @@ public class ImageFactory {
             } else {
                 return getImageByName("incompat_icon16.png");                   //$NON-NLS-1$
             }
+        }
+
+        if (object instanceof String) {
+            return getImageByName((String) object);
         }
 
         return null;

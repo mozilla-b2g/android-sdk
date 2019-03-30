@@ -16,6 +16,8 @@
 
 package com.android.ide.eclipse.adt.internal.resources.manager;
 
+import com.android.ide.common.resources.ResourceFile;
+import com.android.ide.common.resources.ResourceFolder;
 import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper;
 
@@ -129,6 +131,13 @@ public final class GlobalProjectMonitor {
     }
 
     /**
+     * Interface for a listener that gets passed the raw delta without processing.
+     */
+    public interface IRawDeltaListener {
+        public void visitDelta(IResourceDelta delta);
+    }
+
+    /**
      * Base listener bundle to associate a listener to an event mask.
      */
     private static class ListenerBundle {
@@ -174,6 +183,9 @@ public final class GlobalProjectMonitor {
     private final ArrayList<IResourceEventListener> mEventListeners =
         new ArrayList<IResourceEventListener>();
 
+    private final ArrayList<IRawDeltaListener> mRawDeltaListeners =
+        new ArrayList<IRawDeltaListener>();
+
     private IWorkspace mWorkspace;
 
     /**
@@ -182,6 +194,7 @@ public final class GlobalProjectMonitor {
     private final class DeltaVisitor implements IResourceDeltaVisitor {
 
         public boolean visit(IResourceDelta delta) {
+            // Find the other resource listeners to notify
             IResource r = delta.getResource();
             int type = r.getType();
             if (type == IResource.FILE) {
@@ -364,9 +377,14 @@ public final class GlobalProjectMonitor {
         IJavaProject[] androidProjects = BaseProjectHelper.getAndroidProjects(javaModel,
                 null /*filter*/);
 
+
+        notifyResourceEventStart();
+
         for (IJavaProject androidProject : androidProjects) {
             listener.projectOpenedWithWorkspace(androidProject.getProject());
         }
+
+        notifyResourceEventEnd();
     }
 
     /**
@@ -393,6 +411,42 @@ public final class GlobalProjectMonitor {
         mEventListeners.remove(listener);
     }
 
+    /**
+     * Adds a raw delta listener.
+     * @param listener The listener to receive the deltas.
+     */
+    public synchronized void addRawDeltaListener(IRawDeltaListener listener) {
+        mRawDeltaListeners.add(listener);
+    }
+
+    /**
+     * Removes an existing Raw Delta listener.
+     * @param listener the listener to remove.
+     */
+    public synchronized void removeRawDeltaListener(IRawDeltaListener listener) {
+        mRawDeltaListeners.remove(listener);
+    }
+
+    private void notifyResourceEventStart() {
+        for (IResourceEventListener listener : mEventListeners) {
+            try {
+                listener.resourceChangeEventStart();
+            } catch (Throwable t) {
+                AdtPlugin.log(t,"Failed to call IResourceEventListener.resourceChangeEventStart");
+            }
+        }
+    }
+
+    private void notifyResourceEventEnd() {
+        for (IResourceEventListener listener : mEventListeners) {
+            try {
+                listener.resourceChangeEventEnd();
+            } catch (Throwable t) {
+                AdtPlugin.log(t,"Failed to call IResourceEventListener.resourceChangeEventEnd");
+            }
+        }
+    }
+
     private IResourceChangeListener mResourceChangeListener = new IResourceChangeListener() {
         /**
          * Processes the workspace resource change events.
@@ -401,13 +455,7 @@ public final class GlobalProjectMonitor {
          */
         public synchronized void resourceChanged(IResourceChangeEvent event) {
             // notify the event listeners of a start.
-            for (IResourceEventListener listener : mEventListeners) {
-                try {
-                    listener.resourceChangeEventStart();
-                } catch (Throwable t) {
-                    AdtPlugin.log(t,"Failed to call IResourceEventListener.resourceChangeEventStart");
-                }
-            }
+            notifyResourceEventStart();
 
             if (event.getType() == IResourceChangeEvent.PRE_DELETE) {
                 // a project is being deleted. Lets get the project object and remove
@@ -427,6 +475,11 @@ public final class GlobalProjectMonitor {
                 // this a regular resource change. We get the delta and go through it with a visitor.
                 IResourceDelta delta = event.getDelta();
 
+                // notify the raw delta listeners
+                for (IRawDeltaListener listener : mRawDeltaListeners) {
+                    listener.visitDelta(delta);
+                }
+
                 DeltaVisitor visitor = new DeltaVisitor();
                 try {
                     delta.accept(visitor);
@@ -435,13 +488,7 @@ public final class GlobalProjectMonitor {
             }
 
             // we're done, notify the event listeners.
-            for (IResourceEventListener listener : mEventListeners) {
-                try {
-                    listener.resourceChangeEventEnd();
-                } catch (Throwable t) {
-                    AdtPlugin.log(t,"Failed to call IResourceEventListener.resourceChangeEventEnd");
-                }
-            }
+            notifyResourceEventEnd();
         }
     };
 

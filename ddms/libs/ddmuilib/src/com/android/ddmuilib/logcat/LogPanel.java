@@ -16,9 +16,12 @@
 
 package com.android.ddmuilib.logcat;
 
+import com.android.ddmlib.AdbCommandRejectedException;
 import com.android.ddmlib.IDevice;
 import com.android.ddmlib.Log;
 import com.android.ddmlib.MultiLineReceiver;
+import com.android.ddmlib.ShellCommandUnresponsiveException;
+import com.android.ddmlib.TimeoutException;
 import com.android.ddmlib.Log.LogLevel;
 import com.android.ddmuilib.DdmUiPreferences;
 import com.android.ddmuilib.ITableFocusListener;
@@ -192,6 +195,8 @@ public class LogPanel extends SelectionDependentPanel {
 
     private ITableFocusListener mGlobalListener;
 
+    private LogCatViewInterface mLogCatViewInterface = null;
+
     /** message data, separated from content for multi line messages */
     protected static class LogMessage {
         public LogMessageInfo data;
@@ -310,6 +315,12 @@ public class LogPanel extends SelectionDependentPanel {
 
     }
 
+    /**
+     * Interface implemented by the LogCatView in Eclipse for particular action on double-click.
+     */
+    public interface LogCatViewInterface {
+        public void onDoubleClick();
+    }
 
     /**
      * Create the log view with some default parameters
@@ -907,6 +918,14 @@ public class LogPanel extends SelectionDependentPanel {
 
             // create the ui, first the table
             final Table t = new Table(top, SWT.MULTI | SWT.FULL_SELECTION);
+            t.addSelectionListener(new SelectionAdapter() {
+                @Override
+                public void widgetDefaultSelected(SelectionEvent e) {
+                    if (mLogCatViewInterface != null) {
+                        mLogCatViewInterface.onDoubleClick();
+                    }
+                }
+            });
 
             if (mDisplayFont != null) {
                 t.setFont(mDisplayFont);
@@ -1192,13 +1211,13 @@ public class LogPanel extends SelectionDependentPanel {
         } else {
             messageIndex = mBufferEnd;
 
+            // increment the next usable slot index
+            mBufferEnd = (mBufferEnd + 1) % STRING_BUFFER_LENGTH;
+
             // check we aren't overwriting start
             if (mBufferEnd == mBufferStart) {
                 mBufferStart = (mBufferStart + 1) % STRING_BUFFER_LENGTH;
             }
-
-            // increment the next usable slot index
-            mBufferEnd = (mBufferEnd + 1) % STRING_BUFFER_LENGTH;
         }
 
         LogMessage oldMessage = null;
@@ -1310,7 +1329,13 @@ public class LogPanel extends SelectionDependentPanel {
                     try {
                         mCurrentLoggedDevice.executeShellCommand("ps", psor); //$NON-NLS-1$
                     } catch (IOException e) {
-                        // hmm...
+                        // Ignore
+                    } catch (TimeoutException e) {
+                        // Ignore
+                    } catch (AdbCommandRejectedException e) {
+                        // Ignore
+                    } catch (ShellCommandUnresponsiveException e) {
+                        // Ignore
                     }
                 }
             }.start();
@@ -1571,5 +1596,9 @@ public class LogPanel extends SelectionDependentPanel {
                 return msg.msg;
         }
         return null;
+    }
+
+    public void setLogCatViewInterface(LogCatViewInterface i) {
+        mLogCatViewInterface = i;
     }
 }

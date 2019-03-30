@@ -16,6 +16,11 @@
 
 package com.android.ide.eclipse.adt.internal.editors.xml.descriptors;
 
+import static com.android.ide.common.layout.LayoutConstants.ANDROID_NS_NAME;
+
+import com.android.ide.common.resources.platform.AttributeInfo;
+import com.android.ide.common.resources.platform.DeclareStyleableInfo;
+import com.android.ide.common.resources.platform.ViewClassInfo;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.AttributeDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.DescriptorsUtils;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.DocumentDescriptor;
@@ -24,9 +29,6 @@ import com.android.ide.eclipse.adt.internal.editors.descriptors.IDescriptorProvi
 import com.android.ide.eclipse.adt.internal.editors.descriptors.SeparatorAttributeDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.ViewElementDescriptor;
-import com.android.ide.eclipse.adt.internal.resources.AttributeInfo;
-import com.android.ide.eclipse.adt.internal.resources.DeclareStyleableInfo;
-import com.android.ide.eclipse.adt.internal.resources.ViewClassInfo;
 import com.android.sdklib.SdkConstants;
 
 import java.util.ArrayList;
@@ -132,7 +134,7 @@ public final class XmlDescriptors implements IDescriptorProvider {
             ViewClassInfo[] prefs, ViewClassInfo[] prefGroups) {
 
         XmlnsAttributeDescriptor xmlns = new XmlnsAttributeDescriptor(
-                "android", //$NON-NLS-1$
+                ANDROID_NS_NAME,
                 SdkConstants.NS_RESOURCES);
 
         ElementDescriptor searchable = createSearchable(searchableStyleMap, xmlns);

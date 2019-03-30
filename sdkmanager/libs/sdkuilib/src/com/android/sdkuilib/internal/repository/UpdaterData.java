@@ -16,69 +16,94 @@
 
 package com.android.sdkuilib.internal.repository;
 
+import com.android.annotations.VisibleForTesting;
+import com.android.annotations.VisibleForTesting.Visibility;
 import com.android.prefs.AndroidLocation.AndroidLocationException;
 import com.android.sdklib.ISdkLog;
 import com.android.sdklib.SdkConstants;
 import com.android.sdklib.SdkManager;
 import com.android.sdklib.internal.avd.AvdManager;
+import com.android.sdklib.internal.repository.AdbWrapper;
 import com.android.sdklib.internal.repository.AddonPackage;
+import com.android.sdklib.internal.repository.AddonsListFetcher;
+import com.android.sdklib.internal.repository.AddonsListFetcher.Site;
 import com.android.sdklib.internal.repository.Archive;
-import com.android.sdklib.internal.repository.DocPackage;
-import com.android.sdklib.internal.repository.ExtraPackage;
+import com.android.sdklib.internal.repository.ArchiveInstaller;
 import com.android.sdklib.internal.repository.ITask;
 import com.android.sdklib.internal.repository.ITaskFactory;
 import com.android.sdklib.internal.repository.ITaskMonitor;
 import com.android.sdklib.internal.repository.LocalSdkParser;
+import com.android.sdklib.internal.repository.NullTaskMonitor;
 import com.android.sdklib.internal.repository.Package;
-import com.android.sdklib.internal.repository.PlatformPackage;
-import com.android.sdklib.internal.repository.RepoSource;
-import com.android.sdklib.internal.repository.RepoSources;
-import com.android.sdklib.internal.repository.SamplePackage;
+import com.android.sdklib.internal.repository.PlatformToolPackage;
+import com.android.sdklib.internal.repository.SdkAddonSource;
+import com.android.sdklib.internal.repository.SdkRepoSource;
+import com.android.sdklib.internal.repository.SdkSource;
+import com.android.sdklib.internal.repository.SdkSourceCategory;
+import com.android.sdklib.internal.repository.SdkSources;
 import com.android.sdklib.internal.repository.ToolPackage;
-import com.android.sdklib.repository.SdkRepository;
+import com.android.sdklib.repository.SdkAddonConstants;
+import com.android.sdklib.repository.SdkAddonsListConstants;
+import com.android.sdklib.repository.SdkRepoConstants;
+import com.android.sdklib.util.LineUtil;
+import com.android.sdklib.util.SparseIntArray;
 import com.android.sdkuilib.internal.repository.icons.ImageFactory;
-import com.android.sdkuilib.repository.UpdaterWindow.ISdkListener;
+import com.android.sdkuilib.internal.repository.sdkman2.SdkUpdaterWindowImpl2;
+import com.android.sdkuilib.repository.ISdkChangeListener;
 
 import org.eclipse.jface.dialogs.MessageDialog;
-import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Shell;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
- * Data shared between {@link UpdaterWindowImpl} and its pages.
+ * Data shared between {@link SdkUpdaterWindowImpl2} and its pages.
  */
-class UpdaterData {
+public class UpdaterData implements IUpdaterData {
+
+    public static final int NO_TOOLS_MSG = 0;
+    public static final int TOOLS_MSG_UPDATED_FROM_ADT = 1;
+    public static final int TOOLS_MSG_UPDATED_FROM_SDKMAN = 2;
+
     private String mOsSdkRoot;
 
     private final ISdkLog mSdkLog;
     private ITaskFactory mTaskFactory;
-    private boolean mUserCanChangeSdkRoot;
 
     private SdkManager mSdkManager;
     private AvdManager mAvdManager;
 
     private final LocalSdkParser mLocalSdkParser = new LocalSdkParser();
-    private final RepoSources mSources = new RepoSources();
-
-    private final LocalSdkAdapter mLocalSdkAdapter = new LocalSdkAdapter(this);
-    private final RepoSourcesAdapter mSourcesAdapter = new RepoSourcesAdapter(this);
+    private final SdkSources mSources = new SdkSources();
 
     private ImageFactory mImageFactory;
 
     private final SettingsController mSettingsController;
 
-    private final ArrayList<ISdkListener> mListeners = new ArrayList<ISdkListener>();
+    private final ArrayList<ISdkChangeListener> mListeners = new ArrayList<ISdkChangeListener>();
 
     private Shell mWindowShell;
 
     private AndroidLocationException mAvdManagerInitError;
+
+    /**
+     * 0 = need to fetch remote addons list once..
+     * 1 = fetch succeeded, don't need to do it any more.
+     * -1= fetch failed, do it again only if the user requests a refresh
+     *     or changes the force-http setting.
+     */
+    private int mStateFetchRemoteAddonsList;
 
     /**
      * Creates a new updater data.
@@ -109,28 +134,12 @@ class UpdaterData {
         return mTaskFactory;
     }
 
-    public void setUserCanChangeSdkRoot(boolean userCanChangeSdkRoot) {
-        mUserCanChangeSdkRoot = userCanChangeSdkRoot;
-    }
-
-    public boolean canUserChangeSdkRoot() {
-        return mUserCanChangeSdkRoot;
-    }
-
-    public RepoSources getSources() {
+    public SdkSources getSources() {
         return mSources;
-    }
-
-    public RepoSourcesAdapter getSourcesAdapter() {
-        return mSourcesAdapter;
     }
 
     public LocalSdkParser getLocalSdkParser() {
         return mLocalSdkParser;
-    }
-
-    public LocalSdkAdapter getLocalSdkAdapter() {
-        return mLocalSdkAdapter;
     }
 
     public ISdkLog getSdkLog() {
@@ -157,15 +166,15 @@ class UpdaterData {
         return mSettingsController;
     }
 
-    /** Adds a listener ({@link ISdkListener}) that is notified when the SDK is reloaded. */
-    public void addListeners(ISdkListener listener) {
+    /** Adds a listener ({@link ISdkChangeListener}) that is notified when the SDK is reloaded. */
+    public void addListeners(ISdkChangeListener listener) {
         if (mListeners.contains(listener) == false) {
             mListeners.add(listener);
         }
     }
 
-    /** Removes a listener ({@link ISdkListener}) that is notified when the SDK is reloaded. */
-    public void removeListener(ISdkListener listener) {
+    /** Removes a listener ({@link ISdkChangeListener}) that is notified when the SDK is reloaded. */
+    public void removeListener(ISdkChangeListener listener) {
         mListeners.remove(listener);
     }
 
@@ -219,8 +228,9 @@ class UpdaterData {
     /**
      * Initializes the {@link SdkManager} and the {@link AvdManager}.
      */
-    private void initSdk() {
-        mSdkManager = SdkManager.createManager(mOsSdkRoot, mSdkLog);
+    @VisibleForTesting(visibility=Visibility.PRIVATE)
+    protected void initSdk() {
+        setSdkManager(SdkManager.createManager(mOsSdkRoot, mSdkLog));
         try {
             mAvdManager = null; // remove the old one if needed.
             mAvdManager = new AvdManager(mSdkManager, mSdkLog);
@@ -237,7 +247,12 @@ class UpdaterData {
         }
 
         // notify listeners.
-        notifyListeners(false /*init*/);
+        broadcastOnSdkReload();
+    }
+
+    @VisibleForTesting(visibility=Visibility.PRIVATE)
+    protected void setSdkManager(SdkManager sdkManager) {
+        mSdkManager = sdkManager;
     }
 
     /**
@@ -245,7 +260,7 @@ class UpdaterData {
      * <p/>
      * This also reloads the AVDs in case their status changed.
      * <p/>
-     * This does not notify the listeners ({@link ISdkListener}).
+     * This does not notify the listeners ({@link ISdkChangeListener}).
      */
     public void reloadSdk() {
         // reload SDK
@@ -260,12 +275,10 @@ class UpdaterData {
             }
         }
 
-        // notify adapters?
         mLocalSdkParser.clearPackages();
-        // TODO
 
         // notify listeners
-        notifyListeners(false /*init*/);
+        broadcastOnSdkReload();
     }
 
     /**
@@ -287,121 +300,93 @@ class UpdaterData {
     /**
      * Sets up the default sources: <br/>
      * - the default google SDK repository, <br/>
-     * - the extra repo URLs from the environment, <br/>
      * - the user sources from prefs <br/>
+     * - the extra repo URLs from the environment, <br/>
      * - and finally the extra user repo URLs from the environment.
      */
     public void setupDefaultSources() {
-        RepoSources sources = getSources();
-        sources.add(new RepoSource(SdkRepository.URL_GOOGLE_SDK_REPO_SITE, false /*userSource*/));
+        SdkSources sources = getSources();
 
-        // SDK_UPDATER_URLS is a semicolon-separated list of URLs that can be used to
-        // seed the SDK Updater list for full repositories.
-        String str = System.getenv("SDK_UPDATER_URLS");
-        if (str != null) {
-            String[] urls = str.split(";");
-            for (String url : urls) {
-                if (url != null && url.length() > 0) {
-                    RepoSource s = new RepoSource(url, false /*userSource*/);
-                    if (!sources.hasSource(s)) {
-                        sources.add(s);
-                    }
-                }
-            }
+        // Load the conventional sources.
+        // For testing, the env var can be set to replace the default root download URL.
+        // It must end with a / and its the location where the updater will look for
+        // the repository.xml, addons_list.xml and such files.
+
+        String baseUrl = System.getenv("SDK_TEST_BASE_URL");                        //$NON-NLS-1$
+        if (baseUrl == null || baseUrl.length() <= 0 || !baseUrl.endsWith("/")) {   //$NON-NLS-1$
+            baseUrl = SdkRepoConstants.URL_GOOGLE_SDK_SITE;
         }
+
+        sources.add(SdkSourceCategory.ANDROID_REPO,
+                new SdkRepoSource(baseUrl,
+                                  SdkSourceCategory.ANDROID_REPO.getUiName()));
 
         // Load user sources
-        sources.loadUserSources(getSdkLog());
-
-        // SDK_UPDATER_USER_URLS is a semicolon-separated list of URLs that can be used to
-        // seed the SDK Updater list for user-only repositories. User sources can only provide
-        // add-ons and extra packages.
-        str = System.getenv("SDK_UPDATER_USER_URLS");
-        if (str != null) {
-            String[] urls = str.split(";");
-            for (String url : urls) {
-                if (url != null && url.length() > 0) {
-                    RepoSource s = new RepoSource(url, true /*userSource*/);
-                    if (!sources.hasSource(s)) {
-                        sources.add(s);
-                    }
-                }
-            }
-        }
+        sources.loadUserAddons(getSdkLog());
     }
 
     /**
      * Returns the list of installed packages, parsing them if this has not yet been done.
+     * <p/>
+     * The package list is cached in the {@link LocalSdkParser} and will be reset when
+     * {@link #reloadSdk()} is invoked.
      */
-    public Package[] getInstalledPackage() {
+    public Package[] getInstalledPackages(ITaskMonitor monitor) {
         LocalSdkParser parser = getLocalSdkParser();
 
         Package[] packages = parser.getPackages();
 
         if (packages == null) {
             // load on demand the first time
-            packages = parser.parseSdk(getOsSdkRoot(), getSdkManager(), getSdkLog());
+            packages = parser.parseSdk(getOsSdkRoot(), getSdkManager(), monitor);
         }
 
         return packages;
     }
-
-    /**
-     * Notify the listeners ({@link ISdkListener}) that the SDK was reloaded.
-     * <p/>
-     * This can be called from any thread.
-     *
-     * @param init whether the SDK loaded for the first time.
-     */
-    public void notifyListeners(final boolean init) {
-        if (mWindowShell != null && mListeners.size() > 0) {
-            mWindowShell.getDisplay().syncExec(new Runnable() {
-                public void run() {
-                    for (ISdkListener listener : mListeners) {
-                        try {
-                            listener.onSdkChange(init);
-                        } catch (Throwable t) {
-                            mSdkLog.error(t, null);
-                        }
-                    }
-                }
-            });
-        }
-    }
-
     /**
      * Install the list of given {@link Archive}s. This is invoked by the user selecting some
      * packages in the remote page and then clicking "install selected".
      *
-     * @param result The archives to install. Incompatible ones will be skipped.
+     * @param archives The archives to install. Incompatible ones will be skipped.
+     * @param flags Optional flags for the installer, such as {@link #NO_TOOLS_MSG}.
+     * @return A list of archives that have been installed. Can be empty but not null.
      */
-    public void installArchives(final ArrayList<ArchiveInfo> result) {
+    @VisibleForTesting(visibility=Visibility.PRIVATE)
+    protected List<Archive> installArchives(final List<ArchiveInfo> archives, final int flags) {
         if (mTaskFactory == null) {
             throw new IllegalArgumentException("Task Factory is null");
         }
 
+        // this will accumulate all the packages installed.
+        final List<Archive> newlyInstalledArchives = new ArrayList<Archive>();
+
         final boolean forceHttp = getSettingsController().getForceHttp();
+
+        // sort all archives based on their dependency level.
+        Collections.sort(archives, new InstallOrderComparator());
 
         mTaskFactory.start("Installing Archives", new ITask() {
             public void run(ITaskMonitor monitor) {
 
-                final int progressPerArchive = 2 * Archive.NUM_MONITOR_INC;
-                monitor.setProgressMax(result.size() * progressPerArchive);
+                final int progressPerArchive = 2 * ArchiveInstaller.NUM_MONITOR_INC;
+                monitor.setProgressMax(1 + archives.size() * progressPerArchive);
                 monitor.setDescription("Preparing to install archives");
 
                 boolean installedAddon = false;
                 boolean installedTools = false;
+                boolean installedPlatformTools = false;
+                boolean preInstallHookInvoked = false;
 
                 // Mark all current local archives as already installed.
                 HashSet<Archive> installedArchives = new HashSet<Archive>();
-                for (Package p : getInstalledPackage()) {
+                for (Package p : getInstalledPackages(monitor.createSubMonitor(1))) {
                     for (Archive a : p.getArchives()) {
                         installedArchives.add(a);
                     }
                 }
 
                 int numInstalled = 0;
-                nextArchive: for (ArchiveInfo ai : result) {
+                nextArchive: for (ArchiveInfo ai : archives) {
                     Archive archive = ai.getNewArchive();
                     if (archive == null) {
                         // This is not supposed to happen.
@@ -422,14 +407,14 @@ class UpdaterData {
                                     // This archive depends on a missing archive.
                                     // We shouldn't get here.
                                     // Skip it.
-                                    monitor.setResult("Skipping '%1$s'; it depends on a missing package.",
+                                    monitor.log("Skipping '%1$s'; it depends on a missing package.",
                                             archive.getParentPackage().getShortDescription());
                                     continue nextArchive;
                                 } else if (!installedArchives.contains(na)) {
                                     // This archive depends on another one that was not installed.
                                     // We shouldn't get here.
                                     // Skip it.
-                                    monitor.setResult("Skipping '%1$s'; it depends on '%2$s' which was not installed.",
+                                    monitor.logError("Skipping '%1$s'; it depends on '%2$s' which was not installed.",
                                             archive.getParentPackage().getShortDescription(),
                                             adep.getShortDescription());
                                     continue nextArchive;
@@ -437,8 +422,19 @@ class UpdaterData {
                             }
                         }
 
-                        if (archive.install(mOsSdkRoot, forceHttp, mSdkManager, monitor)) {
+                        if (!preInstallHookInvoked) {
+                            preInstallHookInvoked = true;
+                            broadcastPreInstallHook();
+                        }
+
+                        ArchiveInstaller installer = createArchiveInstaler();
+                        if (installer.install(ai,
+                                              mOsSdkRoot,
+                                              forceHttp,
+                                              mSdkManager,
+                                              monitor)) {
                             // We installed this archive.
+                            newlyInstalledArchives.add(archive);
                             installedArchives.add(archive);
                             numInstalled++;
 
@@ -446,11 +442,13 @@ class UpdaterData {
                             // is no longer installed.
                             installedArchives.remove(ai.getReplaced());
 
-                            // Check if we successfully installed a tool or add-on package.
+                            // Check if we successfully installed a platform-tool or add-on package.
                             if (archive.getParentPackage() instanceof AddonPackage) {
                                 installedAddon = true;
                             } else if (archive.getParentPackage() instanceof ToolPackage) {
                                 installedTools = true;
+                            } else if (archive.getParentPackage() instanceof PlatformToolPackage) {
+                                installedPlatformTools = true;
                             }
                         }
 
@@ -472,8 +470,8 @@ class UpdaterData {
                                     baos.toString());
                         }
 
-                        monitor.setResult(msg);
-                        mSdkLog.error(t, msg);
+                        monitor.log(     "%1$s", msg);      //$NON-NLS-1$
+                        mSdkLog.error(t, "%1$s", msg);      //$NON-NLS-1$
                     } finally {
 
                         // Always move the progress bar to the desired position.
@@ -487,14 +485,18 @@ class UpdaterData {
                     // Update the USB vendor ids for adb
                     try {
                         mSdkManager.updateAdb();
-                        monitor.setResult("Updated ADB to support the USB devices declared in the SDK add-ons.");
+                        monitor.log("Updated ADB to support the USB devices declared in the SDK add-ons.");
                     } catch (Exception e) {
                         mSdkLog.error(e, "Update ADB failed");
-                        monitor.setResult("failed to update adb to support the USB devices declared in the SDK add-ons.");
+                        monitor.logError("failed to update adb to support the USB devices declared in the SDK add-ons.");
                     }
                 }
 
-                if (installedAddon || installedTools) {
+                if (preInstallHookInvoked) {
+                    broadcastPostInstallHook();
+                }
+
+                if (installedAddon || installedPlatformTools) {
                     // We need to restart ADB. Actually since we don't know if it's even
                     // running, maybe we should just kill it and not start it.
                     // Note: it turns out even under Windows we don't need to kill adb
@@ -505,7 +507,7 @@ class UpdaterData {
                 }
 
                 if (installedTools) {
-                    notifyToolsNeedsToBeRestarted();
+                    notifyToolsNeedsToBeRestarted(flags);
                 }
 
                 if (numInstalled == 0) {
@@ -520,6 +522,55 @@ class UpdaterData {
                 }
             }
         });
+
+        return newlyInstalledArchives;
+    }
+
+    /**
+     * A comparator to sort all the {@link ArchiveInfo} based on their
+     * dependency level. This forces the installer to install first all packages
+     * with no dependency, then those with one level of dependency, etc.
+     */
+    private static class InstallOrderComparator implements Comparator<ArchiveInfo> {
+
+        private final Map<ArchiveInfo, Integer> mOrders = new HashMap<ArchiveInfo, Integer>();
+
+        public int compare(ArchiveInfo o1, ArchiveInfo o2) {
+            int n1 = getDependencyOrder(o1);
+            int n2 = getDependencyOrder(o2);
+
+            return n1 - n2;
+        }
+
+        private int getDependencyOrder(ArchiveInfo ai) {
+            if (ai == null) {
+                return 0;
+            }
+
+            // reuse cached value, if any
+            Integer cached = mOrders.get(ai);
+            if (cached != null) {
+                return cached.intValue();
+            }
+
+            ArchiveInfo[] deps = ai.getDependsOn();
+            if (deps == null) {
+                return 0;
+            }
+
+            // compute dependencies, recursively
+            int n = deps.length;
+
+            for (ArchiveInfo dep : deps) {
+                n += getDependencyOrder(dep);
+            }
+
+            // cache it
+            mOrders.put(ai, Integer.valueOf(n));
+
+            return n;
+        }
+
     }
 
     /**
@@ -535,17 +586,19 @@ class UpdaterData {
 
         if (getWindowShell() != null && getSettingsController().getAskBeforeAdbRestart()) {
             // need to ask for permission first
-            Display display = getWindowShell().getDisplay();
-
-            display.syncExec(new Runnable() {
-                public void run() {
-                    canRestart[0] = MessageDialog.openQuestion(getWindowShell(),
-                            "ADB Restart",
-                            "A package that depends on ADB has been updated. It is recommended " +
-                            "to restart ADB. Is it OK to do it now? If not, you can restart it " +
-                            "manually later.");
-                }
-            });
+            final Shell shell = getWindowShell();
+            if (shell != null && !shell.isDisposed()) {
+                shell.getDisplay().syncExec(new Runnable() {
+                    public void run() {
+                        if (!shell.isDisposed()) {
+                            canRestart[0] = MessageDialog.openQuestion(shell,
+                                    "ADB Restart",
+                                    "A package that depends on ADB has been updated. \n" +
+                                    "Do you want to restart ADB now?");
+                        }
+                    }
+                });
+            }
         }
 
         if (canRestart[0]) {
@@ -555,24 +608,37 @@ class UpdaterData {
         }
     }
 
-    private void notifyToolsNeedsToBeRestarted() {
-        if (getWindowShell() == null) {
-            // We don't need to print anything if this is a standalone console update.
-            return;
+    private void notifyToolsNeedsToBeRestarted(int flags) {
+
+        String msg = null;
+        if ((flags & TOOLS_MSG_UPDATED_FROM_ADT) != 0) {
+            msg =
+            "The Android SDK and AVD Manager that you are currently using has been updated. " +
+            "Please also run Eclipse > Help > Check for Updates to see if the Android " +
+            "plug-in needs to be updated.";
+
+        } else if ((flags & TOOLS_MSG_UPDATED_FROM_SDKMAN) != 0) {
+            msg =
+            "The Android SDK and AVD Manager that you are currently using has been updated. " +
+            "It is recommended that you now close the manager window and re-open it. " +
+            "If you use Eclipse, please run Help > Check for Updates to see if the Android " +
+            "plug-in needs to be updated.";
         }
 
-        Display display = getWindowShell().getDisplay();
+        final String msg2 = msg;
 
-        display.syncExec(new Runnable() {
-            public void run() {
-                MessageDialog.openInformation(getWindowShell(),
-                        "Android Tools Updated",
-                        "The Android SDK and AVD Manager that you are currently using has been updated. " +
-                        "It is recommended that you now close the manager window and re-open it. " +
-                        "If you started this window from Eclipse, please check if the Android " +
-                        "plug-in needs to be updated.");
-            }
-        });
+        final Shell shell = getWindowShell();
+        if (msg2 != null && shell != null && !shell.isDisposed()) {
+            shell.getDisplay().syncExec(new Runnable() {
+                public void run() {
+                    if (!shell.isDisposed()) {
+                        MessageDialog.openInformation(shell,
+                                "Android Tools Updated",
+                                msg2);
+                    }
+                }
+            });
+        }
     }
 
 
@@ -592,31 +658,127 @@ class UpdaterData {
      * @param selectedArchives The list of remote archives to consider for the update.
      *  This can be null, in which case a list of remote archive is fetched from all
      *  available sources.
+     * @param includeObsoletes True if obsolete packages should be used when resolving what
+     *  to update.
+     * @param flags Optional flags for the installer, such as {@link #NO_TOOLS_MSG}.
+     * @return A list of archives that have been installed. Can be null if nothing was done.
      */
-    public void updateOrInstallAll_WithGUI(Collection<Archive> selectedArchives) {
-        if (selectedArchives == null) {
-            refreshSources(true);
-        }
+    public List<Archive> updateOrInstallAll_WithGUI(
+            Collection<Archive> selectedArchives,
+            boolean includeObsoletes,
+            int flags) {
 
-        UpdaterLogic ul = new UpdaterLogic();
-        ArrayList<ArchiveInfo> archives = ul.computeUpdates(
+        // Note: we no longer call refreshSources(true) here. This will be done
+        // automatically by computeUpdates() iif it needs to access sources to
+        // resolve missing dependencies.
+
+        SdkUpdaterLogic ul = new SdkUpdaterLogic(this);
+        List<ArchiveInfo> archives = ul.computeUpdates(
                 selectedArchives,
                 getSources(),
-                getLocalSdkParser().getPackages());
+                getLocalSdkParser().getPackages(),
+                includeObsoletes);
 
         if (selectedArchives == null) {
-            ul.addNewPlatforms(archives, getSources(), getLocalSdkParser().getPackages());
+            loadRemoteAddonsList(new NullTaskMonitor(getSdkLog()));
+            ul.addNewPlatforms(
+                    archives,
+                    getSources(),
+                    getLocalSdkParser().getPackages(),
+                    includeObsoletes);
         }
 
         // TODO if selectedArchives is null and archives.len==0, find if there are
         // any new platform we can suggest to install instead.
 
-        UpdateChooserDialog dialog = new UpdateChooserDialog(getWindowShell(), this, archives);
+        Collections.sort(archives);
+
+        SdkUpdaterChooserDialog dialog =
+            new SdkUpdaterChooserDialog(getWindowShell(), this, archives);
         dialog.open();
 
         ArrayList<ArchiveInfo> result = dialog.getResult();
         if (result != null && result.size() > 0) {
-            installArchives(result);
+            return installArchives(result, flags);
+        }
+        return null;
+    }
+
+    /**
+     * Fetches all archives available on the known remote sources.
+     *
+     * Used by {@link UpdaterData#listRemotePackages_NoGUI} and
+     * {@link UpdaterData#updateOrInstallAll_NoGUI}.
+     *
+     * @param includeObsoletes True to also list obsolete packages.
+     * @return A list of potential {@link ArchiveInfo} to install.
+     */
+    private List<ArchiveInfo> getRemoteArchives_NoGUI(boolean includeObsoletes) {
+        refreshSources(true);
+        loadRemoteAddonsList(new NullTaskMonitor(getSdkLog()));
+
+        List<ArchiveInfo> archives;
+        SdkUpdaterLogic ul = new SdkUpdaterLogic(this);
+
+        if (includeObsoletes) {
+            archives = ul.getAllRemoteArchives(
+                    getSources(),
+                    getLocalSdkParser().getPackages(),
+                    includeObsoletes);
+
+        } else {
+            archives = ul.computeUpdates(
+                    null /*selectedArchives*/,
+                    getSources(),
+                    getLocalSdkParser().getPackages(),
+                    includeObsoletes);
+
+            ul.addNewPlatforms(
+                    archives,
+                    getSources(),
+                    getLocalSdkParser().getPackages(),
+                    includeObsoletes);
+        }
+
+        Collections.sort(archives);
+        return archives;
+    }
+
+    /**
+     * Lists remote packages available for install using
+     * {@link UpdaterData#updateOrInstallAll_NoGUI}.
+     *
+     * @param includeObsoletes True to also list obsolete packages.
+     * @param extendedOutput True to display more details on each package.
+     */
+    public void listRemotePackages_NoGUI(boolean includeObsoletes, boolean extendedOutput) {
+
+        List<ArchiveInfo> archives = getRemoteArchives_NoGUI(includeObsoletes);
+
+        mSdkLog.printf("Packages available for installation or update: %1$d\n", archives.size());
+
+        int index = 1;
+        for (ArchiveInfo ai : archives) {
+            Archive a = ai.getNewArchive();
+            if (a != null) {
+                Package p = a.getParentPackage();
+                if (p != null) {
+                    if (extendedOutput) {
+                        mSdkLog.printf("----------\n");
+                        mSdkLog.printf("id: %1$d or \"%2$s\"\n", index, p.installId());
+                        mSdkLog.printf("     Type: %1$s\n",
+                                p.getClass().getSimpleName().replaceAll("Package", "")); //$NON-NLS-1$ //$NON-NLS-2$
+                        String desc = LineUtil.reformatLine("     Desc: %s\n",
+                                p.getLongDescription());
+                        mSdkLog.printf("%s", desc); //$NON-NLS-1$
+                    } else {
+                        mSdkLog.printf("%1$ 4d- %2$s\n",
+                                index,
+                                p.getShortDescription());
+                    }
+                    index++;
+                }
+            }
         }
     }
 
@@ -625,70 +787,98 @@ class UpdaterData {
      * This version is intended to run without a GUI and
      * only outputs to the current {@link ISdkLog}.
      *
-     * @param pkgFilter A list of {@link SdkRepository#NODES} to limit the type of packages
-     *   we can update. A null or empty list means to update everything possible.
+     * @param pkgFilter A list of {@link SdkRepoConstants#NODES} or {@link Package#installId()}
+     *   or package indexes to limit the packages we can update or install.
+     *   A null or empty list means to update everything possible.
      * @param includeObsoletes True to also list and install obsolete packages.
      * @param dryMode True to check what would be updated/installed but do not actually
      *   download or install anything.
+     * @return A list of archives that have been installed. Can be null if nothing was done.
      */
-    public void updateOrInstallAll_NoGUI(
+    public List<Archive> updateOrInstallAll_NoGUI(
             Collection<String> pkgFilter,
             boolean includeObsoletes,
             boolean dryMode) {
 
-        refreshSources(true);
-
-        UpdaterLogic ul = new UpdaterLogic();
-        ArrayList<ArchiveInfo> archives = ul.computeUpdates(
-                null /*selectedArchives*/,
-                getSources(),
-                getLocalSdkParser().getPackages());
-
-        ul.addNewPlatforms(archives, getSources(), getLocalSdkParser().getPackages());
+        List<ArchiveInfo> archives = getRemoteArchives_NoGUI(includeObsoletes);
 
         // Filter the selected archives to only keep the ones matching the filter
         if (pkgFilter != null && pkgFilter.size() > 0 && archives != null && archives.size() > 0) {
-            // Map filter types to an SdkRepository Package type.
+            // Map filter types to an SdkRepository Package type,
+            // e.g. create a map "platform" => PlatformPackage.class
             HashMap<String, Class<? extends Package>> pkgMap =
                 new HashMap<String, Class<? extends Package>>();
-            pkgMap.put(SdkRepository.NODE_PLATFORM, PlatformPackage.class);
-            pkgMap.put(SdkRepository.NODE_ADD_ON,   AddonPackage.class);
-            pkgMap.put(SdkRepository.NODE_TOOL,     ToolPackage.class);
-            pkgMap.put(SdkRepository.NODE_DOC,      DocPackage.class);
-            pkgMap.put(SdkRepository.NODE_SAMPLE,   SamplePackage.class);
-            pkgMap.put(SdkRepository.NODE_EXTRA,    ExtraPackage.class);
 
-            if (SdkRepository.NODES.length != pkgMap.size()) {
-                // Sanity check in case we forget to update this package map.
-                // We don't cancel the operation though.
-                mSdkLog.error(null,
-                    "Filter Mismatch!\nThe package filter list has changed. Please report this.");
+            mapFilterToPackageClass(pkgMap, SdkRepoConstants.NODES);
+            mapFilterToPackageClass(pkgMap, SdkAddonConstants.NODES);
+
+            // Prepare a map install-id => package instance
+            HashMap<String, Package> installIdMap = new HashMap<String, Package>();
+            for (ArchiveInfo ai : archives) {
+                Archive a = ai.getNewArchive();
+                if (a != null) {
+                    Package p = a.getParentPackage();
+                    if (p != null) {
+                        String id = p.installId();
+                        if (id != null && id.length() > 0 && !installIdMap.containsKey(id)) {
+                            installIdMap.put(id, p);
+                        }
+                    }
+                }
             }
 
-            // Now make a set of the types that are allowed by the filter.
-            HashSet<Class<? extends Package>> allowedPkgSet =
+            // Now intersect this with the pkgFilter requested by the user, in order to
+            // only keep the classes that the user wants to install.
+            // We also create a set with the package indices requested by the user
+            // and a set of install-ids requested by the user.
+
+            HashSet<Class<? extends Package>> userFilteredClasses =
                 new HashSet<Class<? extends Package>>();
+            SparseIntArray userFilteredIndices = new SparseIntArray();
+            Set<String> userFilteredInstallIds = new HashSet<String>();
+
             for (String type : pkgFilter) {
-                if (pkgMap.containsKey(type)) {
-                    allowedPkgSet.add(pkgMap.get(type));
+                if (installIdMap.containsKey(type)) {
+                    userFilteredInstallIds.add(type);
+
+                } else if (type.replaceAll("[0-9]+", "").length() == 0) {//$NON-NLS-1$ //$NON-NLS-2$
+                    // An all-digit number is a package index requested by the user.
+                    int index = Integer.parseInt(type);
+                    userFilteredIndices.put(index, index);
+
+                } else if (pkgMap.containsKey(type)) {
+                    userFilteredClasses.add(pkgMap.get(type));
+
                 } else {
                     // This should not happen unless there's a mismatch in the package map.
                     mSdkLog.error(null, "Ignoring unknown package filter '%1$s'", type);
                 }
             }
 
-            // we don't need the map anymore
+            // we don't need the maps anymore
             pkgMap = null;
+            installIdMap = null;
 
-            Iterator<ArchiveInfo> it = archives.iterator();
-            while (it.hasNext()) {
+            // Now filter the remote archives list to keep:
+            // - any package which class matches userFilteredClasses
+            // - any package index which matches userFilteredIndices
+            // - any package install id which matches userFilteredInstallIds
+
+            int index = 1;
+            for (Iterator<ArchiveInfo> it = archives.iterator(); it.hasNext(); ) {
                 boolean keep = false;
                 ArchiveInfo ai = it.next();
                 Archive a = ai.getNewArchive();
                 if (a != null) {
                     Package p = a.getParentPackage();
-                    if (p != null && allowedPkgSet.contains(p.getClass())) {
-                        keep = true;
+                    if (p != null) {
+                        if (userFilteredInstallIds.contains(p.installId()) ||
+                                userFilteredClasses.contains(p.getClass()) ||
+                                userFilteredIndices.get(index) > 0) {
+                            keep = true;
+                        }
+
+                        index++;
                     }
                 }
 
@@ -698,39 +888,11 @@ class UpdaterData {
             }
 
             if (archives.size() == 0) {
-                mSdkLog.warning("The package filter removed all packages. There is nothing to install.\n" +
-                        "Please consider trying updating again without a package filter.");
-                return;
+                mSdkLog.printf(LineUtil.reflowLine(
+                        "Warning: The package filter removed all packages. There is nothing to install.\nPlease consider trying to update again without a package filter.\n"));
+                return null;
             }
         }
-
-        if (!includeObsoletes && archives != null && archives.size() > 0) {
-            // Filter obsolete packages out
-            Iterator<ArchiveInfo> it = archives.iterator();
-            while (it.hasNext()) {
-                boolean keep = false;
-                ArchiveInfo ai = it.next();
-                Archive a = ai.getNewArchive();
-                if (a != null) {
-                    Package p = a.getParentPackage();
-                    if (p != null && !p.isObsolete()) {
-                        keep = true;
-                    }
-                }
-
-                if (!keep) {
-                    it.remove();
-                }
-            }
-
-            if (archives.size() == 0) {
-                mSdkLog.warning("All candidate packages were obsolete. Nothing to install.");
-                return;
-            }
-        }
-
-        // TODO if selectedArchives is null and archives.len==0, find if there are
-        // any new platform we can suggest to install instead.
 
         if (archives != null && archives.size() > 0) {
             if (dryMode) {
@@ -744,12 +906,60 @@ class UpdaterData {
                         }
                     }
                 }
-                mSdkLog.printf("\nDry mode is on so nothing will actually be installed.\n");
+                mSdkLog.printf("\nDry mode is on so nothing is actually being installed.\n");
             } else {
-                installArchives(archives);
+                return installArchives(archives, NO_TOOLS_MSG);
             }
         } else {
             mSdkLog.printf("There is nothing to install or update.\n");
+        }
+
+        return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void mapFilterToPackageClass(
+            HashMap<String, Class<? extends Package>> inOutPkgMap,
+            String[] nodes) {
+
+        // Automatically find the classes matching the node names
+        ClassLoader classLoader = getClass().getClassLoader();
+        String basePackage = Package.class.getPackage().getName();
+
+        for (String node : nodes) {
+            // Capitalize the name
+            String name = node.substring(0, 1).toUpperCase() + node.substring(1);
+
+            // We can have one dash at most in a name. If it's present, we'll try
+            // with the dash or with the next letter capitalized.
+            int dash = name.indexOf('-');
+            if (dash > 0) {
+                name = name.replaceFirst("-", "");
+            }
+
+            for (int alternatives = 0; alternatives < 2; alternatives++) {
+
+                String fqcn = basePackage + '.' + name + "Package";  //$NON-NLS-1$
+                try {
+                    Class<? extends Package> clazz =
+                        (Class<? extends Package>) classLoader.loadClass(fqcn);
+                    if (clazz != null) {
+                        inOutPkgMap.put(node, clazz);
+                        continue;
+                    }
+                } catch (Throwable ignore) {
+                }
+
+                if (alternatives == 0 && dash > 0) {
+                    // Try an alternative where the next letter after the dash
+                    // is converted to an upper case.
+                    name = name.substring(0, dash) +
+                           name.substring(dash, dash + 1).toUpperCase() +
+                           name.substring(dash + 1);
+                } else {
+                    break;
+                }
+            }
         }
     }
 
@@ -768,9 +978,15 @@ class UpdaterData {
 
         mTaskFactory.start("Refresh Sources", new ITask() {
             public void run(ITaskMonitor monitor) {
-                RepoSource[] sources = mSources.getSources();
-                monitor.setProgressMax(sources.length);
-                for (RepoSource source : sources) {
+
+                if (mStateFetchRemoteAddonsList <= 0) {
+                    loadRemoteAddonsListInTask(monitor);
+                }
+
+                SdkSource[] sources = mSources.getAllSources();
+                monitor.setDescription("Refresh Sources");
+                monitor.setProgressMax(monitor.getProgress() + sources.length);
+                for (SdkSource source : sources) {
                     if (forceFetching ||
                             source.getPackages() != null ||
                             source.getFetchError() != null) {
@@ -781,4 +997,152 @@ class UpdaterData {
             }
         });
     }
+
+    /**
+     * Loads the remote add-ons list.
+     */
+    public void loadRemoteAddonsList(ITaskMonitor monitor) {
+
+        if (mStateFetchRemoteAddonsList != 0) {
+            return;
+        }
+
+        mTaskFactory.start("Load Add-ons List", monitor, new ITask() {
+            public void run(ITaskMonitor subMonitor) {
+                loadRemoteAddonsListInTask(subMonitor);
+            }
+        });
+    }
+
+    private void loadRemoteAddonsListInTask(ITaskMonitor monitor) {
+        mStateFetchRemoteAddonsList = -1;
+
+        String url = SdkAddonsListConstants.URL_ADDON_LIST;
+
+        // We override SdkRepoConstants.URL_GOOGLE_SDK_SITE if this is defined
+        String baseUrl = System.getenv("SDK_TEST_BASE_URL");            //$NON-NLS-1$
+        if (baseUrl != null) {
+            if (baseUrl.length() > 0 && baseUrl.endsWith("/")) {        //$NON-NLS-1$
+                if (url.startsWith(SdkRepoConstants.URL_GOOGLE_SDK_SITE)) {
+                    url = baseUrl + url.substring(SdkRepoConstants.URL_GOOGLE_SDK_SITE.length());
+                }
+            } else {
+                monitor.logError("Ignoring invalid SDK_TEST_BASE_URL: %1$s", baseUrl);  //$NON-NLS-1$
+            }
+        }
+
+        if (getSettingsController().getForceHttp()) {
+            url = url.replaceAll("https://", "http://");    //$NON-NLS-1$ //$NON-NLS-2$
+        }
+
+        // Hook to bypass loading 3rd party addons lists.
+        boolean fetch3rdParties = System.getenv("SDK_SKIP_3RD_PARTIES") == null;
+
+        AddonsListFetcher fetcher = new AddonsListFetcher();
+        Site[] sites = fetcher.fetch(monitor, url);
+        if (sites != null) {
+            mSources.removeAll(SdkSourceCategory.ADDONS_3RD_PARTY);
+
+            if (fetch3rdParties) {
+                for (Site s : sites) {
+                    mSources.add(SdkSourceCategory.ADDONS_3RD_PARTY,
+                                 new SdkAddonSource(s.getUrl(), s.getUiName()));
+                }
+            }
+
+            mStateFetchRemoteAddonsList = 1;
+        }
+
+        monitor.setDescription("Fetched Add-ons List successfully");
+    }
+
+    /**
+     * Safely invoke all the registered {@link ISdkChangeListener#onSdkLoaded()}.
+     * This can be called from any thread.
+     */
+    public void broadcastOnSdkLoaded() {
+        if (mWindowShell != null && mListeners.size() > 0) {
+            mWindowShell.getDisplay().syncExec(new Runnable() {
+                public void run() {
+                    for (ISdkChangeListener listener : mListeners) {
+                        try {
+                            listener.onSdkLoaded();
+                        } catch (Throwable t) {
+                            mSdkLog.error(t, null);
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    /**
+     * Safely invoke all the registered {@link ISdkChangeListener#onSdkReload()}.
+     * This can be called from any thread.
+     */
+    private void broadcastOnSdkReload() {
+        if (mWindowShell != null && mListeners.size() > 0) {
+            mWindowShell.getDisplay().syncExec(new Runnable() {
+                public void run() {
+                    for (ISdkChangeListener listener : mListeners) {
+                        try {
+                            listener.onSdkReload();
+                        } catch (Throwable t) {
+                            mSdkLog.error(t, null);
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    /**
+     * Safely invoke all the registered {@link ISdkChangeListener#preInstallHook()}.
+     * This can be called from any thread.
+     */
+    private void broadcastPreInstallHook() {
+        if (mWindowShell != null && mListeners.size() > 0) {
+            mWindowShell.getDisplay().syncExec(new Runnable() {
+                public void run() {
+                    for (ISdkChangeListener listener : mListeners) {
+                        try {
+                            listener.preInstallHook();
+                        } catch (Throwable t) {
+                            mSdkLog.error(t, null);
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    /**
+     * Safely invoke all the registered {@link ISdkChangeListener#postInstallHook()}.
+     * This can be called from any thread.
+     */
+    private void broadcastPostInstallHook() {
+        if (mWindowShell != null && mListeners.size() > 0) {
+            mWindowShell.getDisplay().syncExec(new Runnable() {
+                public void run() {
+                    for (ISdkChangeListener listener : mListeners) {
+                        try {
+                            listener.postInstallHook();
+                        } catch (Throwable t) {
+                            mSdkLog.error(t, null);
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    /**
+     * Internal helper to return a new {@link ArchiveInstaller}.
+     * This allows us to override the installer for unit-testing.
+     */
+    @VisibleForTesting(visibility=Visibility.PRIVATE)
+    protected ArchiveInstaller createArchiveInstaler() {
+        return new ArchiveInstaller();
+    }
+
 }

@@ -18,8 +18,12 @@ package com.android.sdkmanager.internal.repository;
 
 
 import com.android.sdklib.SdkConstants;
-import com.android.sdklib.internal.repository.Package;
-import com.android.sdkmanager.*;
+import com.android.sdklib.repository.PkgProps;
+import com.android.sdklib.repository.SdkAddonConstants;
+import com.android.sdklib.repository.SdkRepoConstants;
+import com.android.sdkmanager.Main;
+import com.android.sdkuilib.internal.repository.UpdaterPage;
+
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.graphics.Image;
 import org.eclipse.swt.layout.GridData;
@@ -34,7 +38,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
 
-public class AboutPage extends Composite {
+public class AboutPage extends UpdaterPage {
 
     private Label mLabel;
 
@@ -42,12 +46,17 @@ public class AboutPage extends Composite {
      * Create the composite.
      * @param parent The parent of the composite.
      */
-    public AboutPage(Composite parent) {
-        super(parent, SWT.BORDER);
+    public AboutPage(Composite parent, int swtStyle) {
+        super(parent, swtStyle);
 
         createContents(this);
 
         postCreate();  //$hide$
+    }
+
+    @Override
+    public String getPageTitle() {
+        return "About";
     }
 
     private void createContents(Composite parent) {
@@ -64,8 +73,14 @@ public class AboutPage extends Composite {
         mLabel = new Label(parent, SWT.NONE);
         mLabel.setLayoutData(new GridData(SWT.CENTER, SWT.CENTER, false, false, 1, 1));
         mLabel.setText(String.format(
-                "Android SDK Updater.\nRevision %1$s\nCopyright (C) 2009 The Android Open Source Project.",
-                getRevision()));
+                "Android SDK Updater.\n" +
+                "Revision %1$s\n" +
+                "Add-on XML Schema #%2$d\n" +
+                "Repository XML Schema #%3$d\n" +
+                "Copyright (C) 2009-2011 The Android Open Source Project.",
+                getRevision(),
+                SdkAddonConstants.NS_LATEST_VERSION,
+                SdkRepoConstants.NS_LATEST_VERSION));
     }
 
     @Override
@@ -96,8 +111,20 @@ public class AboutPage extends Composite {
             } else {
                 sourceProp = new File(toolsdir, SdkConstants.FN_SOURCE_PROP);
             }
-            p.load(new FileInputStream(sourceProp));
-            String revision = p.getProperty(Package.PROP_REVISION);
+            FileInputStream fis = null;
+            try {
+                fis = new FileInputStream(sourceProp);
+                p.load(fis);
+            } finally {
+                if (fis != null) {
+                    try {
+                        fis.close();
+                    } catch (IOException ignore) {
+                    }
+                }
+            }
+
+            String revision = p.getProperty(PkgProps.PKG_REVISION);
             if (revision != null) {
                 return revision;
             }

@@ -28,10 +28,10 @@ import java.nio.ByteOrder;
  */
 final class HandleNativeHeap extends ChunkHandler {
 
-    public static final int CHUNK_NHGT = type("NHGT"); // $NON-NLS-1$
-    public static final int CHUNK_NHSG = type("NHSG"); // $NON-NLS-1$
-    public static final int CHUNK_NHST = type("NHST"); // $NON-NLS-1$
-    public static final int CHUNK_NHEN = type("NHEN"); // $NON-NLS-1$
+    public static final int CHUNK_NHGT = type("NHGT"); //$NON-NLS-1$
+    public static final int CHUNK_NHSG = type("NHSG"); //$NON-NLS-1$
+    public static final int CHUNK_NHST = type("NHST"); //$NON-NLS-1$
+    public static final int CHUNK_NHEN = type("NHEN"); //$NON-NLS-1$
 
     private static final HandleNativeHeap mInst = new HandleNativeHeap();
 
@@ -105,7 +105,7 @@ final class HandleNativeHeap extends ChunkHandler {
         packet = new JdwpPacket(rawBuf);
         buf = getChunkDataBuf(rawBuf);
 
-        buf.put((byte)HandleHeap.WHEN_GC);
+        buf.put((byte)HandleHeap.WHEN_DISABLE);
         buf.put((byte)HandleHeap.WHAT_OBJ);
 
         finishChunkPacket(packet, CHUNK_NHSG, buf.position());
@@ -171,7 +171,12 @@ final class HandleNativeHeap extends ChunkHandler {
                     buffer.getInt() /* allocations */);
 
             for (int j = 0 ; j < backtraceSize ; j++) {
-                long addr = ((long)buffer.getInt()) & 0x00000000ffffffffL;
+                long addr = (buffer.getInt()) & 0x00000000ffffffffL;
+
+                if (addr == 0x0) {
+                    // skip past null addresses
+                    continue;
+                }
 
                 info.addStackCallAddress(addr);;
             }
@@ -203,8 +208,8 @@ final class HandleNativeHeap extends ChunkHandler {
         buffer.order(ByteOrder.BIG_ENDIAN);
 
         int id = buffer.getInt();
-        int unitsize = (int) buffer.get();
-        long startAddress = (long) buffer.getInt() & 0x00000000ffffffffL;
+        int unitsize = buffer.get();
+        long startAddress = buffer.getInt() & 0x00000000ffffffffL;
         int offset = buffer.getInt();
         int allocationUnitCount = buffer.getInt();
 
@@ -218,8 +223,8 @@ final class HandleNativeHeap extends ChunkHandler {
 
         // read the usage
         while (buffer.position() < buffer.limit()) {
-            int eState = (int)buffer.get() & 0x000000ff;
-            int eLen = ((int)buffer.get() & 0x000000ff) + 1;
+            int eState = buffer.get() & 0x000000ff;
+            int eLen = (buffer.get() & 0x000000ff) + 1;
             //Log.e("ddm-nativeheap", "solidity: " + (eState & 0x7) + " - kind: "
             //        + ((eState >> 3) & 0x7) + " - len: " + eLen);
         }
@@ -254,36 +259,29 @@ final class HandleNativeHeap extends ChunkHandler {
                     long tmpStart = Long.parseLong(line.substring(0, 8), 16);
                     long tmpEnd = Long.parseLong(line.substring(9, 17), 16);
 
-                     /*
-                      * only check for library addresses as defined in
-                      * //device/config/prelink-linux-arm.map
-                      */
-                    if (tmpStart >= 0x0000000080000000L && tmpStart <= 0x00000000BFFFFFFFL) {
+                    int index = line.indexOf('/');
 
-                        int index = line.indexOf('/');
+                    if (index == -1)
+                        continue;
 
-                        if (index == -1)
-                            continue;
+                    String tmpLib = line.substring(index);
 
-                        String tmpLib = line.substring(index);
+                    if (library == null ||
+                            (library != null && tmpLib.equals(library) == false)) {
 
-                        if (library == null ||
-                                (library != null && tmpLib.equals(library) == false)) {
-
-                            if (library != null) {
-                                cd.addNativeLibraryMapInfo(startAddr, endAddr, library);
-                                Log.d("ddms", library + "(" + Long.toHexString(startAddr) +
-                                        " - " + Long.toHexString(endAddr) + ")");
-                            }
-
-                            // now init the new library
-                            library = tmpLib;
-                            startAddr = tmpStart;
-                            endAddr = tmpEnd;
-                        } else {
-                            // add the new end
-                            endAddr = tmpEnd;
+                        if (library != null) {
+                            cd.addNativeLibraryMapInfo(startAddr, endAddr, library);
+                            Log.d("ddms", library + "(" + Long.toHexString(startAddr) +
+                                    " - " + Long.toHexString(endAddr) + ")");
                         }
+
+                        // now init the new library
+                        library = tmpLib;
+                        startAddr = tmpStart;
+                        endAddr = tmpEnd;
+                    } else {
+                        // add the new end
+                        endAddr = tmpEnd;
                     }
                 } catch (NumberFormatException e) {
                     e.printStackTrace();

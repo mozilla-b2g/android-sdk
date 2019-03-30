@@ -36,9 +36,12 @@ public class MethodData {
     private String mProfileName;
     private String mPathname;
     private int mLineNumber;
-    private long mElapsedExclusive;
-    private long mElapsedInclusive;
-    private long mTopExclusive;
+    private long mElapsedExclusiveCpuTime;
+    private long mElapsedInclusiveCpuTime;
+    private long mTopExclusiveCpuTime;
+    private long mElapsedExclusiveRealTime;
+    private long mElapsedInclusiveRealTime;
+    private long mTopExclusiveRealTime;
     private int[] mNumCalls = new int[2]; // index 0=normal, 1=recursive
     private Color mColor;
     private Color mFadedColor;
@@ -46,10 +49,10 @@ public class MethodData {
     private Image mFadedImage;
     private HashMap<Integer, ProfileData> mParents;
     private HashMap<Integer, ProfileData> mChildren;
-    
+
     // The parents of this method when this method was in a recursive call
     private HashMap<Integer, ProfileData> mRecursiveParents;
-    
+
     // The children of this method when this method was in a recursive call
     private HashMap<Integer, ProfileData> mRecursiveChildren;
 
@@ -81,16 +84,6 @@ public class MethodData {
         computeProfileName();
     }
 
-    private Comparator<ProfileData> mByElapsedInclusive = new Comparator<ProfileData>() {
-        public int compare(ProfileData pd1, ProfileData pd2) {
-            if (pd2.getElapsedInclusive() > pd1.getElapsedInclusive())
-                return 1;
-            if (pd2.getElapsedInclusive() < pd1.getElapsedInclusive())
-                return -1;
-            return 0;
-        }
-    };
-
     public double addWeight(int x, int y, double weight) {
         if (mX == x && mY == y)
             mWeight += weight;
@@ -115,13 +108,16 @@ public class MethodData {
         computeProfileName();
     }
 
-    public void addElapsedExclusive(long time) {
-        mElapsedExclusive += time;
+    public void addElapsedExclusive(long cpuTime, long realTime) {
+        mElapsedExclusiveCpuTime += cpuTime;
+        mElapsedExclusiveRealTime += realTime;
     }
 
-    public void addElapsedInclusive(long time, boolean isRecursive, Call parent) {
+    public void addElapsedInclusive(long cpuTime, long realTime,
+            boolean isRecursive, Call parent) {
         if (isRecursive == false) {
-            mElapsedInclusive += time;
+            mElapsedInclusiveCpuTime += cpuTime;
+            mElapsedInclusiveRealTime += realTime;
             mNumCalls[0] += 1;
         } else {
             mNumCalls[1] += 1;
@@ -131,27 +127,27 @@ public class MethodData {
             return;
 
         // Find the child method in the parent
-        MethodData parentMethod = parent.mMethodData;
+        MethodData parentMethod = parent.getMethodData();
         if (parent.isRecursive()) {
-            parentMethod.mRecursiveChildren = updateInclusive(time,
+            parentMethod.mRecursiveChildren = updateInclusive(cpuTime, realTime,
                     parentMethod, this, false,
                     parentMethod.mRecursiveChildren);
         } else {
-            parentMethod.mChildren = updateInclusive(time,
+            parentMethod.mChildren = updateInclusive(cpuTime, realTime,
                     parentMethod, this, false, parentMethod.mChildren);
         }
 
         // Find the parent method in the child
         if (isRecursive) {
-            mRecursiveParents = updateInclusive(time, this, parentMethod, true,
+            mRecursiveParents = updateInclusive(cpuTime, realTime, this, parentMethod, true,
                     mRecursiveParents);
         } else {
-            mParents = updateInclusive(time, this, parentMethod, true,
+            mParents = updateInclusive(cpuTime, realTime, this, parentMethod, true,
                     mParents);
         }
     }
-    
-    private HashMap<Integer, ProfileData> updateInclusive(long time,
+
+    private HashMap<Integer, ProfileData> updateInclusive(long cpuTime, long realTime,
             MethodData contextMethod, MethodData elementMethod,
             boolean elementIsParent, HashMap<Integer, ProfileData> map) {
         if (map == null) {
@@ -159,34 +155,34 @@ public class MethodData {
         } else {
             ProfileData profileData = map.get(elementMethod.mId);
             if (profileData != null) {
-                profileData.addElapsedInclusive(time);
+                profileData.addElapsedInclusive(cpuTime, realTime);
                 return map;
             }
         }
 
         ProfileData elementData = new ProfileData(contextMethod,
                 elementMethod, elementIsParent);
-        elementData.setElapsedInclusive(time);
+        elementData.setElapsedInclusive(cpuTime, realTime);
         elementData.setNumCalls(1);
         map.put(elementMethod.mId, elementData);
         return map;
     }
 
-    public void analyzeData() {
+    public void analyzeData(TimeBase timeBase) {
         // Sort the parents and children into decreasing inclusive time
         ProfileData[] sortedParents;
         ProfileData[] sortedChildren;
         ProfileData[] sortedRecursiveParents;
         ProfileData[] sortedRecursiveChildren;
-        
-        sortedParents = sortProfileData(mParents);
-        sortedChildren = sortProfileData(mChildren);
-        sortedRecursiveParents = sortProfileData(mRecursiveParents);
-        sortedRecursiveChildren = sortProfileData(mRecursiveChildren);
-        
+
+        sortedParents = sortProfileData(mParents, timeBase);
+        sortedChildren = sortProfileData(mChildren, timeBase);
+        sortedRecursiveParents = sortProfileData(mRecursiveParents, timeBase);
+        sortedRecursiveChildren = sortProfileData(mRecursiveChildren, timeBase);
+
         // Add "self" time to the top of the sorted children
         sortedChildren = addSelf(sortedChildren);
-        
+
         // Create the ProfileNode objects that we need
         ArrayList<ProfileNode> nodes = new ArrayList<ProfileNode>();
         ProfileNode profileNode;
@@ -212,22 +208,31 @@ public class MethodData {
         }
         mProfileNodes = nodes.toArray(new ProfileNode[nodes.size()]);
     }
-    
+
     // Create and return a ProfileData[] array that is a sorted copy
     // of the given HashMap values.
-    private ProfileData[] sortProfileData(HashMap<Integer, ProfileData> map) {
+    private ProfileData[] sortProfileData(HashMap<Integer, ProfileData> map,
+            final TimeBase timeBase) {
         if (map == null)
             return null;
 
         // Convert the hash values to an array of ProfileData
         Collection<ProfileData> values = map.values();
         ProfileData[] sorted = values.toArray(new ProfileData[values.size()]);
-        
+
         // Sort the array by elapsed inclusive time
-        Arrays.sort(sorted, mByElapsedInclusive);
+        Arrays.sort(sorted, new Comparator<ProfileData>() {
+            public int compare(ProfileData pd1, ProfileData pd2) {
+                if (timeBase.getElapsedInclusiveTime(pd2) > timeBase.getElapsedInclusiveTime(pd1))
+                    return 1;
+                if (timeBase.getElapsedInclusiveTime(pd2) < timeBase.getElapsedInclusiveTime(pd1))
+                    return -1;
+                return 0;
+            }
+        });
         return sorted;
     }
-    
+
     private ProfileData[] addSelf(ProfileData[] children) {
         ProfileData[] pdata;
         if (children == null) {
@@ -240,12 +245,17 @@ public class MethodData {
         return pdata;
     }
 
-    public void addTopExclusive(long time) {
-        mTopExclusive += time;
+    public void addTopExclusive(long cpuTime, long realTime) {
+        mTopExclusiveCpuTime += cpuTime;
+        mTopExclusiveRealTime += realTime;
     }
 
-    public long getTopExclusive() {
-        return mTopExclusive;
+    public long getTopExclusiveCpuTime() {
+        return mTopExclusiveCpuTime;
+    }
+
+    public long getTopExclusiveRealTime() {
+        return mTopExclusiveRealTime;
     }
 
     public int getId() {
@@ -283,12 +293,16 @@ public class MethodData {
         return mProfileName;
     }
 
+    public String getSignature() {
+        return mSignature;
+    }
+
     public void computeProfileName() {
         if (mRank == -1) {
             mProfileName = mName;
             return;
         }
-        
+
         StringBuilder sb = new StringBuilder();
         sb.append(mRank);
         sb.append(" ");  //$NON-NLS-1$
@@ -325,12 +339,20 @@ public class MethodData {
         return getName();
     }
 
-    public long getElapsedExclusive() {
-        return mElapsedExclusive;
+    public long getElapsedExclusiveCpuTime() {
+        return mElapsedExclusiveCpuTime;
     }
 
-    public long getElapsedInclusive() {
-        return mElapsedInclusive;
+    public long getElapsedExclusiveRealTime() {
+        return mElapsedExclusiveRealTime;
+    }
+
+    public long getElapsedInclusiveCpuTime() {
+        return mElapsedInclusiveCpuTime;
+    }
+
+    public long getElapsedInclusiveRealTime() {
+        return mElapsedInclusiveRealTime;
     }
 
     public void setFadedColor(Color fadedColor) {
@@ -375,17 +397,31 @@ public class MethodData {
                 int result = md1.getName().compareTo(md2.getName());
                 return (mDirection == Direction.INCREASING) ? result : -result;
             }
-            if (mColumn == Column.BY_INCLUSIVE) {
-                if (md2.getElapsedInclusive() > md1.getElapsedInclusive())
+            if (mColumn == Column.BY_INCLUSIVE_CPU_TIME) {
+                if (md2.getElapsedInclusiveCpuTime() > md1.getElapsedInclusiveCpuTime())
                     return (mDirection == Direction.INCREASING) ? -1 : 1;
-                if (md2.getElapsedInclusive() < md1.getElapsedInclusive())
+                if (md2.getElapsedInclusiveCpuTime() < md1.getElapsedInclusiveCpuTime())
                     return (mDirection == Direction.INCREASING) ? 1 : -1;
                 return md1.getName().compareTo(md2.getName());
             }
-            if (mColumn == Column.BY_EXCLUSIVE) {
-                if (md2.getElapsedExclusive() > md1.getElapsedExclusive())
+            if (mColumn == Column.BY_EXCLUSIVE_CPU_TIME) {
+                if (md2.getElapsedExclusiveCpuTime() > md1.getElapsedExclusiveCpuTime())
                     return (mDirection == Direction.INCREASING) ? -1 : 1;
-                if (md2.getElapsedExclusive() < md1.getElapsedExclusive())
+                if (md2.getElapsedExclusiveCpuTime() < md1.getElapsedExclusiveCpuTime())
+                    return (mDirection == Direction.INCREASING) ? 1 : -1;
+                return md1.getName().compareTo(md2.getName());
+            }
+            if (mColumn == Column.BY_INCLUSIVE_REAL_TIME) {
+                if (md2.getElapsedInclusiveRealTime() > md1.getElapsedInclusiveRealTime())
+                    return (mDirection == Direction.INCREASING) ? -1 : 1;
+                if (md2.getElapsedInclusiveRealTime() < md1.getElapsedInclusiveRealTime())
+                    return (mDirection == Direction.INCREASING) ? 1 : -1;
+                return md1.getName().compareTo(md2.getName());
+            }
+            if (mColumn == Column.BY_EXCLUSIVE_REAL_TIME) {
+                if (md2.getElapsedExclusiveRealTime() > md1.getElapsedExclusiveRealTime())
+                    return (mDirection == Direction.INCREASING) ? -1 : 1;
+                if (md2.getElapsedExclusiveRealTime() < md1.getElapsedExclusiveRealTime())
                     return (mDirection == Direction.INCREASING) ? 1 : -1;
                 return md1.getName().compareTo(md2.getName());
             }
@@ -395,10 +431,25 @@ public class MethodData {
                     return md1.getName().compareTo(md2.getName());
                 return (mDirection == Direction.INCREASING) ? result : -result;
             }
-            if (mColumn == Column.BY_TIME_PER_CALL) {
-                double time1 = md1.getElapsedInclusive();
+            if (mColumn == Column.BY_CPU_TIME_PER_CALL) {
+                double time1 = md1.getElapsedInclusiveCpuTime();
                 time1 = time1 / md1.getTotalCalls();
-                double time2 = md2.getElapsedInclusive();
+                double time2 = md2.getElapsedInclusiveCpuTime();
+                time2 = time2 / md2.getTotalCalls();
+                double diff = time1 - time2;
+                int result = 0;
+                if (diff < 0)
+                    result = -1;
+                else if (diff > 0)
+                    result = 1;
+                if (result == 0)
+                    return md1.getName().compareTo(md2.getName());
+                return (mDirection == Direction.INCREASING) ? result : -result;
+            }
+            if (mColumn == Column.BY_REAL_TIME_PER_CALL) {
+                double time1 = md1.getElapsedInclusiveRealTime();
+                time1 = time1 / md1.getTotalCalls();
+                double time2 = md2.getElapsedInclusiveRealTime();
                 time2 = time2 / md2.getTotalCalls();
                 double diff = time1 - time2;
                 int result = 0;
@@ -445,7 +496,9 @@ public class MethodData {
         }
 
         public static enum Column {
-            BY_NAME, BY_EXCLUSIVE, BY_INCLUSIVE, BY_CALLS, BY_TIME_PER_CALL
+            BY_NAME, BY_EXCLUSIVE_CPU_TIME, BY_EXCLUSIVE_REAL_TIME,
+            BY_INCLUSIVE_CPU_TIME, BY_INCLUSIVE_REAL_TIME, BY_CALLS,
+            BY_REAL_TIME_PER_CALL, BY_CPU_TIME_PER_CALL,
         };
 
         public static enum Direction {

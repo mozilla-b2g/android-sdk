@@ -16,7 +16,7 @@
 package com.android.ide.eclipse.adt.internal.launch.junit;
 
 import com.android.ide.eclipse.adt.AdtPlugin;
-import com.android.ide.eclipse.adt.AndroidConstants;
+import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.internal.editors.IconFactory;
 import com.android.ide.eclipse.adt.internal.launch.LaunchMessages;
 import com.android.ide.eclipse.adt.internal.launch.MainLaunchConfigTab;
@@ -71,7 +71,6 @@ import org.eclipse.swt.events.ModifyEvent;
 import org.eclipse.swt.events.ModifyListener;
 import org.eclipse.swt.events.SelectionAdapter;
 import org.eclipse.swt.events.SelectionEvent;
-import org.eclipse.swt.events.SelectionListener;
 import org.eclipse.swt.graphics.Image;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
@@ -249,13 +248,12 @@ public class AndroidJUnitLaunchConfigurationTab extends AbstractLaunchConfigurat
         GridData gd = new GridData();
         gd.horizontalSpan = 3;
         mTestContainerRadioButton.setLayoutData(gd);
-        mTestContainerRadioButton.addSelectionListener(new SelectionListener() {
+        mTestContainerRadioButton.addSelectionListener(new SelectionAdapter() {
+            @Override
             public void widgetSelected(SelectionEvent e) {
                 if (mTestContainerRadioButton.getSelection()) {
                     testModeChanged();
                 }
-            }
-            public void widgetDefaultSelected(SelectionEvent e) {
             }
         });
 
@@ -289,7 +287,6 @@ public class AndroidJUnitLaunchConfigurationTab extends AbstractLaunchConfigurat
         loaderLabel.setLayoutData(gd);
 
         mInstrumentationCombo = new Combo(comp, SWT.DROP_DOWN | SWT.READ_ONLY);
-        gd = new GridData(GridData.FILL_HORIZONTAL);
         mInstrumentationCombo.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
         mInstrumentationCombo.clearSelection();
         mInstrumentationCombo.addSelectionListener(new SelectionAdapter() {
@@ -478,10 +475,7 @@ public class AndroidJUnitLaunchConfigurationTab extends AbstractLaunchConfigurat
     @Override
     public void dispose() {
         super.dispose();
-        if (mTabIcon != null) {
-            mTabIcon.dispose();
-            mTabIcon = null;
-        }
+        mTabIcon = null;
         mJavaElementLabelProvider.dispose();
     }
 
@@ -665,7 +659,7 @@ public class AndroidJUnitLaunchConfigurationTab extends AbstractLaunchConfigurat
         validateJavaProject(javaProject);
 
         try {
-            if (!project.hasNature(AndroidConstants.NATURE_DEFAULT)) {
+            if (!project.hasNature(AdtConstants.NATURE_DEFAULT)) {
                 setErrorMessage(
                         LaunchMessages.NonAndroidProjectError);
                 return;

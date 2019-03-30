@@ -16,18 +16,27 @@
 
 package com.android.layoutlib.api;
 
+import com.android.ide.common.rendering.api.DensityBasedResourceValue;
+
 /**
  * Represents an Android Resources that has a density info attached to it.
+ * @deprecated use {@link DensityBasedResourceValue}.
  */
+@Deprecated
 public interface IDensityBasedResourceValue extends IResourceValue {
 
+    /**
+     * Density.
+     *
+     * @deprecated use {@link com.android.resources.Density}.
+     */
+    @Deprecated
     public static enum Density {
+        XHIGH(320),
         HIGH(240),
         MEDIUM(160),
         LOW(120),
         NODPI(0);
-
-        public final static int DEFAULT_DENSITY = 160;
 
         private final int mValue;
 
@@ -57,6 +66,8 @@ public interface IDensityBasedResourceValue extends IResourceValue {
 
     /**
      * Returns the density associated to the resource.
+     * @deprecated use {@link DensityBasedResourceValue#getResourceDensity()}
      */
+    @Deprecated
     Density getDensity();
 }

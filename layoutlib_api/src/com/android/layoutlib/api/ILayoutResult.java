@@ -16,11 +16,16 @@
 
 package com.android.layoutlib.api;
 
+import com.android.ide.common.rendering.api.Bridge;
+import com.android.ide.common.rendering.api.RenderSession;
+
 import java.awt.image.BufferedImage;
 
 /**
- * The result of a layout computation through
- * {@link ILayoutLibBridge#computeLayout(IXmlPullParser, int, int, String, java.util.Map, java.util.Map, java.util.Map, IFontLoader, ILayoutLibLog, ICustomViewLoader)}
+ * The result of a layout computation through {@link ILayoutBridge}.
+ *
+ * @since 1
+ * @deprecated use {@link RenderSession} as returned by {@link Bridge#createScene(SceneParams)}
  */
 public interface ILayoutResult {
     /**
@@ -30,7 +35,7 @@ public interface ILayoutResult {
 
     /**
      * Error return code, in which case an error message is guaranteed to be defined.
-     * @See {@link #getErrorMessage()}
+     * @see #getErrorMessage()
      */
     final static int ERROR = 1;
 
@@ -59,6 +64,7 @@ public interface ILayoutResult {
 
     /**
      * Layout information for a specific view.
+     * @deprecated
      */
     public interface ILayoutViewInfo {
 

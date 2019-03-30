@@ -16,27 +16,31 @@
 
 package com.android.layoutlib.api;
 
+import com.android.ide.common.rendering.api.LayoutLog;
+
 /**
  * Callback interface to display warnings/errors that happened during the computation and
- * rendering of the layout. 
+ * rendering of the layout.
+ * @deprecated use {@link LayoutLog}.
  */
+@Deprecated
 public interface ILayoutLog {
-    
+
     /**
-     * Displays a warning message.
-     * @param message the message to display.
+     * Logs a warning message.
+     * @param message the message to log.
      */
     void warning(String message);
-    
+
     /**
-     * Displays an error message.
-     * @param message the message to display.
+     * Logs an error message.
+     * @param message the message to log.
      */
     void error(String message);
-    
+
     /**
-     * Displays an exception
-     * @param t the {@link Throwable} to display.
+     * Logs an exception
+     * @param t the {@link Throwable} to log.
      */
     void error(Throwable t);
 }

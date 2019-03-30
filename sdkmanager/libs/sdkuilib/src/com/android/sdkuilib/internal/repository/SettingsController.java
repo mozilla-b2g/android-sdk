@@ -42,6 +42,7 @@ public class SettingsController {
 
     private final Properties mProperties = new Properties();
 
+    /** The currently associated {@link ISettingsPage}. Can be null. */
     private ISettingsPage mSettingsPage;
 
     private final UpdaterData mUpdaterData;
@@ -54,6 +55,7 @@ public class SettingsController {
 
     /**
      * Returns the value of the {@link ISettingsPage#KEY_FORCE_HTTP} setting.
+     *
      * @see ISettingsPage#KEY_FORCE_HTTP
      */
     public boolean getForceHttp() {
@@ -62,18 +64,16 @@ public class SettingsController {
 
     /**
      * Returns the value of the {@link ISettingsPage#KEY_ASK_ADB_RESTART} setting.
+     *
      * @see ISettingsPage#KEY_ASK_ADB_RESTART
      */
     public boolean getAskBeforeAdbRestart() {
-        String value = mProperties.getProperty(ISettingsPage.KEY_ASK_ADB_RESTART);
-        if (value == null) {
-            return true;
-        }
-        return Boolean.parseBoolean(value);
+        return Boolean.parseBoolean(mProperties.getProperty(ISettingsPage.KEY_ASK_ADB_RESTART));
     }
 
     /**
      * Returns the value of the {@link ISettingsPage#KEY_SHOW_UPDATE_ONLY} setting.
+     *
      * @see ISettingsPage#KEY_SHOW_UPDATE_ONLY
      */
     public boolean getShowUpdateOnly() {
@@ -86,7 +86,8 @@ public class SettingsController {
 
     /**
      * Sets the value of the {@link ISettingsPage#KEY_SHOW_UPDATE_ONLY} setting.
-     * @param enabled True if only compatible update items should be shown.
+     *
+     * @param enabled True if only compatible non-obsolete update items should be shown.
      * @see ISettingsPage#KEY_SHOW_UPDATE_ONLY
      */
     public void setShowUpdateOnly(boolean enabled) {
@@ -112,6 +113,7 @@ public class SettingsController {
 
     /**
      * Sets the value of the {@link ISettingsPage#KEY_MONITOR_DENSITY} setting.
+     *
      * @param density the density of the monitor
      * @see ISettingsPage#KEY_MONITOR_DENSITY
      */
@@ -130,20 +132,26 @@ public class SettingsController {
 
     /**
      * Associate the given {@link ISettingsPage} with this {@link SettingsController}.
-     *
+     * <p/>
      * This loads the current properties into the setting page UI.
      * It then associates the SettingsChanged callback with this controller.
+     * <p/>
+     * If the setting page given is null, it will be unlinked from controller.
+     *
+     * @param settingsPage An {@link ISettingsPage} to associate with the controller.
      */
     public void setSettingsPage(ISettingsPage settingsPage) {
-
         mSettingsPage = settingsPage;
-        mSettingsPage.loadSettings(mProperties);
 
-        settingsPage.setOnSettingsChanged(new ISettingsPage.SettingsChangedCallback() {
-            public void onSettingsChanged(ISettingsPage page) {
-                SettingsController.this.onSettingsChanged();
-            }
-        });
+        if (settingsPage != null) {
+            settingsPage.loadSettings(mProperties);
+
+            settingsPage.setOnSettingsChanged(new ISettingsPage.SettingsChangedCallback() {
+                public void onSettingsChanged(ISettingsPage page) {
+                    SettingsController.this.onSettingsChanged();
+                }
+            });
+        }
     }
 
     /**
@@ -253,7 +261,7 @@ public class SettingsController {
         String newHttpsSetting = mProperties.getProperty(ISettingsPage.KEY_FORCE_HTTP,
                 Boolean.FALSE.toString());
         if (!newHttpsSetting.equals(oldHttpsSetting)) {
-            // In case the HTTP/HTTPS setting change, force sources to be reloaded
+            // In case the HTTP/HTTPS setting changes, force sources to be reloaded
             // (this only refreshes sources that the user has already tried to open.)
             mUpdaterData.refreshSources(false /*forceFetching*/);
         }
@@ -264,10 +272,25 @@ public class SettingsController {
      */
     public void applySettings() {
         Properties props = System.getProperties();
-        props.setProperty(ISettingsPage.KEY_HTTP_PROXY_HOST,
-                mProperties.getProperty(ISettingsPage.KEY_HTTP_PROXY_HOST, "")); //$NON-NLS-1$
-        props.setProperty(ISettingsPage.KEY_HTTP_PROXY_PORT,
-                mProperties.getProperty(ISettingsPage.KEY_HTTP_PROXY_PORT, ""));   //$NON-NLS-1$
-    }
+
+        // Get the configured HTTP proxy settings
+        String proxyHost = mProperties.getProperty(ISettingsPage.KEY_HTTP_PROXY_HOST,
+                ""); //$NON-NLS-1$
+        String proxyPort = mProperties.getProperty(ISettingsPage.KEY_HTTP_PROXY_PORT,
+                ""); //$NON-NLS-1$
+
+        // Set both the HTTP and HTTPS proxy system properties.
+        // The system property constants can be found in the Java SE documentation at
+        // http://download.oracle.com/javase/6/docs/technotes/guides/net/proxies.html
+        final String JAVA_PROP_HTTP_PROXY_HOST =  "http.proxyHost";      //$NON-NLS-1$
+        final String JAVA_PROP_HTTP_PROXY_PORT =  "http.proxyPort";      //$NON-NLS-1$
+        final String JAVA_PROP_HTTPS_PROXY_HOST = "https.proxyHost";     //$NON-NLS-1$
+        final String JAVA_PROP_HTTPS_PROXY_PORT = "https.proxyPort";     //$NON-NLS-1$
+
+        props.setProperty(JAVA_PROP_HTTP_PROXY_HOST,  proxyHost);
+        props.setProperty(JAVA_PROP_HTTP_PROXY_PORT,  proxyPort);
+        props.setProperty(JAVA_PROP_HTTPS_PROXY_HOST, proxyHost);
+        props.setProperty(JAVA_PROP_HTTPS_PROXY_PORT, proxyPort);
+     }
 
 }

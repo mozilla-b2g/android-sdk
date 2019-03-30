@@ -54,7 +54,8 @@ public interface IDevice {
     public static enum DeviceState {
         BOOTLOADER("bootloader"), //$NON-NLS-1$
         OFFLINE("offline"), //$NON-NLS-1$
-        ONLINE("device"); //$NON-NLS-1$
+        ONLINE("device"), //$NON-NLS-1$
+        RECOVERY("recovery"); //$NON-NLS-1$
 
         private String mState;
 
@@ -109,12 +110,49 @@ public interface IDevice {
     public int getPropertyCount();
 
     /**
-     * Returns a property value.
+     * Returns the cached property value.
      *
      * @param name the name of the value to return.
-     * @return the value or <code>null</code> if the property does not exist.
+     * @return the value or <code>null</code> if the property does not exist or has not yet been
+     * cached.
      */
     public String getProperty(String name);
+
+    /**
+     * Returns <code>true></code> if properties have been cached
+     */
+    public boolean arePropertiesSet();
+
+    /**
+     * A variant of {@link #getProperty(String)} that will attempt to retrieve the given
+     * property from device directly, without using cache.
+     *
+     * @param name the name of the value to return.
+     * @return the value or <code>null</code> if the property does not exist
+     * @throws TimeoutException in case of timeout on the connection.
+     * @throws AdbCommandRejectedException if adb rejects the command
+     * @throws ShellCommandUnresponsiveException in case the shell command doesn't send output for a
+     *             given time.
+     * @throws IOException in case of I/O error on the connection.
+     */
+    public String getPropertySync(String name) throws TimeoutException,
+            AdbCommandRejectedException, ShellCommandUnresponsiveException, IOException;
+
+    /**
+     * A combination of {@link #getProperty(String)} and {@link #getPropertySync(String)} that
+     * will attempt to retrieve the property from cache if available, and if not, will query the
+     * device directly.
+     *
+     * @param name the name of the value to return.
+     * @return the value or <code>null</code> if the property does not exist
+     * @throws TimeoutException in case of timeout on the connection.
+     * @throws AdbCommandRejectedException if adb rejects the command
+     * @throws ShellCommandUnresponsiveException in case the shell command doesn't send output for a
+     *             given time.
+     * @throws IOException in case of I/O error on the connection.
+     */
+    public String getPropertyCacheOrSync(String name) throws TimeoutException,
+            AdbCommandRejectedException, ShellCommandUnresponsiveException, IOException;
 
     /**
      * Returns a mount point.
@@ -315,22 +353,45 @@ public interface IDevice {
     public String getClientName(int pid);
 
     /**
-     * Installs an Android application on device.
-     * This is a helper method that combines the syncPackageToDevice, installRemotePackage,
-     * and removePackage steps
+     * Push a single file.
+     * @param local the local filepath.
+     * @param remote The remote filepath.
+     *
+     * @throws IOException in case of I/O error on the connection.
+     * @throws AdbCommandRejectedException if adb rejects the command
+     * @throws TimeoutException in case of a timeout reading responses from the device.
+     * @throws SyncException if file could not be pushed
+     */
+    public void pushFile(String local, String remote)
+            throws IOException, AdbCommandRejectedException, TimeoutException, SyncException;
+
+    /**
+     * Pulls a single file.
+     *
+     * @param remote the full path to the remote file
+     * @param local The local destination.
+     *
+     * @throws IOException in case of an IO exception.
+     * @throws AdbCommandRejectedException if adb rejects the command
+     * @throws TimeoutException in case of a timeout reading responses from the device.
+     * @throws SyncException in case of a sync exception.
+     */
+    public void pullFile(String remote, String local)
+            throws IOException, AdbCommandRejectedException, TimeoutException, SyncException;
+
+    /**
+     * Installs an Android application on device. This is a helper method that combines the
+     * syncPackageToDevice, installRemotePackage, and removePackage steps
      *
      * @param packageFilePath the absolute file system path to file on local host to install
      * @param reinstall set to <code>true</code> if re-install of app should be performed
+     * @param extraArgs optional extra arguments to pass. See 'adb shell pm install --help' for
+     *            available options.
      * @return a {@link String} with an error code, or <code>null</code> if success.
-     * @throws TimeoutException in case of timeout on the connection.
-     * @throws AdbCommandRejectedException if adb rejects the command
-     * @throws ShellCommandUnresponsiveException if the device didn't respond for long time when
-     *            performing the action.
-     * @throws IOException in case of I/O error on the connection.
+     * @throws InstallException if the installation fails.
      */
-    public String installPackage(String packageFilePath, boolean reinstall)
-            throws TimeoutException, AdbCommandRejectedException, ShellCommandUnresponsiveException,
-            IOException;
+    public String installPackage(String packageFilePath, boolean reinstall, String... extraArgs)
+            throws InstallException;
 
     /**
      * Pushes a file to device
@@ -340,53 +401,39 @@ public interface IDevice {
      * @throws TimeoutException in case of timeout on the connection.
      * @throws AdbCommandRejectedException if adb rejects the command
      * @throws IOException in case of I/O error on the connection.
+     * @throws SyncException if an error happens during the push of the package on the device.
      */
     public String syncPackageToDevice(String localFilePath)
-            throws TimeoutException, AdbCommandRejectedException, IOException;
+            throws TimeoutException, AdbCommandRejectedException, IOException, SyncException;
 
     /**
      * Installs the application package that was pushed to a temporary location on the device.
      *
      * @param remoteFilePath absolute file path to package file on device
      * @param reinstall set to <code>true</code> if re-install of app should be performed
-     * @throws TimeoutException in case of timeout on the connection.
-     * @throws AdbCommandRejectedException if adb rejects the command
-     * @throws ShellCommandUnresponsiveException if the device didn't respond for long time when
-     *            performing the action.
-     * @throws IOException if installation failed
+     * @param extraArgs optional extra arguments to pass. See 'adb shell pm install --help' for
+     *            available options.
+     * @throws InstallException if the installation fails.
      */
-    public String installRemotePackage(String remoteFilePath, boolean reinstall)
-            throws TimeoutException, AdbCommandRejectedException, ShellCommandUnresponsiveException,
-            IOException;
+    public String installRemotePackage(String remoteFilePath, boolean reinstall,
+            String... extraArgs) throws InstallException;
 
     /**
      * Removes a file from device.
      *
      * @param remoteFilePath path on device of file to remove
-     * @throws TimeoutException in case of timeout on the connection.
-     * @throws AdbCommandRejectedException if adb rejects the command
-     * @throws ShellCommandUnresponsiveException if the device didn't respond for long time when
-     *            performing the action.
-     * @throws IOException if file removal failed
+     * @throws InstallException if the installation fails.
      */
-    public void removeRemotePackage(String remoteFilePath)
-            throws TimeoutException, AdbCommandRejectedException, ShellCommandUnresponsiveException,
-            IOException;
+    public void removeRemotePackage(String remoteFilePath) throws InstallException;
 
     /**
      * Uninstalls an package from the device.
      *
      * @param packageName the Android application package name to uninstall
      * @return a {@link String} with an error code, or <code>null</code> if success.
-     * @throws TimeoutException in case of timeout on the connection.
-     * @throws AdbCommandRejectedException if adb rejects the command
-     * @throws ShellCommandUnresponsiveException if the device didn't respond for long time when
-     *            performing the action.
-     * @throws IOException
+     * @throws InstallException if the uninstallation fails.
      */
-    public String uninstallPackage(String packageName)
-            throws TimeoutException, AdbCommandRejectedException, ShellCommandUnresponsiveException,
-            IOException;
+    public String uninstallPackage(String packageName) throws InstallException;
 
     /**
      * Reboot the device.
@@ -398,4 +445,29 @@ public interface IDevice {
      */
     public void reboot(String into)
             throws TimeoutException, AdbCommandRejectedException, IOException;
+
+    /**
+     * Return the device's battery level, from 0 to 100 percent.
+     * <p/>
+     * The battery level may be cached. Only queries the device for its
+     * battery level if 5 minutes have expired since the last successful query.
+     *
+     * @return the battery level or <code>null</code> if it could not be retrieved
+     */
+    public Integer getBatteryLevel() throws TimeoutException,
+            AdbCommandRejectedException, IOException, ShellCommandUnresponsiveException;
+
+    /**
+     * Return the device's battery level, from 0 to 100 percent.
+     * <p/>
+     * The battery level may be cached. Only queries the device for its
+     * battery level if <code>freshnessMs</code> ms have expired since the last successful query.
+     *
+     * @param freshnessMs
+     * @return the battery level or <code>null</code> if it could not be retrieved
+     * @throws ShellCommandUnresponsiveException
+     */
+    public Integer getBatteryLevel(long freshnessMs) throws TimeoutException,
+            AdbCommandRejectedException, IOException, ShellCommandUnresponsiveException;
+
 }

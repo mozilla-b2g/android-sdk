@@ -16,23 +16,22 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout;
 
+import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
-import com.android.ide.eclipse.adt.AndroidConstants;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.DocumentDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.IUnknownDescriptorProvider;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.CustomViewDescriptorService;
+import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.ViewElementDescriptor;
-import com.android.ide.eclipse.adt.internal.editors.layout.gle1.GraphicalLayoutEditor;
-import com.android.ide.eclipse.adt.internal.editors.layout.gle1.UiContentOutlinePage;
-import com.android.ide.eclipse.adt.internal.editors.layout.gle1.UiPropertySheetPage;
-import com.android.ide.eclipse.adt.internal.editors.layout.gle2.OutlinePage2;
+import com.android.ide.eclipse.adt.internal.editors.layout.gle2.DomUtilities;
 import com.android.ide.eclipse.adt.internal.editors.layout.gle2.GraphicalEditorPart;
-import com.android.ide.eclipse.adt.internal.editors.layout.gle2.PropertySheetPage2;
-import com.android.ide.eclipse.adt.internal.editors.ui.tree.UiActions;
+import com.android.ide.eclipse.adt.internal.editors.layout.gle2.LayoutActionBar;
+import com.android.ide.eclipse.adt.internal.editors.layout.gle2.OutlinePage;
+import com.android.ide.eclipse.adt.internal.editors.layout.gle2.PropertySheetPage;
+import com.android.ide.eclipse.adt.internal.editors.layout.gre.RulesEngine;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiDocumentNode;
-import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
 import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetData;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.sdklib.IAndroidTarget;
@@ -42,7 +41,10 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.NullProgressMonitor;
-import org.eclipse.gef.ui.parts.TreeViewer;
+import org.eclipse.core.runtime.jobs.IJobChangeEvent;
+import org.eclipse.core.runtime.jobs.Job;
+import org.eclipse.core.runtime.jobs.JobChangeAdapter;
+import org.eclipse.jface.text.source.ISourceViewer;
 import org.eclipse.ui.IEditorInput;
 import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.IFileEditorInput;
@@ -56,32 +58,28 @@ import org.eclipse.ui.part.FileEditorInput;
 import org.eclipse.ui.views.contentoutline.IContentOutlinePage;
 import org.eclipse.ui.views.properties.IPropertySheetPage;
 import org.w3c.dom.Document;
+import org.w3c.dom.Node;
 
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Multi-page form editor for /res/layout XML files.
  */
 public class LayoutEditor extends AndroidXmlEditor implements IShowEditorInput, IPartListener {
 
-    public static final String ID = AndroidConstants.EDITORS_NAMESPACE + ".layout.LayoutEditor"; //$NON-NLS-1$
+    public static final String ID = AdtConstants.EDITORS_NAMESPACE + ".layout.LayoutEditor"; //$NON-NLS-1$
 
     /** Root node of the UI element hierarchy */
     private UiDocumentNode mUiRootNode;
 
-    private IGraphicalLayoutEditor mGraphicalEditor;
+    private GraphicalEditorPart mGraphicalEditor;
     private int mGraphicalEditorIndex;
-    /**
-     * Implementation of the {@link IContentOutlinePage} for this editor.
-     * @deprecated Used for backward compatibility with GLE1.
-     */
-    private UiContentOutlinePage mOutlineForGle1;
     /** Implementation of the {@link IContentOutlinePage} for this editor */
     private IContentOutlinePage mOutline;
     /** Custom implementation of {@link IPropertySheetPage} for this editor */
     private IPropertySheetPage mPropertyPage;
-
-    private UiEditorActions mUiEditorActions;
 
     private final HashMap<String, ElementDescriptor> mUnknownDescriptorMap =
         new HashMap<String, ElementDescriptor>();
@@ -101,11 +99,33 @@ public class LayoutEditor extends AndroidXmlEditor implements IShowEditorInput, 
     }
 
     /**
+     * Returns the {@link RulesEngine} associated with this editor
+     *
+     * @return the {@link RulesEngine} associated with this editor.
+     */
+    public RulesEngine getRulesEngine() {
+        return mGraphicalEditor.getRulesEngine();
+    }
+
+    /**
+     * Returns the {@link GraphicalEditorPart} associated with this editor
+     *
+     * @return the {@link GraphicalEditorPart} associated with this editor
+     */
+    public GraphicalEditorPart getGraphicalEditor() {
+        return mGraphicalEditor;
+    }
+
+    /**
      * @return The root node of the UI element hierarchy
      */
     @Override
     public UiDocumentNode getUiRootNode() {
         return mUiRootNode;
+    }
+
+    public void setNewFileOnConfigChange(boolean state) {
+        mNewFileOnConfigChange = state;
     }
 
     // ---- Base Class Overrides ----
@@ -148,79 +168,76 @@ public class LayoutEditor extends AndroidXmlEditor implements IShowEditorInput, 
         return true;
     }
 
+    @Override
+    protected Job runLint() {
+        Job job = super.runLint();
+        if (job != null) {
+            job.addJobChangeListener(new JobChangeAdapter() {
+                @Override
+                public void done(IJobChangeEvent event) {
+                    LayoutActionBar bar = getGraphicalEditor().getLayoutActionBar();
+                    bar.updateErrorIndicator();
+                }
+            });
+        }
+        return job;
+    }
+
     /**
      * Create the various form pages.
      */
     @Override
     protected void createFormPages() {
         try {
-            // The graphical layout editor is now enabled by default.
-            // In case there's an issue we provide a way to disable it using an
-            // env variable.
-            if (System.getenv("ANDROID_DISABLE_LAYOUT") == null) {      //$NON-NLS-1$
-                // get the file being edited so that it can be passed to the layout editor.
-                IFile editedFile = null;
-                IEditorInput input = getEditorInput();
-                if (input instanceof FileEditorInput) {
-                    FileEditorInput fileInput = (FileEditorInput)input;
-                    editedFile = fileInput.getFile();
-                } else {
-                    AdtPlugin.log(IStatus.ERROR,
-                            "Input is not of type FileEditorInput: %1$s",  //$NON-NLS-1$
-                            input.toString());
-                }
-
-                // It is possible that the Layout Editor already exits if a different version
-                // of the same layout is being opened (either through "open" action from
-                // the user, or through a configuration change in the configuration selector.)
-                if (mGraphicalEditor == null) {
-
-                    String useGle2 = System.getenv("USE_GLE2");     //$NON-NLS-1$
-
-                    if (useGle2 != null && !useGle2.equals("0")) {  //$NON-NLS-1$
-                        mGraphicalEditor = new GraphicalEditorPart(this);
-                    } else {
-                        mGraphicalEditor = new GraphicalLayoutEditor(this);
-                    }
-
-                    mGraphicalEditorIndex = addPage(mGraphicalEditor, getEditorInput());
-                    setPageText(mGraphicalEditorIndex, mGraphicalEditor.getTitle());
-
-                    mGraphicalEditor.openFile(editedFile);
-                } else {
-                    if (mNewFileOnConfigChange) {
-                        mGraphicalEditor.changeFileOnNewConfig(editedFile);
-                        mNewFileOnConfigChange = false;
-                    } else {
-                        mGraphicalEditor.replaceFile(editedFile);
-                    }
-                }
-
-                // put in place the listener to handle layout recompute only when needed.
-                getSite().getPage().addPartListener(this);
+            // get the file being edited so that it can be passed to the layout editor.
+            IFile editedFile = null;
+            IEditorInput input = getEditorInput();
+            if (input instanceof FileEditorInput) {
+                FileEditorInput fileInput = (FileEditorInput)input;
+                editedFile = fileInput.getFile();
+            } else {
+                AdtPlugin.log(IStatus.ERROR,
+                        "Input is not of type FileEditorInput: %1$s",  //$NON-NLS-1$
+                        input.toString());
             }
+
+            // It is possible that the Layout Editor already exits if a different version
+            // of the same layout is being opened (either through "open" action from
+            // the user, or through a configuration change in the configuration selector.)
+            if (mGraphicalEditor == null) {
+
+                // Instantiate GLE v2
+                mGraphicalEditor = new GraphicalEditorPart(this);
+
+                mGraphicalEditorIndex = addPage(mGraphicalEditor, getEditorInput());
+                setPageText(mGraphicalEditorIndex, mGraphicalEditor.getTitle());
+
+                mGraphicalEditor.openFile(editedFile);
+            } else {
+                if (mNewFileOnConfigChange) {
+                    mGraphicalEditor.changeFileOnNewConfig(editedFile);
+                    mNewFileOnConfigChange = false;
+                } else {
+                    mGraphicalEditor.replaceFile(editedFile);
+                }
+            }
+
+            // put in place the listener to handle layout recompute only when needed.
+            getSite().getPage().addPartListener(this);
         } catch (PartInitException e) {
             AdtPlugin.log(e, "Error creating nested page"); //$NON-NLS-1$
         }
-     }
+    }
 
     @Override
     protected void postCreatePages() {
         super.postCreatePages();
 
-        // This is called after the createFormPages() and createTextPage() methods have
-        // been called. Usually we select the first page (e.g. the GLE here) but right
-        // now we're going to temporarily select the last page (the XML text editor) if
-        // GLE1 is being used. That's because GLE1 is mostly useless and being deprecated.
-        //
-        // Note that this sets the default page. Eventually a default page might be
+        // Optional: set the default page. Eventually a default page might be
         // restored by selectDefaultPage() later based on the last page used by the user.
-        //
-        // TODO revert this once GLE2 becomes useful and is the default.
-
-        if (mGraphicalEditor instanceof GraphicalLayoutEditor) {
-            setActivePage(getPageCount() - 1);
-        }
+        // For example, to make the last page the default one (rather than the first page),
+        // uncomment this line:
+        //   setActivePage(getPageCount() - 1);
     }
 
     /* (non-java doc)
@@ -248,6 +265,10 @@ public class LayoutEditor extends AndroidXmlEditor implements IShowEditorInput, 
      * opening a different configuration of the same layout.
      */
     public void showEditorInput(IEditorInput editorInput) {
+        if (getEditorInput().equals(editorInput)) {
+            return;
+        }
+
         // save the current editor input.
         doSave(new NullProgressMonitor());
 
@@ -273,9 +294,22 @@ public class LayoutEditor extends AndroidXmlEditor implements IShowEditorInput, 
         createAndroidPages();
         selectDefaultPage(Integer.toString(currentPage));
 
-        // update the GLE1 outline. The GLE2 outline doesn't need this call anymore.
-        if (mOutlineForGle1 != null) {
-            mOutlineForGle1.reloadModel();
+        // When changing an input file of an the editor, the titlebar is not refreshed to
+        // show the new path/to/file being edited. So we force a refresh
+        firePropertyChange(IWorkbenchPart.PROP_TITLE);
+    }
+
+    /** Performs a complete refresh of the XML model */
+    public void refreshXmlModel() {
+        Document xmlDoc = mUiRootNode.getXmlDocument();
+
+        initUiRootNode(true /*force*/);
+        mUiRootNode.loadFromXmlNode(xmlDoc);
+        // update the model first, since it is used by the viewers.
+        super.xmlModelChanged(xmlDoc);
+
+        if (mGraphicalEditor != null) {
+            mGraphicalEditor.onXmlModelChanged();
         }
     }
 
@@ -297,11 +331,18 @@ public class LayoutEditor extends AndroidXmlEditor implements IShowEditorInput, 
         if (mGraphicalEditor != null) {
             mGraphicalEditor.onXmlModelChanged();
         }
+    }
 
-        // update the GLE1 outline. The GLE2 outline doesn't need this call anymore.
-        if (mOutlineForGle1 != null) {
-            mOutlineForGle1.reloadModel();
-        }
+    /**
+     * Tells the graphical editor to recompute its layout.
+     */
+    public void recomputeLayout() {
+        mGraphicalEditor.recomputeLayout();
+    }
+
+    @Override
+    public boolean supportsFormatOnGuiEdit() {
+        return true;
     }
 
     /**
@@ -310,33 +351,21 @@ public class LayoutEditor extends AndroidXmlEditor implements IShowEditorInput, 
     @SuppressWarnings("unchecked")
     @Override
     public Object getAdapter(Class adapter) {
-        // for the outline, force it to come from the Graphical Editor.
+        // For the outline, force it to come from the Graphical Editor.
         // This fixes the case where a layout file is opened in XML view first and the outline
         // gets stuck in the XML outline.
         if (IContentOutlinePage.class == adapter && mGraphicalEditor != null) {
 
-            if (mOutline == null && mGraphicalEditor instanceof GraphicalLayoutEditor) {
-                // Create the GLE1 outline. We need to keep a specific reference to it in order
-                // to call its reloadModel() method. The GLE2 outline no longer relies on this
-                // and can be casted to the base interface.
-                mOutlineForGle1 = new UiContentOutlinePage(
-                        (GraphicalLayoutEditor) mGraphicalEditor,
-                        new TreeViewer());
-                mOutline = mOutlineForGle1;
-
-            } else if (mOutline == null && mGraphicalEditor instanceof GraphicalEditorPart) {
-                mOutline = new OutlinePage2();
+            if (mOutline == null && mGraphicalEditor != null) {
+                mOutline = new OutlinePage(mGraphicalEditor);
             }
 
             return mOutline;
         }
 
         if (IPropertySheetPage.class == adapter && mGraphicalEditor != null) {
-            if (mPropertyPage == null && mGraphicalEditor instanceof GraphicalLayoutEditor) {
-                mPropertyPage = new UiPropertySheetPage();
-
-            } else if (mPropertyPage == null && mGraphicalEditor instanceof GraphicalEditorPart) {
-                mPropertyPage = new PropertySheetPage2();
+            if (mPropertyPage == null) {
+                mPropertyPage = new PropertySheetPage();
             }
 
             return mPropertyPage;
@@ -348,6 +377,21 @@ public class LayoutEditor extends AndroidXmlEditor implements IShowEditorInput, 
 
     @Override
     protected void pageChange(int newPageIndex) {
+        if (getCurrentPage() == mTextPageIndex &&
+                newPageIndex == mGraphicalEditorIndex) {
+            // You're switching from the XML editor to the WYSIWYG editor;
+            // look at the caret position and figure out which node it corresponds to
+            // (if any) and if found, select the corresponding visual element.
+            ISourceViewer textViewer = getStructuredSourceViewer();
+            int caretOffset = textViewer.getTextWidget().getCaretOffset();
+            if (caretOffset >= 0) {
+                Node node = DomUtilities.getNode(textViewer.getDocument(), caretOffset);
+                if (node != null && mGraphicalEditor != null) {
+                    mGraphicalEditor.select(node);
+                }
+            }
+        }
+
         super.pageChange(newPageIndex);
 
         if (mGraphicalEditor != null) {
@@ -398,32 +442,6 @@ public class LayoutEditor extends AndroidXmlEditor implements IShowEditorInput, 
          */
         //EclipseUiHelper.showView(EclipseUiHelper.CONTENT_OUTLINE_VIEW_ID, false /* activate */);
         //EclipseUiHelper.showView(EclipseUiHelper.PROPERTY_SHEET_VIEW_ID, false /* activate */);
-    }
-
-    public class UiEditorActions extends UiActions {
-
-        @Override
-        protected UiDocumentNode getRootNode() {
-            return mUiRootNode;
-        }
-
-        // Select the new item
-        @Override
-        protected void selectUiNode(UiElementNode uiNodeToSelect) {
-            mGraphicalEditor.selectModel(uiNodeToSelect);
-        }
-
-        @Override
-        public void commitPendingXmlChanges() {
-            // Pass. There is nothing to commit before the XML is changed here.
-        }
-    }
-
-    public UiEditorActions getUiEditorActions() {
-        if (mUiEditorActions == null) {
-            mUiEditorActions = new UiEditorActions();
-        }
-        return mUiEditorActions;
     }
 
     // ---- Local Methods ----
@@ -489,54 +507,66 @@ public class LayoutEditor extends AndroidXmlEditor implements IShowEditorInput, 
     }
 
     /**
-     * Creates a new {@link ElementDescriptor} for an unknown XML local name
+     * Creates a new {@link ViewElementDescriptor} for an unknown XML local name
      * (i.e. one that was not mapped by the current descriptors).
      * <p/>
      * Since we deal with layouts, we returns either a descriptor for a custom view
      * or one for the base View.
      *
      * @param xmlLocalName The XML local name to match.
-     * @return A non-null {@link ElementDescriptor}.
+     * @return A non-null {@link ViewElementDescriptor}.
      */
-    private ElementDescriptor createUnknownDescriptor(String xmlLocalName) {
+    private ViewElementDescriptor createUnknownDescriptor(String xmlLocalName) {
+        ViewElementDescriptor desc = null;
         IEditorInput editorInput = getEditorInput();
         if (editorInput instanceof IFileEditorInput) {
             IFileEditorInput fileInput = (IFileEditorInput)editorInput;
             IProject project = fileInput.getFile().getProject();
 
             // Check if we can find a custom view specific to this project.
-            ElementDescriptor desc = CustomViewDescriptorService.getInstance().getDescriptor(
-                    project, xmlLocalName);
+            // This only works if there's an actual matching custom class in the project.
+            desc = CustomViewDescriptorService.getInstance().getDescriptor(project, xmlLocalName);
 
-            if (desc != null) {
-                return desc;
-            }
+            if (desc == null) {
+                // If we didn't find a custom view, create a synthetic one using the
+                // the base View descriptor as a model.
+                // This is a layout after all, so every XML node should represent
+                // a view.
 
-            // If we didn't find a custom view, reuse the base View descriptor.
-            // This is a layout after all, so every XML node should represent
-            // a view.
+                Sdk currentSdk = Sdk.getCurrent();
+                if (currentSdk != null) {
+                    IAndroidTarget target = currentSdk.getTarget(project);
+                    if (target != null) {
+                        AndroidTargetData data = currentSdk.getTargetData(target);
+                        if (data != null) {
+                            // data can be null when the target is still loading
+                            ViewElementDescriptor viewDesc =
+                                data.getLayoutDescriptors().getBaseViewDescriptor();
 
-            Sdk currentSdk = Sdk.getCurrent();
-            if (currentSdk != null) {
-                IAndroidTarget target = currentSdk.getTarget(project);
-                if (target != null) {
-                    AndroidTargetData data = currentSdk.getTargetData(target);
-                    if (data != null) {
-                        // data can be null when the target is still loading
-                        desc = data.getLayoutDescriptors().getBaseViewDescriptor();
+                            desc = new ViewElementDescriptor(
+                                    xmlLocalName, // xml local name
+                                    xmlLocalName, // ui_name
+                                    xmlLocalName, // canonical class name
+                                    null, // tooltip
+                                    null, // sdk_url
+                                    viewDesc.getAttributes(),
+                                    viewDesc.getLayoutAttributes(),
+                                    null, // children
+                                    false /* mandatory */);
+                            desc.setSuperClass(viewDesc);
+                        }
                     }
                 }
             }
-
-            if (desc != null) {
-                return desc;
-            }
         }
 
-        // We get here if the editor input is not of the right type or if the
-        // SDK hasn't finished loading. In either case, return something just
-        // because we should not return null.
-        return new ViewElementDescriptor(xmlLocalName, xmlLocalName);
+        if (desc == null) {
+            // We can only arrive here if the SDK's android target has not finished
+            // loading. Just create a dummy descriptor with no attributes to be able
+            // to continue.
+            desc = new ViewElementDescriptor(xmlLocalName, xmlLocalName);
+        }
+        return desc;
     }
 
     private void onDescriptorsChanged(Document document) {
@@ -547,10 +577,6 @@ public class LayoutEditor extends AndroidXmlEditor implements IShowEditorInput, 
             mUiRootNode.loadFromXmlNode(document);
         } else {
             mUiRootNode.reloadFromXmlNode(mUiRootNode.getXmlDocument());
-        }
-
-        if (mOutlineForGle1 != null) {
-            mOutlineForGle1.reloadModel();
         }
 
         if (mGraphicalEditor != null) {
@@ -572,7 +598,71 @@ public class LayoutEditor extends AndroidXmlEditor implements IShowEditorInput, 
         }
     }
 
-    public void setNewFileOnConfigChange(boolean state) {
-        mNewFileOnConfigChange = state;
+    /**
+     * Helper method that returns a {@link ViewElementDescriptor} for the requested FQCN.
+     * Will return null if we can't find that FQCN or we lack the editor/data/descriptors info.
+     */
+    public ViewElementDescriptor getFqcnViewDescriptor(String fqcn) {
+        ViewElementDescriptor desc = null;
+
+        AndroidTargetData data = getTargetData();
+        if (data != null) {
+            LayoutDescriptors layoutDesc = data.getLayoutDescriptors();
+            if (layoutDesc != null) {
+                DocumentDescriptor docDesc = layoutDesc.getDescriptor();
+                if (docDesc != null) {
+                    desc = internalFindFqcnViewDescriptor(fqcn, docDesc.getChildren(), null);
+                }
+            }
+        }
+
+        if (desc == null) {
+            // We failed to find a descriptor for the given FQCN.
+            // Let's consider custom classes and create one as needed.
+            desc = createUnknownDescriptor(fqcn);
+        }
+
+        return desc;
+    }
+
+    /**
+     * Internal helper to recursively search for a {@link ViewElementDescriptor} that matches
+     * the requested FQCN.
+     *
+     * @param fqcn The target View FQCN to find.
+     * @param descriptors A list of children descriptors to iterate through.
+     * @param visited A set we use to remember which descriptors have already been visited,
+     *  necessary since the view descriptor hierarchy is cyclic.
+     * @return Either a matching {@link ViewElementDescriptor} or null.
+     */
+    private ViewElementDescriptor internalFindFqcnViewDescriptor(String fqcn,
+            ElementDescriptor[] descriptors,
+            Set<ElementDescriptor> visited) {
+        if (visited == null) {
+            visited = new HashSet<ElementDescriptor>();
+        }
+
+        if (descriptors != null) {
+            for (ElementDescriptor desc : descriptors) {
+                if (visited.add(desc)) {
+                    // Set.add() returns true if this a new element that was added to the set.
+                    // That means we haven't visited this descriptor yet.
+                    // We want a ViewElementDescriptor with a matching FQCN.
+                    if (desc instanceof ViewElementDescriptor &&
+                            fqcn.equals(((ViewElementDescriptor) desc).getFullClassName())) {
+                        return (ViewElementDescriptor) desc;
+                    }
+
+                    // Visit its children
+                    ViewElementDescriptor vd =
+                        internalFindFqcnViewDescriptor(fqcn, desc.getChildren(), visited);
+                    if (vd != null) {
+                        return vd;
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 }

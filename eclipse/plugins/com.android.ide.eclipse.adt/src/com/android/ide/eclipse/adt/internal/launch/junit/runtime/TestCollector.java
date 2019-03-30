@@ -37,14 +37,11 @@ class TestCollector implements ITestRunListener {
     private String mErrorMessage = null;
 
     TestCollector() {
-        mTotalTestCount = 0; 
+        mTotalTestCount = 0;
         mTestTree = new HashMap<String, TestSuiteReference>();
     }
 
-    /* (non-Javadoc)
-     * @see com.android.ddmlib.testrunner.ITestRunListener#testEnded(com.android.ddmlib.testrunner.TestIdentifier)
-     */
-    public void testEnded(TestIdentifier test) {
+    public void testEnded(TestIdentifier test, Map<String, String> testMetrics) {
         // ignore
     }
 
@@ -56,9 +53,9 @@ class TestCollector implements ITestRunListener {
     }
 
     /* (non-Javadoc)
-     * @see com.android.ddmlib.testrunner.ITestRunListener#testRunEnded(long)
+     * @see com.android.ddmlib.testrunner.ITestRunListener#testRunEnded(long, Map<String, String>)
      */
-    public void testRunEnded(long elapsedTime) {
+    public void testRunEnded(long elapsedTime, Map<String, String> runMetrics) {
         // ignore
     }
 
@@ -72,7 +69,7 @@ class TestCollector implements ITestRunListener {
     /* (non-Javadoc)
      * @see com.android.ddmlib.testrunner.ITestRunListener#testRunStarted(int)
      */
-    public void testRunStarted(int testCount) {
+    public void testRunStarted(String ignoredRunName, int testCount) {
         mTotalTestCount = testCount;
     }
 
@@ -104,8 +101,8 @@ class TestCollector implements ITestRunListener {
     }
 
     /**
-     * Sends info about the test tree to be executed (ie the suites and their enclosed tests) 
-     * 
+     * Sends info about the test tree to be executed (ie the suites and their enclosed tests)
+     *
      * @param notified the {@link IVisitsTestTrees} to send test data to
      */
     public void sendTrees(IVisitsTestTrees notified) {
@@ -115,7 +112,7 @@ class TestCollector implements ITestRunListener {
     }
 
     /**
-     * Returns the error message that was reported when collecting test info. 
+     * Returns the error message that was reported when collecting test info.
      * Returns <code>null</code> if no error occurred.
      */
     public String getErrorMessage() {

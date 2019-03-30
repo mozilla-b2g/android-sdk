@@ -16,18 +16,19 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.configuration;
 
+import com.android.ide.common.resources.configuration.FolderConfiguration;
+import com.android.ide.common.resources.configuration.LanguageQualifier;
+import com.android.ide.common.resources.configuration.NightModeQualifier;
+import com.android.ide.common.resources.configuration.RegionQualifier;
+import com.android.ide.common.resources.configuration.ResourceQualifier;
+import com.android.ide.common.resources.configuration.UiModeQualifier;
+import com.android.ide.common.resources.configuration.VersionQualifier;
 import com.android.ide.eclipse.adt.internal.editors.IconFactory;
-import com.android.ide.eclipse.adt.internal.resources.configurations.DockModeQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.FolderConfiguration;
-import com.android.ide.eclipse.adt.internal.resources.configurations.LanguageQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.NightModeQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.RegionQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.ResourceQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.VersionQualifier;
 import com.android.ide.eclipse.adt.internal.sdk.LayoutDevice;
 import com.android.ide.eclipse.adt.internal.ui.ConfigurationSelector;
 import com.android.ide.eclipse.adt.internal.ui.ConfigurationSelector.ConfigurationState;
 import com.android.ide.eclipse.adt.internal.ui.ConfigurationSelector.IQualifierFilter;
+import com.android.ide.eclipse.adt.internal.ui.ConfigurationSelector.SelectorMode;
 import com.android.sdkuilib.ui.GridDialog;
 
 import org.eclipse.jface.dialogs.Dialog;
@@ -130,6 +131,7 @@ public class ConfigEditDialog extends GridDialog {
 
     public void getConfig(FolderConfiguration config) {
         config.set(mConfig);
+        config.updateScreenWidthAndHeight();
     }
 
     @Override
@@ -236,7 +238,7 @@ public class ConfigEditDialog extends GridDialog {
             }
         });
 
-        mConfigSelector = new ConfigurationSelector(configGroup, true /*deviceMode*/);
+        mConfigSelector = new ConfigurationSelector(configGroup, SelectorMode.DEVICE_ONLY);
         // configure the selector to be in "device mode" and not accept language/region/version
         // since those are selected from a different combo
         // FIXME: add version combo.
@@ -244,7 +246,7 @@ public class ConfigEditDialog extends GridDialog {
             public boolean accept(ResourceQualifier qualifier) {
                 if (qualifier instanceof LanguageQualifier ||
                         qualifier instanceof RegionQualifier ||
-                        qualifier instanceof DockModeQualifier ||
+                        qualifier instanceof UiModeQualifier ||
                         qualifier instanceof NightModeQualifier ||
                         qualifier instanceof VersionQualifier) {
                     return false;

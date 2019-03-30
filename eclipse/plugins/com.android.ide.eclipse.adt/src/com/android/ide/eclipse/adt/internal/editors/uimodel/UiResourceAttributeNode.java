@@ -16,18 +16,26 @@
 
 package com.android.ide.eclipse.adt.internal.editors.uimodel;
 
+import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
+import static com.android.ide.common.layout.LayoutConstants.ATTR_STYLE;
+import static com.android.ide.common.resources.ResourceResolver.PREFIX_ANDROID_RESOURCE_REF;
+import static com.android.ide.eclipse.adt.AdtConstants.ANDROID_PKG;
+
+import com.android.ide.common.api.IAttributeInfo;
+import com.android.ide.common.api.IAttributeInfo.Format;
+import com.android.ide.common.resources.ResourceItem;
+import com.android.ide.common.resources.ResourceRepository;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.AttributeDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.DescriptorsUtils;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.TextAttributeDescriptor;
+import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.ui.SectionHelper;
-import com.android.ide.eclipse.adt.internal.resources.IResourceRepository;
-import com.android.ide.eclipse.adt.internal.resources.ResourceItem;
-import com.android.ide.eclipse.adt.internal.resources.ResourceType;
 import com.android.ide.eclipse.adt.internal.resources.manager.ResourceManager;
 import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetData;
 import com.android.ide.eclipse.adt.internal.ui.ReferenceChooserDialog;
 import com.android.ide.eclipse.adt.internal.ui.ResourceChooser;
+import com.android.resources.ResourceType;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.jface.window.Window;
@@ -46,6 +54,11 @@ import org.eclipse.ui.forms.widgets.FormToolkit;
 import org.eclipse.ui.forms.widgets.TableWrapData;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.EnumSet;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -59,7 +72,6 @@ import java.util.regex.Pattern;
  * See {@link UiTextAttributeNode} for more information.
  */
 public class UiResourceAttributeNode extends UiTextAttributeNode {
-
     private ResourceType mType;
 
     public UiResourceAttributeNode(ResourceType type,
@@ -126,19 +138,19 @@ public class UiResourceAttributeNode extends UiTextAttributeNode {
         IProject project = editor.getProject();
         if (project != null) {
             // get the resource repository for this project and the system resources.
-            IResourceRepository projectRepository =
+            ResourceRepository projectRepository =
                 ResourceManager.getInstance().getProjectResources(project);
 
             if (mType != null) {
                 // get the Target Data to get the system resources
                 AndroidTargetData data = editor.getTargetData();
-                IResourceRepository systemRepository = data.getSystemResources();
+                ResourceRepository frameworkRepository = data.getFrameworkResources();
 
                 // open a resource chooser dialog for specified resource type.
                 ResourceChooser dlg = new ResourceChooser(project,
                         mType,
                         projectRepository,
-                        systemRepository,
+                        frameworkRepository,
                         shell);
 
                 dlg.setCurrentResource(currentValue);
@@ -194,13 +206,15 @@ public class UiResourceAttributeNode extends UiTextAttributeNode {
      */
     @Override
     public String[] getPossibleValues(String prefix) {
-        IResourceRepository repository = null;
+        return computeResourceStringMatches(getUiParent().getEditor(), getDescriptor(), prefix);
+    }
+
+    public static String[] computeResourceStringMatches(AndroidXmlEditor editor,
+            AttributeDescriptor attributeDescriptor, String prefix) {
+        ResourceRepository repository = null;
         boolean isSystem = false;
 
-        UiElementNode uiNode = getUiParent();
-        AndroidXmlEditor editor = uiNode.getEditor();
-
-        if (prefix == null || prefix.indexOf("android:") < 0) {                 //$NON-NLS-1$
+        if (prefix == null || !prefix.regionMatches(1, ANDROID_PKG, 0, ANDROID_PKG.length())) {
             IProject project = editor.getProject();
             if (project != null) {
                 // get the resource repository for this project and the system resources.
@@ -208,18 +222,17 @@ public class UiResourceAttributeNode extends UiTextAttributeNode {
             }
         } else {
             // If there's a prefix with "android:" in it, use the system resources
-            //
-            // TODO find a way to only list *public* framework resources here.
+            // Non-public framework resources are filtered out later.
             AndroidTargetData data = editor.getTargetData();
-            repository = data.getSystemResources();
+            repository = data.getFrameworkResources();
             isSystem = true;
         }
 
         // Get list of potential resource types, either specific to this project
         // or the generic list.
-        ResourceType[] resTypes = (repository != null) ?
+        Collection<ResourceType> resTypes = (repository != null) ?
                     repository.getAvailableResourceTypes() :
-                    ResourceType.values();
+                    EnumSet.allOf(ResourceType.class);
 
         // Get the type name from the prefix, if any. It's any word before the / if there's one
         String typeName = null;
@@ -231,7 +244,7 @@ public class UiResourceAttributeNode extends UiTextAttributeNode {
         }
 
         // Now collect results
-        ArrayList<String> results = new ArrayList<String>();
+        List<String> results = new ArrayList<String>();
 
         if (typeName == null) {
             // This prefix does not have a / in it, so the resource string is either empty
@@ -239,11 +252,22 @@ public class UiResourceAttributeNode extends UiTextAttributeNode {
             // resource types.
 
             for (ResourceType resType : resTypes) {
-                results.add("@" + resType.getName() + "/");         //$NON-NLS-1$ //$NON-NLS-2$
+                if (isSystem) {
+                    results.add(PREFIX_ANDROID_RESOURCE_REF + resType.getName() + '/');
+                } else {
+                    results.add('@' + resType.getName() + '/');
+                }
                 if (resType == ResourceType.ID) {
                     // Also offer the + version to create an id from scratch
-                    results.add("@+" + resType.getName() + "/");    //$NON-NLS-1$ //$NON-NLS-2$
+                    results.add("@+" + resType.getName() + '/');    //$NON-NLS-1$
                 }
+            }
+
+            // Also add in @android: prefix to completion such that if user has typed
+            // "@an" we offer to complete it.
+            if (prefix == null ||
+                    ANDROID_PKG.regionMatches(0, prefix, 1, prefix.length() - 1)) {
+                results.add(PREFIX_ANDROID_RESOURCE_REF);
             }
         } else if (repository != null) {
             // We have a style name and a repository. Find all resources that match this
@@ -258,18 +282,115 @@ public class UiResourceAttributeNode extends UiTextAttributeNode {
                 }
 
                 if (isSystem) {
-                    sb.append("android:");                                  //$NON-NLS-1$
+                    sb.append(ANDROID_PKG).append(':');
                 }
 
                 sb.append(typeName).append('/');
                 String base = sb.toString();
 
-                for (ResourceItem item : repository.getResources(resType)) {
+                for (ResourceItem item : repository.getResourceItemsOfType(resType)) {
                     results.add(base + item.getName());
                 }
             }
         }
 
+        if (attributeDescriptor != null) {
+            sortAttributeChoices(attributeDescriptor, results);
+        } else {
+            Collections.sort(results);
+        }
+
         return results.toArray(new String[results.size()]);
+    }
+
+    /**
+     * Attempts to sort the attribute values to bubble up the most likely choices to
+     * the top.
+     * <p>
+     * For example, if you are editing a style attribute, it's likely that among the
+     * resource values you would rather see @style or @android than @string.
+     */
+    private static void sortAttributeChoices(AttributeDescriptor descriptor,
+            List<String> choices) {
+        final IAttributeInfo attributeInfo = descriptor.getAttributeInfo();
+        Collections.sort(choices, new Comparator<String>() {
+            public int compare(String s1, String s2) {
+                int compare = score(attributeInfo, s1) - score(attributeInfo, s2);
+                if (compare == 0) {
+                    // Sort alphabetically as a fallback
+                    compare = s1.compareTo(s2);
+                }
+                return compare;
+            }
+        });
+    }
+
+    /** Compute a suitable sorting score for the given  */
+    private static final int score(IAttributeInfo attributeInfo, String value) {
+        if (value.equals(PREFIX_ANDROID_RESOURCE_REF)) {
+            return -1;
+        }
+
+        for (Format format : attributeInfo.getFormats()) {
+            String type = null;
+            switch (format) {
+                case BOOLEAN:
+                    type = "bool"; //$NON-NLS-1$
+                    break;
+                case COLOR:
+                    type = "color"; //$NON-NLS-1$
+                    break;
+                case DIMENSION:
+                    type = "dimen"; //$NON-NLS-1$
+                    break;
+                case INTEGER:
+                    type = "integer"; //$NON-NLS-1$
+                    break;
+                case STRING:
+                    type = "string"; //$NON-NLS-1$
+                    break;
+                // default: REFERENCE, FLAG, ENUM, etc - don't have type info about individual
+                // elements to help make a decision
+            }
+
+            if (type != null) {
+                if (value.startsWith('@' + type + '/')) {
+                    return -2;
+                }
+
+                if (value.startsWith(PREFIX_ANDROID_RESOURCE_REF + type + '/')) {
+                    return -2;
+                }
+            }
+        }
+
+        // Handle a few more cases not covered by the Format metadata check
+        String type = null;
+
+        String attribute = attributeInfo.getName();
+        if (attribute.equals(ATTR_ID)) {
+            type = "id"; //$NON-NLS-1$
+        } else if (attribute.equals(ATTR_STYLE)) {
+            type = "style"; //$NON-NLS-1$
+        } else if (attribute.equals(LayoutDescriptors.ATTR_LAYOUT)) {
+            type = "layout"; //$NON-NLS-1$
+        } else if (attribute.equals("drawable")) { //$NON-NLS-1$
+            type = "drawable"; //$NON-NLS-1$
+        } else if (attribute.equals("entries")) { //$NON-NLS-1$
+            // Spinner
+            type = "array";    //$NON-NLS-1$
+        }
+
+        if (type != null) {
+            if (value.startsWith('@' + type + '/')) {
+                return -2;
+            }
+
+            if (value.startsWith(PREFIX_ANDROID_RESOURCE_REF + type + '/')) {
+                return -2;
+            }
+        }
+
+        return 0;
     }
 }

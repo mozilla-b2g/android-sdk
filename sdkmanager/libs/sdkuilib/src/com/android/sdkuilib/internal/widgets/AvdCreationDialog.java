@@ -16,19 +16,22 @@
 
 package com.android.sdkuilib.internal.widgets;
 
-import com.android.prefs.AndroidLocation;
+import com.android.io.FileWrapper;
 import com.android.prefs.AndroidLocation.AndroidLocationException;
 import com.android.sdklib.IAndroidTarget;
 import com.android.sdklib.ISdkLog;
+import com.android.sdklib.ISystemImage;
 import com.android.sdklib.SdkConstants;
 import com.android.sdklib.SdkManager;
+import com.android.sdklib.internal.avd.AvdInfo;
 import com.android.sdklib.internal.avd.AvdManager;
 import com.android.sdklib.internal.avd.HardwareProperties;
-import com.android.sdklib.internal.avd.AvdManager.AvdInfo;
+import com.android.sdklib.internal.avd.AvdManager.AvdConflict;
 import com.android.sdklib.internal.avd.HardwareProperties.HardwareProperty;
 import com.android.sdklib.internal.project.ProjectProperties;
 import com.android.sdkuilib.internal.repository.icons.ImageFactory;
 import com.android.sdkuilib.ui.GridDialog;
+import com.android.util.Pair;
 
 import org.eclipse.jface.dialogs.IDialogConstants;
 import org.eclipse.jface.viewers.CellEditor;
@@ -74,9 +77,10 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.Map.Entry;
+import java.util.regex.Matcher;
 
 /**
- * AVD creator dialog.
+ * AVD creation or edit dialog.
  *
  * TODO:
  * - use SdkTargetSelector instead of Combo
@@ -95,9 +99,17 @@ final class AvdCreationDialog extends GridDialog {
     private final ArrayList<String> mEditedProperties = new ArrayList<String>();
     private final ImageFactory mImageFactory;
     private final ISdkLog mSdkLog;
+    /**
+     * The original AvdInfo if we're editing an existing AVD.
+     * Null when we're creating a new AVD.
+     */
+    private final AvdInfo mEditAvdInfo;
 
     private Text mAvdName;
     private Combo mTargetCombo;
+
+    private Combo mAbiTypeCombo;
+    private String mAbiType;
 
     private Button mSdCardSizeRadio;
     private Text mSdCardSize;
@@ -106,6 +118,8 @@ final class AvdCreationDialog extends GridDialog {
     private Text mSdCardFile;
     private Button mBrowseSdCard;
     private Button mSdCardFileRadio;
+
+    private Button mSnapshotCheck;
 
     private Button mSkinListRadio;
     private Combo mSkinCombo;
@@ -141,19 +155,36 @@ final class AvdCreationDialog extends GridDialog {
 
     /**
      * Callback when the AVD name is changed.
-     * Enables the force checkbox if the name is a duplicate.
+     * When creating a new AVD, enables the force checkbox if the name is a duplicate.
+     * When editing an existing AVD, it's OK for the name to match the existing AVD.
      */
     private class CreateNameModifyListener implements ModifyListener {
         public void modifyText(ModifyEvent e) {
             String name = mAvdName.getText().trim();
-            AvdInfo avdMatch = mAvdManager.getAvd(name, false /*validAvdOnly*/);
-            if (avdMatch != null) {
-                mForceCreation.setEnabled(true);
+            if (mEditAvdInfo == null || !name.equals(mEditAvdInfo.getName())) {
+                // Case where we're creating a new AVD or editing an existing one
+                // and the AVD name has been changed... check for name uniqueness.
+
+                Pair<AvdConflict, String> conflict = mAvdManager.isAvdNameConflicting(name);
+                if (conflict.getFirst() != AvdManager.AvdConflict.NO_CONFLICT) {
+                    // If we're changing the state from disabled to enabled, make sure
+                    // to uncheck the button, to force the user to voluntarily re-enforce it.
+                    // This happens when editing an existing AVD and changing the name from
+                    // the existing AVD to another different existing AVD.
+                    if (!mForceCreation.isEnabled()) {
+                        mForceCreation.setEnabled(true);
+                        mForceCreation.setSelection(false);
+                    }
+                } else {
+                    mForceCreation.setEnabled(false);
+                    mForceCreation.setSelection(false);
+                }
             } else {
+                // Case where we're editing an existing AVD with the name unchanged.
+
                 mForceCreation.setEnabled(false);
                 mForceCreation.setSelection(false);
             }
-
             validatePage();
         }
     }
@@ -173,14 +204,27 @@ final class AvdCreationDialog extends GridDialog {
         }
     }
 
+    /**
+     * Creates the dialog. Caller should then use {@link Window#open()} and
+     * refresh if the status is {@link Window#OK}.
+     *
+     * @param parentShell The parent shell.
+     * @param avdManager The existing {@link AvdManager} to use. Must not be null.
+     * @param imageFactory An existing {@link ImageFactory} to use. Must not be null.
+     * @param log An existing {@link ISdkLog} where output will go. Must not be null.
+     * @param editAvdInfo An optional {@link AvdInfo}. When null, the dialog is used
+     *   to create a new AVD. When non-null, the dialog is used to <em>edit</em> this AVD.
+     */
     protected AvdCreationDialog(Shell parentShell,
             AvdManager avdManager,
             ImageFactory imageFactory,
-            ISdkLog log) {
+            ISdkLog log,
+            AvdInfo editAvdInfo) {
         super(parentShell, 2, false);
         mAvdManager = avdManager;
         mImageFactory = imageFactory;
         mSdkLog = log;
+        mEditAvdInfo = editAvdInfo;
 
         File hardwareDefs = null;
 
@@ -216,9 +260,12 @@ final class AvdCreationDialog extends GridDialog {
     @Override
     protected Control createContents(Composite parent) {
         Control control = super.createContents(parent);
-        getShell().setText("Create new Android Virtual Device (AVD)");
+        getShell().setText(mEditAvdInfo == null ? "Create new Android Virtual Device (AVD)"
+                                                : "Edit Android Virtual Device (AVD)");
 
         mOkButton = getButton(IDialogConstants.OK_ID);
+
+        fillExistingAvdInfo();
         validatePage();
 
         return control;
@@ -252,9 +299,28 @@ final class AvdCreationDialog extends GridDialog {
             public void widgetSelected(SelectionEvent e) {
                 super.widgetSelected(e);
                 reloadSkinCombo();
+                reloadAbiTypeCombo();
                 validatePage();
             }
         });
+
+        //ABI group
+        label = new Label(parent, SWT.NONE);
+        label.setText("CPU/ABI:");
+        tooltip = "The CPU/ABI to use in the virtual device";
+        label.setToolTipText(tooltip);
+
+         mAbiTypeCombo = new Combo(parent, SWT.READ_ONLY | SWT.DROP_DOWN);
+         mAbiTypeCombo.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
+         mAbiTypeCombo.setToolTipText(tooltip);
+         mAbiTypeCombo.addSelectionListener(new SelectionAdapter() {
+         @Override
+         public void widgetSelected(SelectionEvent e) {
+                     super.widgetSelected(e);
+                     validatePage();
+                 }
+         });
+         mAbiTypeCombo.setEnabled(false);
 
         // --- sd card group
         label = new Label(parent, SWT.NONE);
@@ -289,6 +355,7 @@ final class AvdCreationDialog extends GridDialog {
         mSdCardSizeCombo = new Combo(sdCardGroup, SWT.DROP_DOWN | SWT.READ_ONLY);
         mSdCardSizeCombo.add("KiB");
         mSdCardSizeCombo.add("MiB");
+        mSdCardSizeCombo.add("GiB");
         mSdCardSizeCombo.select(1);
         mSdCardSizeCombo.addSelectionListener(validateListener);
 
@@ -314,6 +381,22 @@ final class AvdCreationDialog extends GridDialog {
 
         mSdCardSizeRadio.setSelection(true);
         enableSdCardWidgets(true);
+
+        // --- snapshot group
+
+        label = new Label(parent, SWT.NONE);
+        label.setText("Snapshot:");
+        label.setLayoutData(new GridData(GridData.BEGINNING, GridData.BEGINNING,
+            false, false));
+
+        final Group snapshotGroup = new Group(parent, SWT.NONE);
+        snapshotGroup.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
+        snapshotGroup.setLayout(new GridLayout(3, false));
+
+        mSnapshotCheck = new Button(snapshotGroup, SWT.CHECK);
+        mSnapshotCheck.setText("Enabled");
+        mSnapshotCheck.setToolTipText(
+                "Emulator's state will be persisted between emulator executions");
 
         // --- skin group
         label = new Label(parent, SWT.NONE);
@@ -500,8 +583,13 @@ final class AvdCreationDialog extends GridDialog {
         tvc1.setLabelProvider(new CellLabelProvider() {
             @Override
             public void update(ViewerCell cell) {
-                HardwareProperty prop = mHardwareMap.get(cell.getElement());
-                cell.setText(prop != null ? prop.getAbstract() : "");
+                String name = cell.getElement().toString();
+                HardwareProperty prop = mHardwareMap.get(name);
+                if (prop != null) {
+                    cell.setText(prop.getAbstract());
+                } else {
+                    cell.setText(String.format("%1$s (Unknown)", name));
+                }
             }
         });
 
@@ -588,13 +676,144 @@ final class AvdCreationDialog extends GridDialog {
         mHardwareViewer.setInput(mProperties);
     }
 
-    @Override
-    protected Button createButton(Composite parent, int id, String label, boolean defaultButton) {
-        if (id == IDialogConstants.OK_ID) {
-            label = "Create AVD";
+    // -- Start of internal part ----------
+    // Hide everything down-below from SWT designer
+    //$hide>>$
+
+    /**
+     * When editing an existing AVD info, fill the UI that has just been created with
+     * the values from the AVD.
+     */
+    public void fillExistingAvdInfo() {
+        if (mEditAvdInfo == null) {
+            return;
         }
 
-        return super.createButton(parent, id, label, defaultButton);
+        mAvdName.setText(mEditAvdInfo.getName());
+
+        IAndroidTarget target = mEditAvdInfo.getTarget();
+        if (target != null && !mCurrentTargets.isEmpty()) {
+            // Try to select the target in the target combo.
+            // This will fail if the AVD needs to be repaired.
+            //
+            // This is a linear search but the list is always
+            // small enough and we only do this once.
+            int n = mTargetCombo.getItemCount();
+            for (int i = 0;i < n; i++) {
+                if (target.equals(mCurrentTargets.get(mTargetCombo.getItem(i)))) {
+                    mTargetCombo.select(i);
+                    reloadAbiTypeCombo();
+                    reloadSkinCombo();
+                    break;
+                }
+            }
+        }
+
+        // select the abi type
+        ISystemImage[] systemImages = getSystemImages(target);
+        if (target != null && systemImages.length > 0) {
+            mAbiTypeCombo.setEnabled(systemImages.length > 1);
+            String abiType = AvdInfo.getPrettyAbiType(mEditAvdInfo.getAbiType());
+            int n = mAbiTypeCombo.getItemCount();
+            for (int i = 0; i < n; i++) {
+                if (abiType.equals(mAbiTypeCombo.getItem(i))) {
+                    mAbiTypeCombo.select(i);
+                    reloadSkinCombo();
+                    break;
+                }
+            }
+        }
+
+        Map<String, String> props = mEditAvdInfo.getProperties();
+        if (props != null) {
+            // First try the skin name and if it doesn't work fallback on the skin path
+            nextSkin: for (int s = 0; s < 2; s++) {
+                String skin = props.get(s == 0 ? AvdManager.AVD_INI_SKIN_NAME
+                                               : AvdManager.AVD_INI_SKIN_PATH);
+                if (skin != null && skin.length() > 0) {
+                    Matcher m = AvdManager.NUMERIC_SKIN_SIZE.matcher(skin);
+                    if (m.matches() && m.groupCount() == 2) {
+                        enableSkinWidgets(false);
+                        mSkinListRadio.setSelection(false);
+                        mSkinSizeRadio.setSelection(true);
+                        mSkinSizeWidth.setText(m.group(1));
+                        mSkinSizeHeight.setText(m.group(2));
+                        break nextSkin;
+                    } else {
+                        enableSkinWidgets(true);
+                        mSkinSizeRadio.setSelection(false);
+                        mSkinListRadio.setSelection(true);
+
+                        int n = mSkinCombo.getItemCount();
+                        for (int i = 0; i < n; i++) {
+                            if (skin.equals(mSkinCombo.getItem(i))) {
+                                mSkinCombo.select(i);
+                                break nextSkin;
+                            }
+                        }
+                    }
+                }
+            }
+
+            String sdcard = props.get(AvdManager.AVD_INI_SDCARD_PATH);
+            if (sdcard != null && sdcard.length() > 0) {
+                enableSdCardWidgets(false);
+                mSdCardSizeRadio.setSelection(false);
+                mSdCardFileRadio.setSelection(true);
+                mSdCardFile.setText(sdcard);
+            }
+
+            sdcard = props.get(AvdManager.AVD_INI_SDCARD_SIZE);
+            if (sdcard != null && sdcard.length() > 0) {
+                String[] values = new String[2];
+                long sdcardSize = AvdManager.parseSdcardSize(sdcard, values);
+
+                if (sdcardSize != AvdManager.SDCARD_NOT_SIZE_PATTERN) {
+                    enableSdCardWidgets(true);
+                    mSdCardFileRadio.setSelection(false);
+                    mSdCardSizeRadio.setSelection(true);
+
+                    mSdCardSize.setText(values[0]);
+
+                    String suffix = values[1];
+                    int n = mSdCardSizeCombo.getItemCount();
+                    for (int i = 0; i < n; i++) {
+                        if (mSdCardSizeCombo.getItem(i).startsWith(suffix)) {
+                            mSdCardSizeCombo.select(i);
+                        }
+                    }
+                }
+            }
+
+            String snapshots = props.get(AvdManager.AVD_INI_SNAPSHOT_PRESENT);
+            if (snapshots != null && snapshots.length() > 0) {
+                mSnapshotCheck.setSelection(snapshots.equals("true"));
+            }
+        }
+
+        mProperties.clear();
+
+        if (props != null) {
+            for (Entry<String, String> entry : props.entrySet()) {
+                HardwareProperty prop = mHardwareMap.get(entry.getKey());
+                if (prop != null && prop.isValidForUi()) {
+                    mProperties.put(entry.getKey(), entry.getValue());
+                }
+            }
+        }
+
+        // Cleanup known non-hardware properties
+        mProperties.remove(AvdManager.AVD_INI_ABI_TYPE);
+        mProperties.remove(AvdManager.AVD_INI_CPU_ARCH);
+        mProperties.remove(AvdManager.AVD_INI_SKIN_PATH);
+        mProperties.remove(AvdManager.AVD_INI_SKIN_NAME);
+        mProperties.remove(AvdManager.AVD_INI_SDCARD_SIZE);
+        mProperties.remove(AvdManager.AVD_INI_SDCARD_PATH);
+        mProperties.remove(AvdManager.AVD_INI_SNAPSHOT_PRESENT);
+        mProperties.remove(AvdManager.AVD_INI_IMAGES_1);
+        mProperties.remove(AvdManager.AVD_INI_IMAGES_2);
+
+        mHardwareViewer.refresh();
     }
 
     @Override
@@ -727,15 +946,62 @@ final class AvdCreationDialog extends GridDialog {
     }
 
     /**
+    * Reload all the abi types in the selection list
+    */
+    private void reloadAbiTypeCombo() {
+       String selected = null;
+       boolean found = false;
+
+       int index = mTargetCombo.getSelectionIndex();
+       if (index >= 0) {
+           String targetName = mTargetCombo.getItem(index);
+           IAndroidTarget target = mCurrentTargets.get(targetName);
+
+           ISystemImage[] systemImages = getSystemImages(target);
+
+           mAbiTypeCombo.setEnabled(systemImages.length > 1);
+
+           // If user explicitly selected an ABI before, preserve that option
+           // If user did not explicitly select before (only one option before)
+           // force them to select
+           index = mAbiTypeCombo.getSelectionIndex();
+           if (index >= 0 && mAbiTypeCombo.getItemCount() > 1) {
+               selected = mAbiTypeCombo.getItem(index);
+           }
+
+           mAbiTypeCombo.removeAll();
+
+           int i;
+           for ( i = 0; i < systemImages.length ; i++ ) {
+               String prettyAbiType = AvdInfo.getPrettyAbiType(systemImages[i].getAbiType());
+               mAbiTypeCombo.add(prettyAbiType);
+               if (!found) {
+                   found = prettyAbiType.equals(selected);
+                   if (found) {
+                       mAbiTypeCombo.select(i);
+                   }
+               }
+           }
+
+           if (systemImages.length == 1) {
+               mAbiTypeCombo.select(0);
+           }
+       }
+    }
+
+    /**
      * Validates the fields, displays errors and warnings.
      * Enables the finish button if there are no errors.
      */
     private void validatePage() {
         String error = null;
+        String warning = null;
 
         // Validate AVD name
         String avdName = mAvdName.getText().trim();
         boolean hasAvdName = avdName.length() > 0;
+        boolean isCreate = mEditAvdInfo == null || !avdName.equals(mEditAvdInfo.getName());
+
         if (hasAvdName && !AvdManager.RE_AVD_NAME.matcher(avdName).matches()) {
             error = String.format(
                 "AVD name '%1$s' contains invalid characters.\nAllowed characters are: %2$s",
@@ -745,6 +1011,17 @@ final class AvdCreationDialog extends GridDialog {
         // Validate target
         if (hasAvdName && error == null && mTargetCombo.getSelectionIndex() < 0) {
             error = "A target must be selected in order to create an AVD.";
+        }
+
+        // validate abi type if the selected target supports multi archs.
+        if (hasAvdName && error == null && mTargetCombo.getSelectionIndex() > 0) {
+            int index = mTargetCombo.getSelectionIndex();
+            String targetName = mTargetCombo.getItem(index);
+            IAndroidTarget target = mCurrentTargets.get(targetName);
+            ISystemImage[] systemImages = getSystemImages(target);
+            if (systemImages.length > 1 && mAbiTypeCombo.getSelectionIndex() < 0) {
+               error = "An ABI type must be selected in order to create an AVD.";
+            }
         }
 
         // Validate SDCard path or value
@@ -760,29 +1037,40 @@ final class AvdCreationDialog extends GridDialog {
             } else {
                 String valueString = mSdCardSize.getText();
                 if (valueString.length() > 0) {
-                    // prevent overflow: no more than 999GB
-                    // 10 digit for MiB, 13 for KiB
-                    if (valueString.length() >= 10 +
-                            (mSdCardSizeCombo.getSelectionIndex() == 0 ? 3 : 0)) {
-                        error = "SD Card size is too big!";
-                    } else {
-                        try {
-                            long value = Long.parseLong(valueString);
+                    long value = 0;
+                    try {
+                        value = Long.parseLong(valueString);
 
-                            switch (mSdCardSizeCombo.getSelectionIndex()) {
-                                case 0:
-                                    value *= 1024L;
-                                    break;
-                                case 1:
-                                    value *= 1024L * 1024L;
-                                    break;
-                            }
+                        int sizeIndex = mSdCardSizeCombo.getSelectionIndex();
+                        if (sizeIndex >= 0) {
+                            // index 0 shifts by 10 (1024=K), index 1 by 20, etc.
+                            value <<= 10*(1 + sizeIndex);
+                        }
 
-                            if (value < 9 * 1024 * 1024) {
-                                error = "SD Card size must be at least 9 MiB";
+                        if (value < AvdManager.SDCARD_MIN_BYTE_SIZE ||
+                                value > AvdManager.SDCARD_MAX_BYTE_SIZE) {
+                            value = 0;
+                        }
+                    } catch (Exception e) {
+                        // ignore, we'll test value below.
+                    }
+                    if (value <= 0) {
+                        error = "SD Card size is invalid. Range is 9 MiB..1023 GiB.";
+                    } else if (mEditAvdInfo != null) {
+                        // When editing an existing AVD, compare with the existing
+                        // sdcard size, if any. It only matters if there was an sdcard setting
+                        // before.
+                        Map<String, String> props = mEditAvdInfo.getProperties();
+                        if (props != null) {
+                            String original =
+                                mEditAvdInfo.getProperties().get(AvdManager.AVD_INI_SDCARD_SIZE);
+                            if (original != null && original.length() > 0) {
+                                long originalSize =
+                                    AvdManager.parseSdcardSize(original, null/*parsedStrings*/);
+                                if (originalSize > 0 && value != originalSize) {
+                                    warning = "A new SD Card file will be created.\nThe current SD Card file will be lost.";
+                                }
                             }
-                        } catch (NumberFormatException e) {
-                            // will never happen thanks to the VerifyListener.
                         }
                     }
                 }
@@ -799,20 +1087,49 @@ final class AvdCreationDialog extends GridDialog {
                 String height = mSkinSizeHeight.getText(); // rejects non digit.
 
                 if (width.length() == 0 || height.length() == 0) {
-                    error = "Skin size is incorrect.\nBoth dimensions must be > 0";
+                    error = "Skin size is incorrect.\nBoth dimensions must be > 0.";
                 }
             }
         }
 
         // Check for duplicate AVD name
-        if (hasAvdName && error == null) {
-            AvdInfo avdMatch = mAvdManager.getAvd(avdName, false /*validAvdOnly*/);
-            if (avdMatch != null && !mForceCreation.getSelection()) {
+        if (isCreate && hasAvdName && error == null && !mForceCreation.getSelection()) {
+            Pair<AvdConflict, String> conflict = mAvdManager.isAvdNameConflicting(avdName);
+            assert conflict != null;
+            switch(conflict.getFirst()) {
+            case NO_CONFLICT:
+                break;
+            case CONFLICT_EXISTING_AVD:
+            case CONFLICT_INVALID_AVD:
                 error = String.format(
                         "The AVD name '%s' is already used.\n" +
                         "Check \"Override the existing AVD\" to delete the existing one.",
                         avdName);
+                break;
+            case CONFLICT_EXISTING_PATH:
+                error = String.format(
+                        "Conflict with %s\n" +
+                        "Check \"Override the existing AVD\" to delete the existing one.",
+                        conflict.getSecond());
+                break;
+            default:
+                // Hmm not supposed to happen... probably someone expanded the
+                // enum without adding something here. In this case just do an
+                // assert and use a generic error message.
+                error = String.format(
+                        "Conflict %s with %s.\n" +
+                        "Check \"Override the existing AVD\" to delete the existing one.",
+                        conflict.getFirst().toString(),
+                        conflict.getSecond());
+                assert false;
+                break;
             }
+        }
+
+        if (error == null && mEditAvdInfo != null && isCreate) {
+            warning = String.format("The AVD '%1$s' will be duplicated into '%2$s'.",
+                    mEditAvdInfo.getName(),
+                    avdName);
         }
 
         // Validate the create button
@@ -822,10 +1139,20 @@ final class AvdCreationDialog extends GridDialog {
         }
         mOkButton.setEnabled(can_create);
 
+        // Adjust the create button label as needed
+        if (isCreate) {
+            mOkButton.setText("Create AVD");
+        } else {
+            mOkButton.setText("Edit AVD");
+        }
+
         // -- update UI
         if (error != null) {
-            mStatusIcon.setImage(mImageFactory.getImageByName("reject_icon16.png"));
+            mStatusIcon.setImage(mImageFactory.getImageByName("reject_icon16.png"));  //$NON-NLS-1$
             mStatusLabel.setText(error);
+        } else if (warning != null) {
+            mStatusIcon.setImage(mImageFactory.getImageByName("warning_icon16.png"));  //$NON-NLS-1$
+            mStatusLabel.setText(warning);
         } else {
             mStatusIcon.setImage(null);
             mStatusLabel.setText(" \n "); //$NON-NLS-1$
@@ -875,10 +1202,12 @@ final class AvdCreationDialog extends GridDialog {
         // (if applicable)
         HashMap<String, String> hardwareValues = new HashMap<String, String>();
         if (target.isPlatform() == false) {
-            File targetHardwareFile = new File(target.getLocation(), AvdManager.HARDWARE_INI);
+            FileWrapper targetHardwareFile = new FileWrapper(target.getLocation(),
+                    AvdManager.HARDWARE_INI);
             if (targetHardwareFile.isFile()) {
                 Map<String, String> targetHardwareConfig = ProjectProperties.parsePropertyFile(
                         targetHardwareFile, null /*log*/);
+
                 if (targetHardwareConfig != null) {
                     hardwareValues.putAll(targetHardwareConfig);
                 }
@@ -886,10 +1215,11 @@ final class AvdCreationDialog extends GridDialog {
         }
 
         // from the skin
-        File skinHardwareFile = new File(skin, AvdManager.HARDWARE_INI);
+        FileWrapper skinHardwareFile = new FileWrapper(skin, AvdManager.HARDWARE_INI);
         if (skinHardwareFile.isFile()) {
             Map<String, String> skinHardwareConfig = ProjectProperties.parsePropertyFile(
                     skinHardwareFile, null /*log*/);
+
             if (skinHardwareConfig != null) {
                 hardwareValues.putAll(skinHardwareConfig);
             }
@@ -925,6 +1255,20 @@ final class AvdCreationDialog extends GridDialog {
             return false;
         }
 
+        // get the abi type
+        mAbiType = SdkConstants.ABI_ARMEABI;
+        ISystemImage[] systemImages = getSystemImages(target);
+        if (systemImages.length > 0) {
+            int abiIndex = mAbiTypeCombo.getSelectionIndex();
+            if (abiIndex >= 0) {
+                String prettyname = mAbiTypeCombo.getItem(abiIndex);
+                //Extract the abi type
+                int firstIndex = prettyname.indexOf("(");
+                int lastIndex = prettyname.indexOf(")");
+                mAbiType = prettyname.substring(firstIndex+1, lastIndex);
+            }
+        }
+
         // get the SD card data from the UI.
         String sdName = null;
         if (mSdCardSizeRadio.getSelection()) {
@@ -935,10 +1279,13 @@ final class AvdCreationDialog extends GridDialog {
                 // add the unit
                 switch (mSdCardSizeCombo.getSelectionIndex()) {
                     case 0:
-                        sdName += "K";
+                        sdName += "K";  //$NON-NLS-1$
                         break;
                     case 1:
-                        sdName += "M";
+                        sdName += "M";  //$NON-NLS-1$
+                        break;
+                    case 2:
+                        sdName += "G";  //$NON-NLS-1$
                         break;
                     default:
                         // shouldn't be here
@@ -977,24 +1324,26 @@ final class AvdCreationDialog extends GridDialog {
 
         File avdFolder = null;
         try {
-            avdFolder = new File(
-                    AndroidLocation.getFolder() + AndroidLocation.FOLDER_AVD,
-                    avdName + AvdManager.AVD_FOLDER_EXTENSION);
+            avdFolder = AvdInfo.getDefaultAvdFolder(mAvdManager, avdName);
         } catch (AndroidLocationException e) {
             return false;
         }
 
         boolean force = mForceCreation.getSelection();
+        boolean snapshot = mSnapshotCheck.getSelection();
 
         boolean success = false;
         AvdInfo avdInfo = mAvdManager.createAvd(
                 avdFolder,
                 avdName,
                 target,
+                mAbiType,
                 skinName,
                 sdName,
                 mProperties,
+                snapshot,
                 force,
+                mEditAvdInfo != null, //edit existing
                 log);
 
         success = avdInfo != null;
@@ -1004,4 +1353,33 @@ final class AvdCreationDialog extends GridDialog {
         }
         return success;
     }
+
+    /**
+     * Returns the list of system images of a target.
+     * <p/>
+     * If target is null, returns an empty list.
+     * If target is an add-on with no system images, return the list from its parent platform.
+     *
+     * @param target An IAndroidTarget. Can be null.
+     * @return A non-null ISystemImage array. Can be empty.
+     */
+    private ISystemImage[] getSystemImages(IAndroidTarget target) {
+        if (target != null) {
+            ISystemImage[] images = target.getSystemImages();
+
+            if ((images == null || images.length == 0) && !target.isPlatform()) {
+                // If an add-on does not provide any system images, use the ones from the parent.
+                images = target.getParent().getSystemImages();
+            }
+
+            if (images != null) {
+                return images;
+            }
+        }
+
+        return new ISystemImage[0];
+    }
+
+    // End of hiding from SWT Designer
+    //$hide<<$
 }

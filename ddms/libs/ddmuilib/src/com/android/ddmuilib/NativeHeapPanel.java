@@ -16,14 +16,14 @@
 
 package com.android.ddmuilib;
 
+import com.android.ddmlib.AndroidDebugBridge.IClientChangeListener;
 import com.android.ddmlib.Client;
 import com.android.ddmlib.ClientData;
+import com.android.ddmlib.HeapSegment.HeapSegmentElement;
 import com.android.ddmlib.Log;
 import com.android.ddmlib.NativeAllocationInfo;
 import com.android.ddmlib.NativeLibraryMapInfo;
 import com.android.ddmlib.NativeStackCallInfo;
-import com.android.ddmlib.AndroidDebugBridge.IClientChangeListener;
-import com.android.ddmlib.HeapSegment.HeapSegmentElement;
 import com.android.ddmuilib.annotation.WorkerThread;
 
 import org.eclipse.jface.preference.IPreferenceStore;
@@ -66,6 +66,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 
 /**
  * Panel with native heap information.
@@ -77,7 +78,7 @@ public final class NativeHeapPanel extends BaseHeapPanel {
     private static final int NUM_PALETTE_ENTRIES = HeapSegmentElement.KIND_NATIVE+2 +1;
     private static final String[] mMapLegend = new String[NUM_PALETTE_ENTRIES];
     private static final PaletteData mMapPalette = createPalette();
-    
+
     private static final int ALLOC_DISPLAY_ALL = 0;
     private static final int ALLOC_DISPLAY_PRE_ZYGOTE = 1;
     private static final int ALLOC_DISPLAY_POST_ZYGOTE = 2;
@@ -137,7 +138,7 @@ public final class NativeHeapPanel extends BaseHeapPanel {
     private Table mDetailTable;
 
     private Label mImage;
-    
+
     private int mAllocDisplayMode = ALLOC_DISPLAY_ALL;
 
     /**
@@ -163,7 +164,7 @@ public final class NativeHeapPanel extends BaseHeapPanel {
     /** list of NativeAllocationInfo objects filled with the list from ClientData */
     private final ArrayList<NativeAllocationInfo> mAllocations =
         new ArrayList<NativeAllocationInfo>();
-    
+
     /** list of the {@link NativeAllocationInfo} being displayed based on the selection
      * of {@link #mAllocDisplayCombo}.
      */
@@ -224,10 +225,11 @@ public final class NativeHeapPanel extends BaseHeapPanel {
     private static DecimalFormat sFormatter;
     static {
         sFormatter = (DecimalFormat)NumberFormat.getInstance();
-        if (sFormatter != null)
+        if (sFormatter == null) {
             sFormatter = new DecimalFormat("#,###");
-        else
+        } else {
             sFormatter.applyPattern("#,###");
+        }
     }
 
 
@@ -236,7 +238,7 @@ public final class NativeHeapPanel extends BaseHeapPanel {
      * address several times.
      */
     private HashMap<Long, NativeStackCallInfo> mSourceCache =
-        new HashMap<Long,NativeStackCallInfo>();
+        new HashMap<Long, NativeStackCallInfo>();
     private long mTotalSize;
     private Button mSaveButton;
     private Button mSymbolsButton;
@@ -269,14 +271,14 @@ public final class NativeHeapPanel extends BaseHeapPanel {
 
                 NativeAllocationInfo info = iter.next();
                 if (info.isStackCallResolved() == false) {
-                    final Long[] list = info.getStackCallAddresses();
-                    final int size = list.length;
-                    
+                    final List<Long> list = info.getStackCallAddresses();
+                    final int size = list.size();
+
                     ArrayList<NativeStackCallInfo> resolvedStackCall =
-                        new ArrayList<NativeStackCallInfo>(); 
+                        new ArrayList<NativeStackCallInfo>();
 
                     for (int i = 0; i < size; i++) {
-                        long addr = list[i];
+                        long addr = list.get(i);
 
                         // first check if the addr has already been converted.
                         NativeStackCallInfo source = mSourceCache.get(addr);
@@ -289,7 +291,7 @@ public final class NativeHeapPanel extends BaseHeapPanel {
 
                         resolvedStackCall.add(source);
                     }
-                    
+
                     info.setResolvedStackCall(resolvedStackCall);
                 }
                 // after every DISPLAY_PER_PAGE we ask for a ui refresh, unless
@@ -313,27 +315,24 @@ public final class NativeHeapPanel extends BaseHeapPanel {
 
             if (library != null) {
 
-                Addr2Line process = Addr2Line.getProcess(library.getLibraryName());
+                Addr2Line process = Addr2Line.getProcess(library);
                 if (process != null) {
                     // remove the base of the library address
-                    long value = addr - library.getStartAddress();
-                    NativeStackCallInfo info = process.getAddress(value);
+                    NativeStackCallInfo info = process.getAddress(addr);
                     if (info != null) {
                         return info;
                     }
                 }
             }
 
-            return new NativeStackCallInfo(library != null ? library.getLibraryName() : null,
-                    Long.toHexString(addr), "");
+            return new NativeStackCallInfo(addr,
+                    library != null ? library.getLibraryName() : null,
+                    Long.toHexString(addr),
+                    "");
         }
 
         private NativeLibraryMapInfo getLibraryFor(long addr) {
-            Iterator<NativeLibraryMapInfo> it = mClientData.getNativeLibraryMapInfo();
-
-            while (it.hasNext()) {
-                NativeLibraryMapInfo info = it.next();
-
+            for (NativeLibraryMapInfo info : mClientData.getMappedNativeLibraries()) {
                 if (info.isWithinLibrary(addr)) {
                     return info;
                 }
@@ -488,7 +487,7 @@ public final class NativeHeapPanel extends BaseHeapPanel {
         gl.verticalSpacing = 0;
         mBase.setLayout(gl);
         mBase.setLayoutData(new GridData(GridData.FILL_BOTH));
-        
+
         // composite for <update btn> <status>
         Composite tmp = new Composite(mBase, SWT.NONE);
         tmp.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
@@ -527,9 +526,9 @@ public final class NativeHeapPanel extends BaseHeapPanel {
         Composite top_layout = new Composite(mBase, SWT.NONE);
         top_layout.setLayout(gl = new GridLayout(4, false));
         gl.marginWidth = gl.marginHeight = 0;
-        
+
         new Label(top_layout, SWT.NONE).setText("Show:");
-        
+
         mAllocDisplayCombo = new Combo(top_layout, SWT.DROP_DOWN | SWT.READ_ONLY);
         mAllocDisplayCombo.setLayoutData(new GridData(
                 GridData.HORIZONTAL_ALIGN_FILL | GridData.GRAB_HORIZONTAL));
@@ -543,7 +542,7 @@ public final class NativeHeapPanel extends BaseHeapPanel {
             }
         });
         mAllocDisplayCombo.select(0);
-        
+
         // separator
         Label separator = new Label(top_layout, SWT.SEPARATOR | SWT.VERTICAL);
         GridData gd;
@@ -569,7 +568,7 @@ public final class NativeHeapPanel extends BaseHeapPanel {
                 }
             }
         });
-        
+
         /*
          * TODO: either fix the diff mechanism or remove it altogether.
         mDiffUpdateButton = new Button(top_layout, SWT.NONE);
@@ -619,7 +618,7 @@ public final class NativeHeapPanel extends BaseHeapPanel {
             }
         });
         mDisplayModeCombo.setEnabled(false);
-        
+
         mSymbolsButton = new Button(top_layout, SWT.PUSH);
         mSymbolsButton.setText("Load Symbols");
         mSymbolsButton.setEnabled(false);
@@ -651,7 +650,7 @@ public final class NativeHeapPanel extends BaseHeapPanel {
 
         return mBase;
     }
-    
+
     /**
      * Sets the focus to the proper control inside the panel.
      */
@@ -754,7 +753,7 @@ public final class NativeHeapPanel extends BaseHeapPanel {
                 // we're done: do something
                 mDisplayModeCombo.setEnabled(true);
                 mSaveButton.setEnabled(true);
-                
+
                 mStackCallThread = null;
             } else {
                 // work in progress, update the progress bar.
@@ -773,7 +772,7 @@ public final class NativeHeapPanel extends BaseHeapPanel {
                 // get the current selection of the allocation
                 int index = mAllocationTable.getSelectionIndex();
                 NativeAllocationInfo info = null;
-                
+
                 if (index != -1) {
                     info = (NativeAllocationInfo)mAllocationTable.getItem(index).getData();
                 }
@@ -811,13 +810,13 @@ public final class NativeHeapPanel extends BaseHeapPanel {
         addTableToFocusListener(mLibraryAllocationTable);
         addTableToFocusListener(mDetailTable);
     }
-    
+
     protected void onAllocDisplayChange() {
         mAllocDisplayMode = mAllocDisplayCombo.getSelectionIndex();
-        
+
         // create the new list
         updateAllocDisplayList();
-        
+
         updateTotalMemoryDisplay();
 
         // reset the ui.
@@ -825,7 +824,7 @@ public final class NativeHeapPanel extends BaseHeapPanel {
         updatePageUI();
         switchDisplayMode();
     }
-    
+
     private void updateAllocDisplayList() {
         mTotalSize = 0;
         mDisplayedAllocations.clear();
@@ -839,9 +838,9 @@ public final class NativeHeapPanel extends BaseHeapPanel {
                 continue;
             }
         }
-        
+
         int count = mDisplayedAllocations.size();
-        
+
         mPageCount = count / DISPLAY_PER_PAGE;
 
         // need to add a page for the rest of the div
@@ -849,7 +848,7 @@ public final class NativeHeapPanel extends BaseHeapPanel {
             mPageCount++;
         }
     }
-    
+
     private void updateTotalMemoryDisplay() {
         switch (mAllocDisplayMode) {
             case ALLOC_DISPLAY_ALL:
@@ -892,9 +891,13 @@ public final class NativeHeapPanel extends BaseHeapPanel {
     }
 
     private void initAllocationDisplay() {
+        if (mStackCallThread != null) {
+            mStackCallThread.quit();
+        }
+
         mAllocations.clear();
         mAllocations.addAll(mClientData.getNativeAllocationList());
-        
+
         updateAllocDisplayList();
 
         // if we have a previous clientdata and it matches the current one. we
@@ -1116,32 +1119,32 @@ public final class NativeHeapPanel extends BaseHeapPanel {
     private void fillDetailTable(final NativeAllocationInfo mi) {
         mDetailTable.removeAll();
         mDetailTable.setRedraw(false);
-        
+
         try {
             // populate the detail Table with the back trace
-            Long[] addresses = mi.getStackCallAddresses();
-            NativeStackCallInfo[] resolvedStackCall = mi.getResolvedStackCall();
-            
+            List<Long> addresses = mi.getStackCallAddresses();
+            List<NativeStackCallInfo> resolvedStackCall = mi.getResolvedStackCall();
+
             if (resolvedStackCall == null) {
                 return;
             }
 
-            for (int i = 0 ; i < resolvedStackCall.length ; i++) {
-                if (addresses[i] == null || addresses[i].longValue() == 0) {
+            for (int i = 0 ; i < resolvedStackCall.size(); i++) {
+                if (addresses.get(i) == null || addresses.get(i).longValue() == 0) {
                     continue;
                 }
-                
-                long addr = addresses[i].longValue();
-                NativeStackCallInfo source = resolvedStackCall[i];
-                
+
+                long addr = addresses.get(i).longValue();
+                NativeStackCallInfo source = resolvedStackCall.get(i);
+
                 TableItem item = new TableItem(mDetailTable, SWT.NONE);
                 item.setText(0, String.format("%08x", addr)); //$NON-NLS-1$
-    
+
                 String libraryName = source.getLibraryName();
                 String methodName = source.getMethodName();
                 String sourceFile = source.getSourceFile();
                 int lineNumber = source.getLineNumber();
-                
+
                 if (libraryName != null)
                     item.setText(1, libraryName);
                 if (methodName != null)
@@ -1373,9 +1376,11 @@ public final class NativeHeapPanel extends BaseHeapPanel {
             public void widgetSelected(SelectionEvent e) {
                 // get the selection index
                 int index = mAllocationTable.getSelectionIndex();
-                TableItem item = mAllocationTable.getItem(index);
-                if (item != null && item.getData() instanceof NativeAllocationInfo) {
-                    fillDetailTable((NativeAllocationInfo)item.getData());
+                if (index >= 0 && index < mAllocationTable.getItemCount()) {
+                    TableItem item = mAllocationTable.getItem(index);
+                    if (item != null && item.getData() instanceof NativeAllocationInfo) {
+                        fillDetailTable((NativeAllocationInfo)item.getData());
+                    }
                 }
             }
         });
@@ -1437,9 +1442,11 @@ public final class NativeHeapPanel extends BaseHeapPanel {
                 // get the index in the library allocation table
                 int index2 = mLibraryAllocationTable.getSelectionIndex();
                 // get the MallocInfo object
-                LibraryAllocations liballoc = mLibraryAllocations.get(index1);
-                NativeAllocationInfo info = liballoc.getAllocation(index2);
-                fillDetailTable(info);
+                if (index1 != -1 && index2 != -1) {
+                    LibraryAllocations liballoc = mLibraryAllocations.get(index1);
+                    NativeAllocationInfo info = liballoc.getAllocation(index2);
+                    fillDetailTable(info);
+                }
             }
         });
 
@@ -1495,7 +1502,7 @@ public final class NativeHeapPanel extends BaseHeapPanel {
     private void sortAllocationsPerLibrary() {
         if (mClientData != null) {
             mLibraryAllocations.clear();
-            
+
             // create a hash map of LibraryAllocations to access aggregate
             // objects already created
             HashMap<String, LibraryAllocations> libcache =
@@ -1617,11 +1624,11 @@ public final class NativeHeapPanel extends BaseHeapPanel {
 
         return new PaletteData(colors);
     }
-    
+
     private void saveAllocations(String fileName) {
         try {
             PrintWriter out = new PrintWriter(new BufferedWriter(new FileWriter(fileName)));
-    
+
             for (NativeAllocationInfo alloc : mAllocations) {
                 out.println(alloc.toString());
             }

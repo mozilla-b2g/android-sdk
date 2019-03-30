@@ -16,29 +16,42 @@
 
 package com.android.sdkmanager;
 
+import com.android.annotations.VisibleForTesting;
+import com.android.annotations.VisibleForTesting.Visibility;
+import com.android.io.FileWrapper;
 import com.android.prefs.AndroidLocation;
 import com.android.prefs.AndroidLocation.AndroidLocationException;
 import com.android.sdklib.IAndroidTarget;
 import com.android.sdklib.ISdkLog;
+import com.android.sdklib.ISystemImage;
 import com.android.sdklib.SdkConstants;
 import com.android.sdklib.SdkManager;
 import com.android.sdklib.IAndroidTarget.IOptionalLibrary;
+import com.android.sdklib.internal.avd.AvdInfo;
 import com.android.sdklib.internal.avd.AvdManager;
 import com.android.sdklib.internal.avd.HardwareProperties;
-import com.android.sdklib.internal.avd.AvdManager.AvdInfo;
 import com.android.sdklib.internal.avd.HardwareProperties.HardwareProperty;
+import com.android.sdklib.internal.build.MakeIdentity;
 import com.android.sdklib.internal.project.ProjectCreator;
 import com.android.sdklib.internal.project.ProjectProperties;
 import com.android.sdklib.internal.project.ProjectCreator.OutputLevel;
 import com.android.sdklib.internal.project.ProjectProperties.PropertyType;
-import com.android.sdklib.repository.SdkRepository;
+import com.android.sdklib.internal.repository.PlatformToolPackage;
+import com.android.sdklib.internal.repository.ToolPackage;
+import com.android.sdklib.repository.SdkAddonConstants;
+import com.android.sdklib.repository.SdkRepoConstants;
 import com.android.sdklib.xml.AndroidXPathFactory;
 import com.android.sdkmanager.internal.repository.AboutPage;
 import com.android.sdkmanager.internal.repository.SettingsPage;
-import com.android.sdkuilib.internal.repository.UpdateNoWindow;
-import com.android.sdkuilib.internal.repository.LocalPackagesPage;
+import com.android.sdkuilib.internal.repository.SdkUpdaterNoWindow;
+import com.android.sdkuilib.internal.repository.UpdaterPage;
+import com.android.sdkuilib.internal.repository.sdkman2.PackagesPage;
 import com.android.sdkuilib.internal.widgets.MessageBoxLog;
-import com.android.sdkuilib.repository.UpdaterWindow;
+import com.android.sdkuilib.repository.AvdManagerWindow;
+import com.android.sdkuilib.repository.SdkUpdaterWindow;
+import com.android.sdkuilib.repository.AvdManagerWindow.AvdInvocationContext;
+import com.android.sdkuilib.repository.SdkUpdaterWindow.SdkInvocationContext;
+import com.android.util.Pair;
 
 import org.eclipse.swt.widgets.Display;
 import org.xml.sax.InputSource;
@@ -51,6 +64,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.xml.xpath.XPath;
 import javax.xml.xpath.XPathExpressionException;
@@ -70,7 +86,7 @@ public class Main {
     private final static int INVALID_TARGET_ID = 0;
 
     private final static String[] BOOLEAN_YES_REPLIES = new String[] { "yes", "y" };
-    private final static String[] BOOLEAN_NO_REPLIES = new String[] { "no", "n" };
+    private final static String[] BOOLEAN_NO_REPLIES  = new String[] { "no",  "n" };
 
     /** Path to the SDK folder. This is the parent of {@link #TOOLSDIR}. */
     private String mOsSdkFolder;
@@ -85,6 +101,12 @@ public class Main {
 
     public static void main(String[] args) {
         new Main().run(args);
+    }
+
+    /** Used by tests to set the sdk manager. */
+    @VisibleForTesting(visibility=Visibility.PRIVATE)
+    void setSdkManager(SdkManager sdkManager) {
+        mSdkManager = sdkManager;
     }
 
     /**
@@ -130,6 +152,11 @@ public class Main {
                 System.out.printf(msgFormat, args);
             }
         };
+    }
+
+    /** For testing */
+    public void setLogger(ISdkLog logger) {
+        mSdkLog = logger;
     }
 
     /**
@@ -214,6 +241,9 @@ public class Main {
             } else if (SdkCommandLine.OBJECT_AVD.equals(directObject)) {
                 displayAvdList();
 
+            } else if (SdkCommandLine.OBJECT_SDK.equals(directObject)) {
+                displayRemoteSdkListNoUI();
+
             } else {
                 displayTargetList();
                 displayAvdList();
@@ -232,8 +262,8 @@ public class Main {
             } else if (SdkCommandLine.OBJECT_LIB_PROJECT.equals(directObject)) {
                 createProject(true /*library*/);
 
-            } else if (SdkCommandLine.OBJECT_EXPORT_PROJECT.equals(directObject)) {
-                createExportProject();
+            } else if (SdkCommandLine.OBJECT_IDENTITY.equals(directObject)) {
+                createIdentity();
 
             }
         } else if (SdkCommandLine.VERB_UPDATE.equals(verb)) {
@@ -249,20 +279,23 @@ public class Main {
             } else if (SdkCommandLine.OBJECT_LIB_PROJECT.equals(directObject)) {
                 updateProject(true /*library*/);
 
-            } else if (SdkCommandLine.OBJECT_EXPORT_PROJECT.equals(directObject)) {
-                updateExportProject();
-
             } else if (SdkCommandLine.OBJECT_SDK.equals(directObject)) {
-                if (mSdkCommandLine.getFlagNoUI()) {
+                if (mSdkCommandLine.getFlagNoUI(verb)) {
                     updateSdkNoUI();
                 } else {
-                    showMainWindow(true /*autoUpdate*/);
+                    showSdkManagerWindow(true /*autoUpdate*/);
                 }
 
             } else if (SdkCommandLine.OBJECT_ADB.equals(directObject)) {
                 updateAdb();
 
             }
+        } else if (SdkCommandLine.VERB_SDK.equals(verb)) {
+            showSdkManagerWindow(false /*autoUpdate*/);
+
+        } else if (SdkCommandLine.VERB_AVD.equals(verb)) {
+            showAvdManagerWindow();
+
         } else if (SdkCommandLine.VERB_DELETE.equals(verb) &&
                 SdkCommandLine.OBJECT_AVD.equals(directObject)) {
             deleteAvd();
@@ -272,7 +305,7 @@ public class Main {
             moveAvd();
 
         } else if (verb == null && directObject == null) {
-            showMainWindow(false /*autoUpdate*/);
+            showSdkManagerWindow(false /*autoUpdate*/);
 
         } else {
             mSdkCommandLine.printHelpAndExit(null);
@@ -280,28 +313,24 @@ public class Main {
     }
 
     /**
-     * Display the main SdkManager app window
+     * Display the main SDK Manager app window
      */
-    private void showMainWindow(boolean autoUpdate) {
+    private void showSdkManagerWindow(boolean autoUpdate) {
         try {
-            // display a message talking about the command line version
-            System.out.printf("No command line parameters provided, launching UI.\n" +
-                    "See 'android --help' for operations from the command line.\n");
-
             MessageBoxLog errorLogger = new MessageBoxLog(
                     "SDK Manager",
                     Display.getCurrent(),
                     true /*logErrorsOnly*/);
 
-            UpdaterWindow window = new UpdaterWindow(
+            SdkUpdaterWindow window = new SdkUpdaterWindow(
                     null /* parentShell */,
                     errorLogger,
                     mOsSdkFolder,
-                    false /*userCanChangeSdkRoot*/);
-            window.registerPage("Settings", SettingsPage.class);
-            window.registerPage("About", AboutPage.class);
+                    SdkInvocationContext.STANDALONE);
+            window.registerPage(SettingsPage.class, UpdaterPage.Purpose.SETTINGS);
+            window.registerPage(AboutPage.class,    UpdaterPage.Purpose.ABOUT_BOX);
             if (autoUpdate) {
-                window.setInitialPage(LocalPackagesPage.class);
+                window.setInitialPage(PackagesPage.class);
                 window.setRequestAutoUpdate(true);
             }
             window.open();
@@ -314,6 +343,47 @@ public class Main {
     }
 
     /**
+     * Display the main AVD Manager app window
+     */
+    private void showAvdManagerWindow() {
+        try {
+            MessageBoxLog errorLogger = new MessageBoxLog(
+                    "AVD Manager",
+                    Display.getCurrent(),
+                    true /*logErrorsOnly*/);
+
+            AvdManagerWindow window = new AvdManagerWindow(
+                    null /* parentShell */,
+                    errorLogger,
+                    mOsSdkFolder,
+                    AvdInvocationContext.STANDALONE);
+
+            window.registerPage(SettingsPage.class, UpdaterPage.Purpose.SETTINGS);
+            window.registerPage(AboutPage.class,    UpdaterPage.Purpose.ABOUT_BOX);
+
+            window.open();
+
+            errorLogger.displayResult(true);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void displayRemoteSdkListNoUI() {
+        boolean force = mSdkCommandLine.getFlagForce();
+        boolean useHttp = mSdkCommandLine.getFlagNoHttps();
+        boolean obsolete = mSdkCommandLine.getFlagObsolete();
+        boolean extended = mSdkCommandLine.getFlagExtended();
+        String proxyHost = mSdkCommandLine.getParamProxyHost();
+        String proxyPort = mSdkCommandLine.getParamProxyPort();
+
+        SdkUpdaterNoWindow upd = new SdkUpdaterNoWindow(mOsSdkFolder, mSdkManager, mSdkLog,
+                force, useHttp, proxyHost, proxyPort);
+        upd.listRemotePackages(obsolete, extended);
+    }
+
+    /**
      * Updates the whole SDK without any UI, just using console output.
      */
     private void updateSdkNoUI() {
@@ -321,37 +391,86 @@ public class Main {
         boolean useHttp = mSdkCommandLine.getFlagNoHttps();
         boolean dryMode = mSdkCommandLine.getFlagDryMode();
         boolean obsolete = mSdkCommandLine.getFlagObsolete();
+        String proxyHost = mSdkCommandLine.getParamProxyHost();
+        String proxyPort = mSdkCommandLine.getParamProxyPort();
 
         // Check filter types.
+        Pair<String, ArrayList<String>> filterResult =
+            checkFilterValues(mSdkCommandLine.getParamFilter());
+        if (filterResult.getFirst() != null) {
+            // We got an error.
+            errorAndExit(filterResult.getFirst());
+        }
+
+        SdkUpdaterNoWindow upd = new SdkUpdaterNoWindow(mOsSdkFolder, mSdkManager, mSdkLog,
+                force, useHttp, proxyHost, proxyPort);
+        upd.updateAll(filterResult.getSecond(), obsolete, dryMode);
+    }
+
+    /**
+     * Checks the values from the filter parameter and returns a tuple
+     * (error , accepted values). Either error is null and accepted values is not,
+     * or the reverse.
+     * <p/>
+     * Note that this is a quick sanity check of the --filter parameter *before* we
+     * start loading the remote repository sources. Loading the remotes takes a while
+     * so it's worth doing a quick sanity check before hand.
+     *
+     * @param filter A comma-separated list of keywords
+     * @return A pair <error string, usable values>, only one must be null and the other non-null.
+     */
+    @VisibleForTesting(visibility=Visibility.PRIVATE)
+    Pair<String, ArrayList<String>> checkFilterValues(String filter) {
         ArrayList<String> pkgFilter = new ArrayList<String>();
-        String filter = mSdkCommandLine.getParamFilter();
+
         if (filter != null && filter.length() > 0) {
+            // Available types
+            Set<String> filterTypes = new TreeSet<String>();
+            filterTypes.addAll(Arrays.asList(SdkRepoConstants.NODES));
+            filterTypes.addAll(Arrays.asList(SdkAddonConstants.NODES));
+
             for (String t : filter.split(",")) {    //$NON-NLS-1$
-                if (t != null) {
-                    t = t.trim();
-                    if (t.length() > 0) {
-                        boolean found = false;
-                        for (String t2 : SdkRepository.NODES) {
-                            if (t2.equals(t)) {
-                                pkgFilter.add(t2);
-                                found = true;
-                                break;
-                            }
-                        }
-                        if (!found) {
-                            errorAndExit(
-                                "Unknown package filter type '%1$s'.\nAccepted values are: %2$s",
-                                t,
-                                Arrays.toString(SdkRepository.NODES));
-                            return;
-                        }
-                    }
+                if (t == null) {
+                    continue;
                 }
+                t = t.trim();
+                if (t.length() <= 0) {
+                    continue;
+                }
+
+                if (t.indexOf('-') > 0 ||
+                        t.equals(ToolPackage.INSTALL_ID) ||
+                        t.equals(PlatformToolPackage.INSTALL_ID)) {
+                    // Heuristic: if the filter name contains a dash, it is probably
+                    // a variable package install id. Since we haven't loaded the remote
+                    // repositories we can't validate it yet, so just accept it.
+                    pkgFilter.add(t);
+                    continue;
+                }
+
+                if (t.replaceAll("[0-9]+", "").length() == 0) { //$NON-NLS-1$ //$NON-NLS-2$
+                    // If the filter argument *only* contains digits, accept it.
+                    // It's probably an index for the remote repository list,
+                    // which we can't validate yet.
+                    pkgFilter.add(t);
+                    continue;
+                }
+
+                if (filterTypes.contains(t)) {
+                    pkgFilter.add(t);
+                    continue;
+                }
+
+                return Pair.of(
+                    String.format(
+                       "Unknown package filter type '%1$s'.\nAccepted values are: %2$s",
+                       t,
+                       Arrays.toString(filterTypes.toArray())),
+                    null);
             }
         }
 
-        UpdateNoWindow upd = new UpdateNoWindow(mOsSdkFolder, mSdkManager, mSdkLog, force, useHttp);
-        upd.updateAll(pkgFilter, obsolete, dryMode);
+        return Pair.of(null, pkgFilter);
     }
 
     /**
@@ -499,10 +618,10 @@ public class Main {
 
         // now get the target hash
         ProjectProperties p = ProjectProperties.load(parentProject.getAbsolutePath(),
-                PropertyType.DEFAULT);
+                PropertyType.PROJECT);
         if (p == null) {
             errorAndExit("Unable to load the main project's %1$s",
-                    PropertyType.DEFAULT.getFilename());
+                    PropertyType.PROJECT.getFilename());
             return;
         }
 
@@ -542,39 +661,6 @@ public class Main {
                 target,
                 false /* library*/,
                 pathToMainProject);
-    }
-
-    /**
-     * Creates a new Android Export project based on command-line parameters
-     */
-    private void createExportProject() {
-        ProjectCreator creator = getProjectCreator();
-
-        String projectDir = getProjectLocation(mSdkCommandLine.getParamLocationPath());
-
-        String projectName = mSdkCommandLine.getParamName();
-        String packageName = mSdkCommandLine.getParamProjectPackage(
-                SdkCommandLine.OBJECT_EXPORT_PROJECT);
-
-        if (projectName != null &&
-                !ProjectCreator.RE_PROJECT_NAME.matcher(projectName).matches()) {
-            errorAndExit(
-                "Project name '%1$s' contains invalid characters.\nAllowed characters are: %2$s",
-                projectName, ProjectCreator.CHARS_PROJECT_NAME);
-            return;
-        }
-
-        if (packageName != null &&
-                !ProjectCreator.RE_PACKAGE_NAME.matcher(packageName).matches()) {
-            errorAndExit(
-                "Package name '%1$s' contains invalid characters.\n" +
-                "A package name must be constitued of two Java identifiers.\n" +
-                "Each identifier allowed characters are: %2$s",
-                packageName, ProjectCreator.CHARS_PACKAGE_NAME);
-            return;
-        }
-
-        creator.createExportProject(projectDir, projectName, packageName);
     }
 
     /**
@@ -655,26 +741,6 @@ public class Main {
     }
 
     /**
-     * Updates an existing Android export project based on command-line parameters
-     */
-    private void updateExportProject() {
-        ProjectCreator creator = getProjectCreator();
-
-        String projectDir = getProjectLocation(mSdkCommandLine.getParamLocationPath());
-
-        String projectName = mSdkCommandLine.getParamName();
-        if (projectName != null &&
-                !ProjectCreator.RE_PROJECT_NAME.matcher(projectName).matches()) {
-            errorAndExit(
-                "Project name '%1$s' contains invalid characters.\nAllowed characters are: %2$s",
-                projectName, ProjectCreator.CHARS_PROJECT_NAME);
-            return;
-        }
-
-        creator.updateExportProject(projectDir, projectName, mSdkCommandLine.getFlagForce());
-    }
-
-    /**
      * Adjusts the project location to make it absolute & canonical relative to the
      * working directory, if any.
      *
@@ -711,11 +777,25 @@ public class Main {
     /**
      * Displays the list of available Targets (Platforms and Add-ons)
      */
-    private void displayTargetList() {
+    @VisibleForTesting(visibility=Visibility.PRIVATE)
+    void displayTargetList() {
+
+        // Compact output, suitable for scripts.
+        if (mSdkCommandLine != null && mSdkCommandLine.getFlagCompact()) {
+            char eol = mSdkCommandLine.getFlagEolNull() ? '\0' : '\n';
+
+            for (IAndroidTarget target : mSdkManager.getTargets()) {
+                mSdkLog.printf("%1$s%2$c", target.hashString(), eol);
+            }
+
+            return;
+        }
+
         mSdkLog.printf("Available Android targets:\n");
 
         int index = 1;
         for (IAndroidTarget target : mSdkManager.getTargets()) {
+            mSdkLog.printf("----------\n");
             mSdkLog.printf("id: %1$d or \"%2$s\"\n", index, target.hashString());
             mSdkLog.printf("     Name: %s\n", target.getName());
             if (target.isPlatform()) {
@@ -739,14 +819,14 @@ public class Main {
                     for (IOptionalLibrary library : libraries) {
                         mSdkLog.printf("      * %1$s (%2$s)\n",
                                 library.getName(), library.getJarName());
-                        mSdkLog.printf(String.format(
-                                "          %1$s\n", library.getDescription()));
+                        mSdkLog.printf("          %1$s\n", library.getDescription());
                     }
                 }
             }
 
-            // get the target skins
+            // get the target skins & ABIs
             displaySkinList(target, "     Skins: ");
+            displayAbiList (target, "     ABIs : ");
 
             if (target.getUsbVendorId() != IAndroidTarget.NO_USB_ID) {
                 mSdkLog.printf("     Adds USB support for devices (Vendor: 0x%04X)\n",
@@ -760,7 +840,8 @@ public class Main {
     /**
      * Displays the skins valid for the given target.
      */
-    private void displaySkinList(IAndroidTarget target, String message) {
+    @VisibleForTesting(visibility=Visibility.PRIVATE)
+    void displaySkinList(IAndroidTarget target, String message) {
         String[] skins = target.getSkins();
         String defaultSkin = target.getDefaultSkin();
         mSdkLog.printf(message);
@@ -785,72 +866,124 @@ public class Main {
     }
 
     /**
+     * Displays the ABIs valid for the given target.
+     */
+    @VisibleForTesting(visibility=Visibility.PRIVATE)
+    void displayAbiList(IAndroidTarget target, String message) {
+        ISystemImage[] systemImages = target.getSystemImages();
+        mSdkLog.printf(message);
+        if (systemImages.length > 0) {
+            boolean first = true;
+            for (ISystemImage si : systemImages) {
+                if (first == false) {
+                    mSdkLog.printf(", ");
+                } else {
+                    first = false;
+                }
+                mSdkLog.printf(si.getAbiType());
+            }
+            mSdkLog.printf("\n");
+        } else {
+            mSdkLog.printf("no ABIs.\n");
+        }
+    }
+
+    /**
+     * Displays the list of available AVDs for the given AvdManager.
+     *
+     * @param avdManager
+     */
+    @VisibleForTesting(visibility=Visibility.PRIVATE)
+    void displayAvdList(AvdManager avdManager) {
+
+        AvdInfo[] avds = avdManager.getValidAvds();
+
+        // Compact output, suitable for scripts.
+        if (mSdkCommandLine != null && mSdkCommandLine.getFlagCompact()) {
+            char eol = mSdkCommandLine.getFlagEolNull() ? '\0' : '\n';
+
+            for (int index = 0 ; index < avds.length ; index++) {
+                AvdInfo info = avds[index];
+                mSdkLog.printf("%1$s%2$c", info.getName(), eol);
+            }
+
+            return;
+        }
+
+        mSdkLog.printf("Available Android Virtual Devices:\n");
+
+        for (int index = 0 ; index < avds.length ; index++) {
+            AvdInfo info = avds[index];
+            if (index > 0) {
+                mSdkLog.printf("---------\n");
+            }
+            mSdkLog.printf("    Name: %s\n", info.getName());
+            mSdkLog.printf("    Path: %s\n", info.getDataFolderPath());
+
+            // get the target of the AVD
+            IAndroidTarget target = info.getTarget();
+            if (target.isPlatform()) {
+                mSdkLog.printf("  Target: %s (API level %s)\n", target.getName(),
+                        target.getVersion().getApiString());
+            } else {
+                mSdkLog.printf("  Target: %s (%s)\n", target.getName(), target
+                        .getVendor());
+                mSdkLog.printf("          Based on Android %s (API level %s)\n",
+                        target.getVersionName(), target.getVersion().getApiString());
+            }
+            mSdkLog.printf("     ABI: %s\n", info.getAbiType());
+
+            // display some extra values.
+            Map<String, String> properties = info.getProperties();
+            if (properties != null) {
+                String skin = properties.get(AvdManager.AVD_INI_SKIN_NAME);
+                if (skin != null) {
+                    mSdkLog.printf("    Skin: %s\n", skin);
+                }
+                String sdcard = properties.get(AvdManager.AVD_INI_SDCARD_SIZE);
+                if (sdcard == null) {
+                    sdcard = properties.get(AvdManager.AVD_INI_SDCARD_PATH);
+                }
+                if (sdcard != null) {
+                    mSdkLog.printf("  Sdcard: %s\n", sdcard);
+                }
+                String snapshot = properties.get(AvdManager.AVD_INI_SNAPSHOT_PRESENT);
+                if (snapshot != null) {
+                    mSdkLog.printf("Snapshot: %s\n", snapshot);
+                }
+            }
+        }
+
+        // Are there some unused AVDs?
+        AvdInfo[] badAvds = avdManager.getBrokenAvds();
+
+        if (badAvds.length == 0) {
+            return;
+        }
+
+        mSdkLog.printf("\nThe following Android Virtual Devices could not be loaded:\n");
+        boolean needSeparator = false;
+        for (AvdInfo info : badAvds) {
+            if (needSeparator) {
+                mSdkLog.printf("---------\n");
+            }
+            mSdkLog.printf("    Name: %s\n", info.getName() == null ? "--" : info.getName());
+            mSdkLog.printf("    Path: %s\n",
+                    info.getDataFolderPath() == null ? "--" : info.getDataFolderPath());
+
+            String error = info.getErrorMessage();
+            mSdkLog.printf("   Error: %s\n", error == null ? "Uknown error" : error);
+            needSeparator = true;
+        }
+    }
+
+    /**
      * Displays the list of available AVDs.
      */
     private void displayAvdList() {
         try {
             AvdManager avdManager = new AvdManager(mSdkManager, mSdkLog);
-
-            mSdkLog.printf("Available Android Virtual Devices:\n");
-
-            AvdInfo[] avds = avdManager.getValidAvds();
-            for (int index = 0 ; index < avds.length ; index++) {
-                AvdInfo info = avds[index];
-                if (index > 0) {
-                    mSdkLog.printf("---------\n");
-                }
-                mSdkLog.printf("    Name: %s\n", info.getName());
-                mSdkLog.printf("    Path: %s\n", info.getPath());
-
-                // get the target of the AVD
-                IAndroidTarget target = info.getTarget();
-                if (target.isPlatform()) {
-                    mSdkLog.printf("  Target: %s (API level %s)\n", target.getName(),
-                            target.getVersion().getApiString());
-                } else {
-                    mSdkLog.printf("  Target: %s (%s)\n", target.getName(), target
-                            .getVendor());
-                    mSdkLog.printf("          Based on Android %s (API level %s)\n",
-                            target.getVersionName(), target.getVersion().getApiString());
-                }
-
-                // display some extra values.
-                Map<String, String> properties = info.getProperties();
-                if (properties != null) {
-                    String skin = properties.get(AvdManager.AVD_INI_SKIN_NAME);
-                    if (skin != null) {
-                        mSdkLog.printf("    Skin: %s\n", skin);
-                    }
-                    String sdcard = properties.get(AvdManager.AVD_INI_SDCARD_SIZE);
-                    if (sdcard == null) {
-                        sdcard = properties.get(AvdManager.AVD_INI_SDCARD_PATH);
-                    }
-                    if (sdcard != null) {
-                        mSdkLog.printf("  Sdcard: %s\n", sdcard);
-                    }
-                }
-            }
-
-            // Are there some unused AVDs?
-            AvdInfo[] badAvds = avdManager.getBrokenAvds();
-
-            if (badAvds.length == 0) {
-                return;
-            }
-
-            mSdkLog.printf("\nThe following Android Virtual Devices could not be loaded:\n");
-            boolean needSeparator = false;
-            for (AvdInfo info : badAvds) {
-                if (needSeparator) {
-                    mSdkLog.printf("---------\n");
-                }
-                mSdkLog.printf("    Name: %s\n", info.getName() == null ? "--" : info.getName());
-                mSdkLog.printf("    Path: %s\n", info.getPath() == null ? "--" : info.getPath());
-
-                String error = info.getErrorMessage();
-                mSdkLog.printf("   Error: %s\n", error == null ? "Uknown error" : error);
-                needSeparator = true;
-            }
+            displayAvdList(avdManager);
         } catch (AndroidLocationException e) {
             errorAndExit(e.getMessage());
         }
@@ -903,8 +1036,7 @@ public class Main {
             if (paramFolderPath != null) {
                 avdFolder = new File(paramFolderPath);
             } else {
-                avdFolder = new File(AndroidLocation.getFolder() + AndroidLocation.FOLDER_AVD,
-                        avdName + AvdManager.AVD_FOLDER_EXTENSION);
+                avdFolder = AvdInfo.getDefaultAvdFolder(avdManager, avdName);
             }
 
             // Validate skin is either default (empty) or NNNxMMM or a valid skin name.
@@ -924,7 +1056,8 @@ public class Main {
 
                         // get the hardware properties for this skin
                         File skinFolder = avdManager.getSkinPath(skin, target);
-                        File skinHardwareFile = new File(skinFolder, AvdManager.HARDWARE_INI);
+                        FileWrapper skinHardwareFile = new FileWrapper(skinFolder,
+                                AvdManager.HARDWARE_INI);
                         if (skinHardwareFile.isFile()) {
                             skinHardwareConfig = ProjectProperties.parsePropertyFile(
                                     skinHardwareFile, mSdkLog);
@@ -942,6 +1075,20 @@ public class Main {
                     displaySkinList(target, "Valid skins: ");
                     errorAndExit("'%s' is not a valid skin name or size (NNNxMMM)", skin);
                     return;
+                }
+            }
+
+            String abiType = mSdkCommandLine.getParamAbi();
+            if (target != null && (abiType == null || abiType.length() == 0)) {
+                ISystemImage[] systemImages = target.getSystemImages();
+                if (systemImages != null && systemImages.length == 1) {
+                    // Auto-select the single ABI available
+                    abiType = systemImages[0].getAbiType();
+                    mSdkLog.printf("Auto-selecting single ABI %1$s\n", abiType);
+                } else {
+                    displayAbiList(target, "Valid ABIs: ");
+                    errorAndExit("This platform has more than one ABI. Please specify one using --%1$s.",
+                            SdkCommandLine.KEY_ABI);
                 }
             }
 
@@ -964,10 +1111,13 @@ public class Main {
             AvdInfo newAvdInfo = avdManager.createAvd(avdFolder,
                     avdName,
                     target,
+                    abiType,
                     skin,
                     mSdkCommandLine.getParamSdCard(),
                     hardwareConfig,
+                    mSdkCommandLine.getFlagSnapshot(),
                     removePrevious,
+                    false, //edit existing
                     mSdkLog);
 
         } catch (AndroidLocationException e) {
@@ -1023,7 +1173,7 @@ public class Main {
                 // check if paths are the same. Use File methods to account for OS idiosyncrasies.
                 try {
                     File f1 = new File(paramFolderPath).getCanonicalFile();
-                    File f2 = new File(info.getPath()).getCanonicalFile();
+                    File f2 = new File(info.getDataFolderPath()).getCanonicalFile();
                     if (f1.equals(f2)) {
                         // same canonical path, so not actually a move
                         paramFolderPath = null;
@@ -1049,7 +1199,8 @@ public class Main {
                 File originalFolder = new File(
                         AndroidLocation.getFolder() + AndroidLocation.FOLDER_AVD,
                         info.getName() + AvdManager.AVD_FOLDER_EXTENSION);
-                if (originalFolder.equals(info.getPath())) {
+                if (info.getDataFolderPath() != null &&
+                        originalFolder.equals(new File(info.getDataFolderPath()))) {
                     try {
                         // The AVD is using the default data folder path based on the AVD name.
                         // That folder needs to be adjusted to use the new name.
@@ -1071,7 +1222,7 @@ public class Main {
                 }
 
                 File ini = info.getIniFile();
-                if (ini.equals(AvdInfo.getIniFile(newName))) {
+                if (ini.equals(AvdInfo.getDefaultIniFile(avdManager, newName))) {
                     errorAndExit("The AVD file '%s' is in the way.", ini.getCanonicalPath());
                     return;
                 }
@@ -1123,6 +1274,52 @@ public class Main {
             errorAndExit(e.getMessage());
         }
     }
+
+
+    private void createIdentity() {
+        try {
+            String account = (String) mSdkCommandLine.getValue(
+                    SdkCommandLine.VERB_CREATE,
+                    SdkCommandLine.OBJECT_IDENTITY,
+                    SdkCommandLine.KEY_ACCOUNT);
+
+            String keystorePath = (String) mSdkCommandLine.getValue(
+                    SdkCommandLine.VERB_CREATE,
+                    SdkCommandLine.OBJECT_IDENTITY,
+                    SdkCommandLine.KEY_KEYSTORE);
+
+            String aliasName = (String) mSdkCommandLine.getValue(
+                    SdkCommandLine.VERB_CREATE,
+                    SdkCommandLine.OBJECT_IDENTITY,
+                    SdkCommandLine.KEY_ALIAS);
+
+            String keystorePass = (String) mSdkCommandLine.getValue(
+                    SdkCommandLine.VERB_CREATE,
+                    SdkCommandLine.OBJECT_IDENTITY,
+                    SdkCommandLine.KEY_STOREPASS);
+
+            if (keystorePass == null) {
+                keystorePass = promptPassword("Keystore Password:  ").trim();
+            }
+
+            String aliasPass = (String) mSdkCommandLine.getValue(
+                    SdkCommandLine.VERB_CREATE,
+                    SdkCommandLine.OBJECT_IDENTITY,
+                    SdkCommandLine.KEY_KEYPASS);
+
+            if (aliasPass == null) {
+                aliasPass = promptPassword("Alias Password:  ").trim();
+            }
+
+            MakeIdentity mi = new MakeIdentity(account, keystorePath, keystorePass,
+                    aliasName, aliasPass);
+
+            mi.make(System.out, mSdkLog);
+        } catch (Exception e) {
+            errorAndExit("Unexpected error: %s", e.getMessage());
+        }
+    }
+
 
     /**
      * Prompts the user to setup a hardware config for a Platform-based AVD.
@@ -1238,7 +1435,7 @@ public class Main {
     }
 
     /**
-     * Reads the line from the input stream.
+     * Reads a line from the input stream.
      * @param buffer
      * @throws IOException
      */
@@ -1263,6 +1460,45 @@ public class Main {
         }
 
         return new String(buffer, 0, count);
+    }
+
+    /**
+     * Reads a line from the input stream, masking it as much as possible.
+     */
+    private String promptPassword(String prompt) throws IOException {
+
+        // Setup a thread that tries to overwrite any input by
+        // masking the last character with a space. This is quite
+        // crude but is a documented workaround to the lack of a
+        // proper password getter.
+        final AtomicBoolean keepErasing = new AtomicBoolean(true);
+
+        Thread eraser = new Thread(new Runnable() {
+            public void run() {
+                while (keepErasing.get()) {
+                    System.err.print("\b ");    //$NON-NLS-1$. \b=Backspace
+                    try {
+                        Thread.sleep(10 /*millis*/);
+                    } catch (InterruptedException e) {
+                        // Ignore
+                    }
+                }
+            }
+        }, "eraser");                           //$NON-NLS-1$
+
+        try {
+            System.err.print(prompt);
+            eraser.start();
+            byte[] buffer = new byte[256];
+            return readLine(buffer);
+        } finally {
+            keepErasing.set(false);
+            try {
+                eraser.join();
+            } catch (InterruptedException e) {
+                // Ignore
+            }
+        }
     }
 
     /**

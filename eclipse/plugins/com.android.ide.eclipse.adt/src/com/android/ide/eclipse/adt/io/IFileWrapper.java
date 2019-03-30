@@ -16,14 +16,15 @@
 
 package com.android.ide.eclipse.adt.io;
 
-import com.android.sdklib.io.IAbstractFile;
-import com.android.sdklib.io.IAbstractFolder;
-import com.android.sdklib.io.StreamException;
+import com.android.io.IAbstractFile;
+import com.android.io.IAbstractFolder;
+import com.android.io.StreamException;
 
 import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.runtime.CoreException;
+import org.eclipse.core.runtime.NullProgressMonitor;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -90,11 +91,24 @@ public class IFileWrapper implements IAbstractFile {
         return mFile.exists();
     }
 
+    public boolean delete() {
+        try {
+            mFile.delete(true /*force*/, new NullProgressMonitor());
+            return true;
+        } catch (CoreException e) {
+            return false;
+        }
+    }
+
     /**
      * Returns the {@link IFile} object that the receiver could represent. Can be <code>null</code>
      */
     public IFile getIFile() {
         return mFile;
+    }
+
+    public long getModificationStamp() {
+        return mFile.getModificationStamp();
     }
 
     @Override
@@ -122,5 +136,10 @@ public class IFileWrapper implements IAbstractFile {
         }
 
         return null;
+    }
+
+    @Override
+    public String toString() {
+        return mFile.toString();
     }
 }

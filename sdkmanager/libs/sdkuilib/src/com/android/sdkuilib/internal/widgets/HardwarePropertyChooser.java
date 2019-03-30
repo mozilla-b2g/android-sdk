@@ -17,6 +17,7 @@
 package com.android.sdkuilib.internal.widgets;
 
 import com.android.sdklib.internal.avd.HardwareProperties.HardwareProperty;
+import com.android.sdklib.internal.avd.HardwareProperties.ValueType;
 import com.android.sdkuilib.ui.GridDialog;
 
 import org.eclipse.swt.SWT;
@@ -63,7 +64,8 @@ class HardwarePropertyChooser extends GridDialog {
         // simple list for index->name resolution.
         final ArrayList<String> indexToName = new ArrayList<String>();
         for (Entry<String, HardwareProperty> entry : mProperties.entrySet()) {
-            if (mExceptProperties.contains(entry.getKey()) == false) {
+            if (entry.getValue().isValidForUi() &&
+                    mExceptProperties.contains(entry.getKey()) == false) {
                 c.add(entry.getValue().getAbstract());
                 indexToName.add(entry.getKey());
             }
@@ -102,14 +104,21 @@ class HardwarePropertyChooser extends GridDialog {
     }
 
     private void processSelection(String name, boolean pack) {
-        mChosenProperty = mProperties.get(name);
-        mTypeLabel.setText(mChosenProperty.getType().getValue());
-        String desc = mChosenProperty.getDescription();
-        if (desc != null) {
-            mDescriptionLabel.setText(mChosenProperty.getDescription());
-        } else {
-            mDescriptionLabel.setText("N/A");
+        mChosenProperty = name == null ? null : mProperties.get(name);
+
+        String type = "Unknown";
+        String desc = "Unknown";
+
+        if (mChosenProperty != null) {
+            desc = mChosenProperty.getDescription();
+            ValueType vt = mChosenProperty.getType();
+            if (vt != null) {
+                type = vt.getValue();
+            }
         }
+
+        mTypeLabel.setText(type);
+        mDescriptionLabel.setText(desc);
 
         if (pack) {
             getShell().pack();

@@ -3,14 +3,29 @@
    <description url="https://android.corp.google.com/adt/">
       Update Site for Android Development Toolkit
    </description>
-   <feature url="features/com.android.ide.eclipse.adt_0.9.9.qualifier.jar" id="com.android.ide.eclipse.adt" version="0.9.9.qualifier">
+   <feature url="features/com.android.ide.eclipse.adt_16.0.0.qualifier.jar" id="com.android.ide.eclipse.adt" version="16.0.0.qualifier">
       <category name="developer"/>
    </feature>
-   <feature url="features/com.android.ide.eclipse.ddms_0.9.9.qualifier.jar" id="com.android.ide.eclipse.ddms" version="0.9.9.qualifier">
+   <feature url="features/com.android.ide.eclipse.ddms_16.0.0.qualifier.jar" id="com.android.ide.eclipse.ddms" version="16.0.0.qualifier">
       <category name="developer"/>
+      <category name="platform"/>
    </feature>
-   <feature url="features/com.android.ide.eclipse.tests_0.9.9.qualifier.jar" id="com.android.ide.eclipse.tests" version="0.9.9.qualifier">
+   <feature url="features/com.android.ide.eclipse.hierarchyviewer_16.0.0.qualifier.jar" id="com.android.ide.eclipse.hierarchyviewer" version="16.0.0.qualifier">
+      <category name="developer"/>
+      <category name="platform"/>
+   </feature>
+   <feature url="features/com.android.ide.eclipse.tests_16.0.0.qualifier.jar" id="com.android.ide.eclipse.tests" version="16.0.0.qualifier">
       <category name="test"/>
+   </feature>
+   <feature url="features/com.android.ide.eclipse.pdt_16.0.0.qualifier.jar" id="com.android.ide.eclipse.pdt" version="16.0.0.qualifier">
+      <category name="platform"/>
+   </feature>
+   <feature url="features/com.android.ide.eclipse.traceview_16.0.0.qualifier.jar" id="com.android.ide.eclipse.traceview" version="16.0.0.qualifier">
+      <category name="developer"/>
+      <category name="platform"/>
+   </feature>
+   <feature url="features/com.android.ide.eclipse.gldebugger_16.0.0.qualifier.jar" id="com.android.ide.eclipse.gldebugger" version="16.0.0.qualifier">
+      <category name="developer"/>
    </feature>
    <category-def name="developer" label="Application Developer Tools">
       <description>
@@ -20,6 +35,11 @@
    <category-def name="test" label="Plugin Developer Tests">
       <description>
          Tests for the other Android plugins
+      </description>
+   </category-def>
+   <category-def name="platform" label="Platform Tools">
+      <description>
+         Features that add Android support to Eclipse for platform developers.
       </description>
    </category-def>
 </site>

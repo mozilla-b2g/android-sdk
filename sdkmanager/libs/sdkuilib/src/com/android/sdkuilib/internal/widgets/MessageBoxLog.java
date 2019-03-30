@@ -95,26 +95,44 @@ public final class MessageBoxLog implements ISdkLog {
         if (logMessages.size() > 0) {
             final StringBuilder sb = new StringBuilder(mMessage + "\n\n");
             for (String msg : logMessages) {
-                sb.append(msg);
+                if (msg.length() > 0) {
+                    if (msg.charAt(0) != '\n') {
+                        int n = sb.length();
+                        if (n > 0 && sb.charAt(n-1) != '\n') {
+                            sb.append('\n');
+                        }
+                    }
+                    sb.append(msg);
+                }
             }
 
             // display the message
             // dialog box only run in ui thread..
-            mDisplay.asyncExec(new Runnable() {
-                public void run() {
-                    Shell shell = mDisplay.getActiveShell();
-                    // Use the success icon if the call indicates success.
-                    // However just use the error icon if the logger was only recording errors.
-                    if (success && !mLogErrorsOnly) {
-                        MessageDialog.openInformation(shell, "Android Virtual Devices Manager",
-                                sb.toString());
-                    } else {
-                        MessageDialog.openError(shell, "Android Virtual Devices Manager",
+            if (mDisplay != null && !mDisplay.isDisposed()) {
+                mDisplay.asyncExec(new Runnable() {
+                    public void run() {
+                        // This is typically displayed at the end, so make sure the UI
+                        // instances are not disposed.
+                        Shell shell = null;
+                        if (mDisplay != null && !mDisplay.isDisposed()) {
+                            shell = mDisplay.getActiveShell();
+                        }
+                        if (shell == null || shell.isDisposed()) {
+                            return;
+                        }
+                        // Use the success icon if the call indicates success.
+                        // However just use the error icon if the logger was only recording errors.
+                        if (success && !mLogErrorsOnly) {
+                            MessageDialog.openInformation(shell, "Android Virtual Devices Manager",
                                     sb.toString());
+                        } else {
+                            MessageDialog.openError(shell, "Android Virtual Devices Manager",
+                                        sb.toString());
 
+                        }
                     }
-                }
-            });
+                });
+            }
         }
     }
 }

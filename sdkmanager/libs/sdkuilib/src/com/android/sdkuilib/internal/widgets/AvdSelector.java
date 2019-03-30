@@ -21,15 +21,16 @@ import com.android.sdklib.IAndroidTarget;
 import com.android.sdklib.ISdkLog;
 import com.android.sdklib.NullSdkLog;
 import com.android.sdklib.SdkConstants;
+import com.android.sdklib.internal.avd.AvdInfo;
 import com.android.sdklib.internal.avd.AvdManager;
-import com.android.sdklib.internal.avd.AvdManager.AvdInfo;
-import com.android.sdklib.internal.avd.AvdManager.AvdInfo.AvdStatus;
+import com.android.sdklib.internal.avd.AvdInfo.AvdStatus;
 import com.android.sdklib.internal.repository.ITask;
 import com.android.sdklib.internal.repository.ITaskMonitor;
 import com.android.sdkuilib.internal.repository.SettingsController;
 import com.android.sdkuilib.internal.repository.icons.ImageFactory;
 import com.android.sdkuilib.internal.tasks.ProgressTask;
-import com.android.sdkuilib.repository.UpdaterWindow;
+import com.android.sdkuilib.repository.SdkUpdaterWindow;
+import com.android.sdkuilib.repository.SdkUpdaterWindow.SdkInvocationContext;
 
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.window.Window;
@@ -84,6 +85,7 @@ public final class AvdSelector {
     private Button mDeleteButton;
     private Button mDetailsButton;
     private Button mNewButton;
+    private Button mEditButton;
     private Button mRefreshButton;
     private Button mManagerButton;
     private Button mRepairButton;
@@ -257,6 +259,17 @@ public final class AvdSelector {
                 }
             });
 
+            mEditButton = new Button(buttons, SWT.PUSH | SWT.FLAT);
+            mEditButton.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
+            mEditButton.setText("Edit...");
+            mEditButton.setToolTipText("Edit an existing AVD.");
+            mEditButton.addSelectionListener(new SelectionAdapter() {
+                @Override
+                public void widgetSelected(SelectionEvent arg0) {
+                    onEdit();
+                }
+            });
+
             mDeleteButton = new Button(buttons, SWT.PUSH | SWT.FLAT);
             mDeleteButton.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
             mDeleteButton.setText("Delete...");
@@ -286,7 +299,7 @@ public final class AvdSelector {
         mDetailsButton = new Button(buttons, SWT.PUSH | SWT.FLAT);
         mDetailsButton.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
         mDetailsButton.setText("Details...");
-        mDetailsButton.setToolTipText("Diplays details of the selected AVD.");
+        mDetailsButton.setToolTipText("Displays details of the selected AVD.");
         mDetailsButton.addSelectionListener(new SelectionAdapter() {
             @Override
             public void widgetSelected(SelectionEvent arg0) {
@@ -360,8 +373,10 @@ public final class AvdSelector {
         column2.setText("Platform");
         final TableColumn column3 = new TableColumn(mTable, SWT.NONE);
         column3.setText("API Level");
+        final TableColumn column4 = new TableColumn(mTable, SWT.NONE);
+        column4.setText("CPU/ABI");
 
-        adjustColumnsWidth(mTable, column0, column1, column2, column3);
+        adjustColumnsWidth(mTable, column0, column1, column2, column3, column4);
         setupSelectionListener(mTable);
         fillTable(mTable);
         setEnabled(true);
@@ -621,16 +636,18 @@ public final class AvdSelector {
             final TableColumn column0,
             final TableColumn column1,
             final TableColumn column2,
-            final TableColumn column3) {
+            final TableColumn column3,
+            final TableColumn column4) {
         // Add a listener to resize the column to the full width of the table
         table.addControlListener(new ControlAdapter() {
             @Override
             public void controlResized(ControlEvent e) {
                 Rectangle r = table.getClientArea();
-                column0.setWidth(r.width * 25 / 100); // 25%
-                column1.setWidth(r.width * 45 / 100); // 45%
+                column0.setWidth(r.width * 20 / 100); // 20%
+                column1.setWidth(r.width * 30 / 100); // 30%
                 column2.setWidth(r.width * 15 / 100); // 15%
                 column3.setWidth(r.width * 15 / 100); // 15%
+                column4.setWidth(r.width * 20 / 100); // 22%
             }
         });
     }
@@ -765,10 +782,12 @@ public final class AvdSelector {
                         item.setText(1, target.getFullName());
                         item.setText(2, target.getVersionName());
                         item.setText(3, target.getVersion().getApiString());
+                        item.setText(4, AvdInfo.getPrettyAbiType(avd.getAbiType()));
                     } else {
                         item.setText(1, "?");
                         item.setText(2, "?");
                         item.setText(3, "?");
+                        item.setText(4, "?");
                     }
                 }
             }
@@ -807,11 +826,15 @@ public final class AvdSelector {
     /**
      * Updates the enable state of the Details, Start, Delete and Update buttons.
      */
+    @SuppressWarnings("null")
     private void enableActionButtons() {
         if (mIsEnabled == false) {
             mDetailsButton.setEnabled(false);
             mStartButton.setEnabled(false);
 
+            if (mEditButton != null) {
+                mEditButton.setEnabled(false);
+            }
             if (mDeleteButton != null) {
                 mDeleteButton.setEnabled(false);
             }
@@ -827,6 +850,9 @@ public final class AvdSelector {
                     hasSelection &&
                     selection.getStatus() == AvdStatus.OK);
 
+            if (mEditButton != null) {
+                mEditButton.setEnabled(hasSelection);
+            }
             if (mDeleteButton != null) {
                 mDeleteButton.setEnabled(hasSelection);
             }
@@ -840,7 +866,22 @@ public final class AvdSelector {
         AvdCreationDialog dlg = new AvdCreationDialog(mTable.getShell(),
                 mAvdManager,
                 mImageFactory,
-                mSdkLog);
+                mSdkLog,
+                null);
+
+        if (dlg.open() == Window.OK) {
+            refresh(false /*reload*/);
+        }
+    }
+
+    private void onEdit() {
+        AvdInfo avdInfo = getTableSelection();
+
+        AvdCreationDialog dlg = new AvdCreationDialog(mTable.getShell(),
+                mAvdManager,
+                mImageFactory,
+                mSdkLog,
+                avdInfo);
 
         if (dlg.open() == Window.OK) {
             refresh(false /*reload*/);
@@ -848,7 +889,7 @@ public final class AvdSelector {
     }
 
     private void onDetails() {
-        final AvdInfo avdInfo = getTableSelection();
+        AvdInfo avdInfo = getTableSelection();
 
         AvdDetailsDialog dlg = new AvdDetailsDialog(mTable.getShell(), avdInfo);
         dlg.open();
@@ -969,11 +1010,11 @@ public final class AvdSelector {
             log = new MessageBoxLog("Result of SDK Manager", display, true /*logErrorsOnly*/);
         }
 
-        UpdaterWindow window = new UpdaterWindow(
+        SdkUpdaterWindow window = new SdkUpdaterWindow(
                 mTable.getShell(),
                 log,
                 mAvdManager.getSdkManager().getLocation(),
-                false /*userCanChangeSdkRoot*/);
+                SdkInvocationContext.AVD_SELECTOR);
         window.open();
         refresh(true /*reload*/); // UpdaterWindow uses its own AVD manager so this one must reload.
 
@@ -992,10 +1033,9 @@ public final class AvdSelector {
         AvdStartDialog dialog = new AvdStartDialog(mTable.getShell(), avdInfo, mOsSdkPath,
                 mController);
         if (dialog.open() == Window.OK) {
-            String path = mOsSdkPath +
-                File.separator +
-                SdkConstants.OS_SDK_TOOLS_FOLDER +
-                SdkConstants.FN_EMULATOR;
+            String path = mOsSdkPath + File.separator
+                    + SdkConstants.OS_SDK_TOOLS_FOLDER
+                    + SdkConstants.FN_EMULATOR;
 
             final String avdName = avdInfo.getName();
 
@@ -1004,8 +1044,16 @@ public final class AvdSelector {
             list.add(path);
             list.add("-avd");                             //$NON-NLS-1$
             list.add(avdName);
-            if (dialog.getWipeData()) {
+            if (dialog.hasWipeData()) {
                 list.add("-wipe-data");                   //$NON-NLS-1$
+            }
+            if (dialog.hasSnapshot()) {
+                if (!dialog.hasSnapshotLaunch()) {
+                    list.add("-no-snapshot-load");
+                }
+                if (!dialog.hasSnapshotSave()) {
+                    list.add("-no-snapshot-save");
+                }
             }
             float scale = dialog.getScale();
             if (scale != 0.f) {
@@ -1029,7 +1077,8 @@ public final class AvdSelector {
                     new ITask() {
                         public void run(ITaskMonitor monitor) {
                             try {
-                                monitor.setDescription("Starting emulator for AVD '%1$s'",
+                                monitor.setDescription(
+                                        "Starting emulator for AVD '%1$s'",
                                         avdName);
                                 int n = 10;
                                 monitor.setProgressMax(n);
@@ -1051,7 +1100,7 @@ public final class AvdSelector {
                                     }
                                 }
                             } catch (IOException e) {
-                                monitor.setResult("Failed to start emulator: %1$s",
+                                monitor.logError("Failed to start emulator: %1$s",
                                         e.getMessage());
                             }
                         }
@@ -1078,7 +1127,7 @@ public final class AvdSelector {
                     while (true) {
                         String line = errReader.readLine();
                         if (line != null) {
-                            monitor.setResult("%1$s", line);    //$NON-NLS-1$
+                            monitor.logError("%1$s", line);    //$NON-NLS-1$
                         } else {
                             break;
                         }
@@ -1099,7 +1148,7 @@ public final class AvdSelector {
                     while (true) {
                         String line = outReader.readLine();
                         if (line != null) {
-                            monitor.setResult("%1$s", line);    //$NON-NLS-1$
+                            monitor.log("%1$s", line);    //$NON-NLS-1$
                         } else {
                             break;
                         }

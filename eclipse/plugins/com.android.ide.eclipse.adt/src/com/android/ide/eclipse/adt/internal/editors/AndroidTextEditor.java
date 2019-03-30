@@ -78,7 +78,7 @@ public abstract class AndroidTextEditor extends FormEditor implements IResourceC
     private static final String PREF_CURRENT_PAGE = "_current_page";
 
     /** Id string used to create the Android SDK browser */
-    private static String BROWSER_ID = "android"; // $NON-NLS-1$
+    private static String BROWSER_ID = "android"; //$NON-NLS-1$
 
     /** Page id of the XML source editor, used for switching tabs programmatically */
     public final static String TEXT_EDITOR_ID = "editor_part"; //$NON-NLS-1$
@@ -315,6 +315,20 @@ public abstract class AndroidTextEditor extends FormEditor implements IResourceC
         if (!(editorInput instanceof IFileEditorInput))
             throw new PartInitException("Invalid Input: Must be IFileEditorInput");
         super.init(site, editorInput);
+    }
+
+    /**
+     * Returns the {@link IFile} matching the editor's input or null.
+     * <p/>
+     * By construction, the editor input has to be an {@link IFileEditorInput} so it must
+     * have an associated {@link IFile}. Null can only be returned if this editor has no
+     * input somehow.
+     */
+    public IFile getFile() {
+        if (getEditorInput() instanceof IFileEditorInput) {
+            return ((IFileEditorInput) getEditorInput()).getFile();
+        }
+        return null;
     }
 
     /**

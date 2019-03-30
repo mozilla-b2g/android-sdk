@@ -16,15 +16,15 @@
 
 package com.android.ide.eclipse.adt.internal.ui;
 
+import com.android.ide.common.resources.ResourceFile;
+import com.android.ide.common.resources.ResourceItem;
 import com.android.ide.eclipse.adt.AdtPlugin;
-import com.android.ide.eclipse.adt.AndroidConstants;
-import com.android.ide.eclipse.adt.internal.resources.manager.ProjectResourceItem;
+import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.internal.resources.manager.ProjectResources;
-import com.android.ide.eclipse.adt.internal.resources.manager.ResourceFile;
 import com.android.ide.eclipse.adt.internal.resources.manager.ResourceManager;
 import com.android.ide.eclipse.adt.internal.resources.manager.GlobalProjectMonitor.IResourceEventListener;
 import com.android.ide.eclipse.adt.io.IFileWrapper;
-import com.android.sdklib.io.IAbstractFile;
+import com.android.io.IAbstractFile;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
@@ -76,9 +76,9 @@ public class ResourceExplorerView extends ViewPart implements ISelectionListener
     // Note: keep using the obsolete AndroidConstants.EDITORS_NAMESPACE (which used
     // to be the Editors Plugin ID) to keep existing preferences functional.
     private final static String PREFS_COLUMN_RES =
-        AndroidConstants.EDITORS_NAMESPACE + "ResourceExplorer.Col1"; //$NON-NLS-1$
+        AdtConstants.EDITORS_NAMESPACE + "ResourceExplorer.Col1"; //$NON-NLS-1$
     private final static String PREFS_COLUMN_2 =
-        AndroidConstants.EDITORS_NAMESPACE + "ResourceExplorer.Col2"; //$NON-NLS-1$
+        AdtConstants.EDITORS_NAMESPACE + "ResourceExplorer.Col2"; //$NON-NLS-1$
 
     private Tree mTree;
     private TreeViewer mTreeViewer;
@@ -138,10 +138,10 @@ public class ResourceExplorerView extends ViewPart implements ISelectionListener
                                 }
                             } catch (PartInitException e) {
                             }
-                        } else if (element instanceof ProjectResourceItem) {
+                        } else if (element instanceof ResourceItem) {
                             // if it's a ResourceItem, we open the first file, but only if
                             // there's no alternate files.
-                            ProjectResourceItem item = (ProjectResourceItem)element;
+                            ResourceItem item = (ResourceItem)element;
 
                             if (item.isEditableDirectly()) {
                                 ResourceFile[] files = item.getSourceFileArray();
@@ -240,7 +240,7 @@ public class ResourceExplorerView extends ViewPart implements ISelectionListener
         try {
             // if it's an android project, then we get its resources, and feed them
             // to the tree viewer.
-            if (project.hasNature(AndroidConstants.NATURE_DEFAULT)) {
+            if (project.hasNature(AdtConstants.NATURE_DEFAULT)) {
                 if (mCurrentProject != project) {
                     ProjectResources projRes = ResourceManager.getInstance().getProjectResources(
                             project);

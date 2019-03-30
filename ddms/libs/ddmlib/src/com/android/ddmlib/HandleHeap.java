@@ -23,7 +23,6 @@ import java.io.IOException;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Collections;
 
 /**
  * Handle heap status updates.
@@ -513,6 +512,7 @@ final class HandleHeap extends ChunkHandler {
         data.position(messageHdrLen);
 
         ArrayList<AllocationInfo> list = new ArrayList<AllocationInfo>(numEntries);
+        int allocNumber = numEntries; // order value for the entry. This is sent in reverse order.
         for (int i = 0; i < numEntries; i++) {
             int totalSize;
             int threadId, classNameIndex, stackDepth;
@@ -553,12 +553,9 @@ final class HandleHeap extends ChunkHandler {
                     data.get();
             }
 
-            list.add(new AllocationInfo(classNames[classNameIndex],
+            list.add(new AllocationInfo(allocNumber--, classNames[classNameIndex],
                 totalSize, (short) threadId, steArray));
         }
-
-        // sort biggest allocations first.
-        Collections.sort(list);
 
         client.getClientData().setAllocations(list.toArray(new AllocationInfo[numEntries]));
         client.update(Client.CHANGE_HEAP_ALLOCATIONS);

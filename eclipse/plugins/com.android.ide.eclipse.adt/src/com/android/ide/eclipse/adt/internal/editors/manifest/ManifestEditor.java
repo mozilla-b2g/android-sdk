@@ -16,8 +16,8 @@
 
 package com.android.ide.eclipse.adt.internal.editors.manifest;
 
+import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
-import com.android.ide.eclipse.adt.AndroidConstants;
 import com.android.ide.eclipse.adt.internal.editors.AndroidXmlEditor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.manifest.descriptors.AndroidManifestDescriptors;
@@ -41,7 +41,7 @@ import org.eclipse.core.runtime.CoreException;
 import org.eclipse.ui.IEditorInput;
 import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.PartInitException;
-import org.eclipse.ui.part.FileEditorInput;
+import org.eclipse.wst.sse.core.internal.provisional.IStructuredModel;
 import org.w3c.dom.Document;
 import org.w3c.dom.Node;
 
@@ -54,9 +54,10 @@ import javax.xml.xpath.XPathExpressionException;
 /**
  * Multi-page form editor for AndroidManifest.xml.
  */
+@SuppressWarnings("restriction")
 public final class ManifestEditor extends AndroidXmlEditor {
 
-    public static final String ID = AndroidConstants.EDITORS_NAMESPACE + ".manifest.ManifestEditor"; //$NON-NLS-1$
+    public static final String ID = AdtConstants.EDITORS_NAMESPACE + ".manifest.ManifestEditor"; //$NON-NLS-1$
 
     private final static String EMPTY = ""; //$NON-NLS-1$
 
@@ -198,8 +199,15 @@ public final class ManifestEditor extends AndroidXmlEditor {
     }
 
     private void onDescriptorsChanged() {
-        Node node = getManifestXmlNode(getXmlDocument(getModelForRead()));
-        mUiManifestNode.reloadFromXmlNode(node);
+        IStructuredModel model = getModelForRead();
+        if (model != null) {
+            try {
+                Node node = getManifestXmlNode(getXmlDocument(model));
+                mUiManifestNode.reloadFromXmlNode(node);
+            } finally {
+                model.releaseFromRead();
+            }
+        }
 
         if (mOverviewPage != null) {
             mOverviewPage.refreshUiApplicationNode();
@@ -234,7 +242,8 @@ public final class ManifestEditor extends AndroidXmlEditor {
                 }
             };
 
-            GlobalProjectMonitor.getMonitor().addFileListener(mMarkerMonitor, IResourceDelta.CHANGED);
+            GlobalProjectMonitor.getMonitor().addFileListener(
+                    mMarkerMonitor, IResourceDelta.CHANGED);
         }
     }
 
@@ -246,17 +255,17 @@ public final class ManifestEditor extends AndroidXmlEditor {
     private void updateFromExistingMarkers(IFile inputFile) {
         try {
             // get the markers for the file
-            IMarker[] markers = inputFile.findMarkers(AndroidConstants.MARKER_ANDROID, true,
-                    IResource.DEPTH_ZERO);
+            IMarker[] markers = inputFile.findMarkers(
+                    AdtConstants.MARKER_ANDROID, true, IResource.DEPTH_ZERO);
 
             AndroidManifestDescriptors desc = getManifestDescriptors();
             if (desc != null) {
                 ElementDescriptor appElement = desc.getApplicationElement();
 
-                if (appElement != null) {
-                    UiElementNode app_ui_node = mUiManifestNode.findUiChildNode(
+                if (appElement != null && mUiManifestNode != null) {
+                    UiElementNode appUiNode = mUiManifestNode.findUiChildNode(
                             appElement.getXmlName());
-                    List<UiElementNode> children = app_ui_node.getUiChildren();
+                    List<UiElementNode> children = appUiNode.getUiChildren();
 
                     for (IMarker marker : markers) {
                         processMarker(marker, children, IResourceDelta.ADDED);
@@ -295,19 +304,19 @@ public final class ManifestEditor extends AndroidXmlEditor {
      */
     private void processMarker(IMarker marker, List<UiElementNode> nodeList, int kind) {
         // get the data from the marker
-        String nodeType = marker.getAttribute(AndroidConstants.MARKER_ATTR_TYPE, EMPTY);
+        String nodeType = marker.getAttribute(AdtConstants.MARKER_ATTR_TYPE, EMPTY);
         if (nodeType == EMPTY) {
             return;
         }
 
-        String className = marker.getAttribute(AndroidConstants.MARKER_ATTR_CLASS, EMPTY);
+        String className = marker.getAttribute(AdtConstants.MARKER_ATTR_CLASS, EMPTY);
         if (className == EMPTY) {
             return;
         }
 
         for (UiElementNode ui_node : nodeList) {
             if (ui_node.getDescriptor().getXmlName().equals(nodeType)) {
-                for (UiAttributeNode attr : ui_node.getUiAttributes()) {
+                for (UiAttributeNode attr : ui_node.getAllUiAttributes()) {
                     if (attr.getDescriptor().getXmlLocalName().equals(
                             AndroidManifestDescriptors.ANDROID_NAME_ATTR)) {
                         if (attr.getCurrentValue().equals(className)) {
@@ -342,29 +351,30 @@ public final class ManifestEditor extends AndroidXmlEditor {
             mUiManifestNode = manifestElement.createUiNode();
             mUiManifestNode.setEditor(this);
 
-            // Similarly, always create the /manifest/application and /manifest/uses-sdk nodes
-            ElementDescriptor appElement = manifestDescriptor.getApplicationElement();
+            // Similarly, always create the /manifest/uses-sdk followed by /manifest/application
+            // (order of the elements now matters)
+            ElementDescriptor element = manifestDescriptor.getUsesSdkElement();
             boolean present = false;
             for (UiElementNode ui_node : mUiManifestNode.getUiChildren()) {
-                if (ui_node.getDescriptor() == appElement) {
+                if (ui_node.getDescriptor() == element) {
                     present = true;
                     break;
                 }
             }
             if (!present) {
-                mUiManifestNode.appendNewUiChild(appElement);
+                mUiManifestNode.appendNewUiChild(element);
             }
 
-            appElement = manifestDescriptor.getUsesSdkElement();
+            element = manifestDescriptor.getApplicationElement();
             present = false;
             for (UiElementNode ui_node : mUiManifestNode.getUiChildren()) {
-                if (ui_node.getDescriptor() == appElement) {
+                if (ui_node.getDescriptor() == element) {
                     present = true;
                     break;
                 }
             }
             if (!present) {
-                mUiManifestNode.appendNewUiChild(appElement);
+                mUiManifestNode.appendNewUiChild(element);
             }
 
             onDescriptorsChanged();
@@ -377,18 +387,5 @@ public final class ManifestEditor extends AndroidXmlEditor {
             mUiManifestNode = desc.createUiNode();
             mUiManifestNode.setEditor(this);
         }
-    }
-
-    /**
-     * Returns the {@link IFile} being edited, or <code>null</code> if it couldn't be computed.
-     */
-    private IFile getInputFile() {
-        IEditorInput input = getEditorInput();
-        if (input instanceof FileEditorInput) {
-            FileEditorInput fileInput = (FileEditorInput) input;
-            return fileInput.getFile();
-        }
-
-        return null;
     }
 }

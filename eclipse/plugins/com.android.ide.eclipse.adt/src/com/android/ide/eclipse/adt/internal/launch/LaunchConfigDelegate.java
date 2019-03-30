@@ -17,8 +17,8 @@
 package com.android.ide.eclipse.adt.internal.launch;
 
 import com.android.ddmlib.AndroidDebugBridge;
+import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
-import com.android.ide.eclipse.adt.AndroidConstants;
 import com.android.ide.eclipse.adt.internal.launch.AndroidLaunchConfiguration.TargetMode;
 import com.android.ide.eclipse.adt.internal.project.AndroidManifestHelper;
 import com.android.ide.eclipse.adt.internal.project.ProjectHelper;
@@ -31,8 +31,6 @@ import org.eclipse.core.resources.IWorkspace;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IProgressMonitor;
-import org.eclipse.core.runtime.IStatus;
-import org.eclipse.core.runtime.Status;
 import org.eclipse.debug.core.ILaunch;
 import org.eclipse.debug.core.ILaunchConfiguration;
 import org.eclipse.debug.core.model.LaunchConfigurationDelegate;
@@ -140,6 +138,12 @@ public class LaunchConfigDelegate extends LaunchConfigurationDelegate {
             androidLaunch.stopLaunch();
             return;
         }
+
+        // make sure the project and its dependencies are built
+        // and PostCompilerBuilder runs.
+        // This is a synchronous call which returns when the
+        // build is done.
+        ProjectHelper.doFullIncrementalDebugBuild(project, monitor);
 
         // check if the project has errors, and abort in this case.
         if (ProjectHelper.hasError(project, true)) {
@@ -323,18 +327,10 @@ public class LaunchConfigDelegate extends LaunchConfigurationDelegate {
     @Override
     public boolean buildForLaunch(ILaunchConfiguration configuration,
             String mode, IProgressMonitor monitor) throws CoreException {
-
-        // need to check we have everything
-        IProject project = getProject(configuration);
-
-        if (project != null) {
-            // force an incremental build to be sure the resources will
-            // be updated if they were not saved before the launch was launched.
-            return true;
-        }
-
-        throw new CoreException(new Status(IStatus.ERROR, AdtPlugin.PLUGIN_ID,
-                        1 /* code, unused */, "Can't find the project!", null /* exception */));
+        // if this returns true, this forces a full workspace rebuild which is not
+        // what we want.
+        // Instead in the #launch method, we'll rebuild only the launching project.
+        return false;
     }
 
     /**
@@ -385,7 +381,7 @@ public class LaunchConfigDelegate extends LaunchConfigurationDelegate {
             return false;
         }
 
-        if (project.hasNature(AndroidConstants.NATURE_DEFAULT) == false) {
+        if (project.hasNature(AdtConstants.NATURE_DEFAULT) == false) {
             String msg = String.format("%1$s is not an Android project!", project.getName());
             AdtPlugin.displayError("Android Launch", msg);
             return false;

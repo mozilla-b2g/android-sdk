@@ -234,6 +234,60 @@
         </d:config>
     </d:device>
 
+    <d:device name="4in WVGA (Nexus S)">
+        <d:default>
+            <d:screen-size>normal</d:screen-size>
+            <d:screen-ratio>long</d:screen-ratio>
+            <d:screen-orientation>port</d:screen-orientation>
+            <d:pixel-density>hdpi</d:pixel-density>
+            <d:touch-type>finger</d:touch-type>
+            <d:keyboard-state>keyssoft</d:keyboard-state>
+            <d:text-input-method>nokeys</d:text-input-method>
+            <d:nav-state>navexposed</d:nav-state>
+            <d:nav-method>nonav</d:nav-method>
+            <d:screen-dimension>
+                <d:size>480</d:size>
+                <d:size>800</d:size>
+            </d:screen-dimension>
+            <d:xdpi>235</d:xdpi>
+            <d:ydpi>235</d:ydpi>
+        </d:default>
+
+        <d:config name="Portrait">
+            <d:screen-orientation>port</d:screen-orientation>
+        </d:config>
+        <d:config name="Landscape">
+            <d:screen-orientation>land</d:screen-orientation>
+        </d:config>
+    </d:device>
+
+    <d:device name="4.7in WXGA">
+        <d:default>
+            <d:screen-size>normal</d:screen-size>
+            <d:screen-ratio>long</d:screen-ratio>
+            <d:screen-orientation>port</d:screen-orientation>
+            <d:pixel-density>xhdpi</d:pixel-density>
+            <d:touch-type>finger</d:touch-type>
+            <d:keyboard-state>keyssoft</d:keyboard-state>
+            <d:text-input-method>nokeys</d:text-input-method>
+            <d:nav-state>navexposed</d:nav-state>
+            <d:nav-method>nonav</d:nav-method>
+            <d:screen-dimension>
+                <d:size>1280</d:size>
+                <d:size>720</d:size>
+            </d:screen-dimension>
+            <d:xdpi>320</d:xdpi>
+            <d:ydpi>320</d:ydpi>
+        </d:default>
+
+        <d:config name="Portrait">
+            <d:screen-orientation>port</d:screen-orientation>
+        </d:config>
+        <d:config name="Landscape">
+            <d:screen-orientation>land</d:screen-orientation>
+        </d:config>
+    </d:device>
+
     <d:device name="5.1in WVGA">
         <d:default>
             <d:screen-size>large</d:screen-size>
@@ -285,6 +339,61 @@
         </d:config>
         <d:config name="Landscape">
             <d:screen-orientation>land</d:screen-orientation>
+        </d:config>
+    </d:device>
+
+    <d:device name="7in WSVGA (Tablet)">
+        <d:default>
+            <d:screen-size>large</d:screen-size>
+            <d:screen-ratio>long</d:screen-ratio>
+            <d:screen-orientation>land</d:screen-orientation>
+            <d:pixel-density>mdpi</d:pixel-density>
+            <d:touch-type>finger</d:touch-type>
+            <d:keyboard-state>keyssoft</d:keyboard-state>
+            <d:text-input-method>nokeys</d:text-input-method>
+            <d:nav-state>navexposed</d:nav-state>
+            <d:nav-method>nonav</d:nav-method>
+            <d:screen-dimension>
+                <d:size>1024</d:size>
+                <d:size>600</d:size>
+            </d:screen-dimension>
+            <d:xdpi>169</d:xdpi>
+            <d:ydpi>169</d:ydpi>
+        </d:default>
+
+        <d:config name="Landscape">
+            <d:screen-orientation>land</d:screen-orientation>
+        </d:config>
+        <d:config name="Portrait">
+            <d:screen-orientation>port</d:screen-orientation>
+        </d:config>
+    </d:device>
+
+
+    <d:device name="10.1in WXGA (Tablet)">
+        <d:default>
+            <d:screen-size>xlarge</d:screen-size>
+            <d:screen-ratio>long</d:screen-ratio>
+            <d:screen-orientation>land</d:screen-orientation>
+            <d:pixel-density>mdpi</d:pixel-density>
+            <d:touch-type>finger</d:touch-type>
+            <d:keyboard-state>keyssoft</d:keyboard-state>
+            <d:text-input-method>nokeys</d:text-input-method>
+            <d:nav-state>navexposed</d:nav-state>
+            <d:nav-method>nonav</d:nav-method>
+            <d:screen-dimension>
+                <d:size>1280</d:size>
+                <d:size>800</d:size>
+            </d:screen-dimension>
+            <d:xdpi>149</d:xdpi>
+            <d:ydpi>149</d:ydpi>
+        </d:default>
+
+        <d:config name="Landscape">
+            <d:screen-orientation>land</d:screen-orientation>
+        </d:config>
+        <d:config name="Portrait">
+            <d:screen-orientation>port</d:screen-orientation>
         </d:config>
     </d:device>
 </d:layout-devices>

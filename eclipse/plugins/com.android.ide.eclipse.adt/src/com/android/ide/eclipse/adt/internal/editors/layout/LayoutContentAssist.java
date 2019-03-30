@@ -16,18 +16,45 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout;
 
+import com.android.annotations.VisibleForTesting;
 import com.android.ide.eclipse.adt.internal.editors.AndroidContentAssist;
+import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
 import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetData;
+
+import org.w3c.dom.Node;
 
 /**
  * Content Assist Processor for /res/layout XML files
  */
-class LayoutContentAssist extends AndroidContentAssist {
+@VisibleForTesting
+public final class LayoutContentAssist extends AndroidContentAssist {
 
     /**
-     * Constructor for LayoutContentAssist 
+     * Constructor for LayoutContentAssist
      */
     public LayoutContentAssist() {
         super(AndroidTargetData.DESCRIPTOR_LAYOUT);
+    }
+
+    @Override
+    protected Object[] getChoicesForElement(String parent, Node currentNode) {
+        Object[] choices = super.getChoicesForElement(parent, currentNode);
+        if (choices == null) {
+            if (currentNode.getParentNode().getNodeType() == Node.ELEMENT_NODE) {
+                String parentName = currentNode.getParentNode().getNodeName();
+                if (parentName.indexOf('.') != -1) {
+                    // Custom view with unknown children; just use the root descriptor
+                    // to get all eligible views instead
+                    ElementDescriptor[] children = getRootDescriptor().getChildren();
+                    for (ElementDescriptor e : children) {
+                        if (e.getXmlName().startsWith(parent)) {
+                            return sort(children);
+                        }
+                    }
+                }
+            }
+        }
+
+        return choices;
     }
 }

@@ -16,13 +16,13 @@
 
 package com.android.ide.eclipse.adt.internal.wizards.export;
 
-import com.android.ide.eclipse.adt.AndroidConstants;
+import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.internal.editors.IconFactory;
 import com.android.ide.eclipse.adt.internal.project.AndroidManifestHelper;
 import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper;
 import com.android.ide.eclipse.adt.internal.project.ProjectChooserHelper;
-import com.android.ide.eclipse.adt.internal.project.ProjectHelper;
 import com.android.ide.eclipse.adt.internal.project.ProjectChooserHelper.NonLibraryProjectOnlyFilter;
+import com.android.ide.eclipse.adt.internal.project.ProjectHelper;
 import com.android.ide.eclipse.adt.internal.wizards.export.ExportWizard.ExportWizardPage;
 import com.android.sdklib.xml.ManifestData;
 
@@ -40,11 +40,11 @@ import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Composite;
-import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Text;
 
 import java.io.File;
+import java.io.IOException;
 
 /**
  * First Export Wizard Page. Display warning/errors.
@@ -54,7 +54,6 @@ final class ProjectCheckPage extends ExportWizardPage {
     private final static String IMG_WARNING = "warning.png"; //$NON-NLS-1$
 
     private final ExportWizard mWizard;
-    private Display mDisplay;
     private Image mError;
     private Image mWarning;
     private boolean mHasMessage = false;
@@ -75,7 +74,6 @@ final class ProjectCheckPage extends ExportWizardPage {
     public void createControl(Composite parent) {
         mProjectChooserHelper = new ProjectChooserHelper(parent.getShell(),
                 new NonLibraryProjectOnlyFilter());
-        mDisplay = parent.getDisplay();
 
         GridLayout gl = null;
         GridData gd = null;
@@ -160,7 +158,7 @@ final class ProjectCheckPage extends ExportWizardPage {
             mHasMessage = true;
         } else {
             try {
-                if (project.hasNature(AndroidConstants.NATURE_DEFAULT) == false) {
+                if (project.hasNature(AdtConstants.NATURE_DEFAULT) == false) {
                     addError(mErrorComposite, "Project is not an Android project.");
                 } else {
                     // check for errors
@@ -169,25 +167,11 @@ final class ProjectCheckPage extends ExportWizardPage {
                     }
 
                     // check the project output
-                    IFolder outputIFolder = BaseProjectHelper.getOutputFolder(project);
-                    if (outputIFolder != null) {
-                        String outputOsPath =  outputIFolder.getLocation().toOSString();
-                        String apkFilePath =  outputOsPath + File.separator + project.getName() +
-                                AndroidConstants.DOT_ANDROID_PACKAGE;
-
-                        File f = new File(apkFilePath);
-                        if (f.isFile() == false) {
-                            addError(mErrorComposite,
-                                    String.format("%1$s/%2$s/%1$s%3$s does not exists!",
-                                            project.getName(),
-                                            outputIFolder.getName(),
-                                            AndroidConstants.DOT_ANDROID_PACKAGE));
-                        }
-                    } else {
+                    IFolder outputIFolder = BaseProjectHelper.getJavaOutputFolder(project);
+                    if (outputIFolder == null) {
                         addError(mErrorComposite,
                                 "Unable to get the output folder of the project!");
                     }
-
 
                     // project is an android project, we check the debuggable attribute.
                     ManifestData manifestData = AndroidManifestHelper.parseForData(project);
@@ -198,7 +182,9 @@ final class ProjectCheckPage extends ExportWizardPage {
 
                     if (debuggable != null && debuggable == Boolean.TRUE) {
                         addWarning(mErrorComposite,
-                                "The manifest 'debuggable' attribute is set to true.\nYou should set it to false for applications that you release to the public.");
+                                "The manifest 'debuggable' attribute is set to true.\n" +
+                                "You should set it to false for applications that you release to the public.\n\n" +
+                                "Applications with debuggable=true are compiled in debug mode always.");
                     }
 
                     // check for mapview stuff

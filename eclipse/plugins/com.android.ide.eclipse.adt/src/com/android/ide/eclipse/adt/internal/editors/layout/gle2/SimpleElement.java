@@ -16,10 +16,11 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
-import com.android.ide.eclipse.adt.editors.layout.gscripts.IDragElement;
-import com.android.ide.eclipse.adt.editors.layout.gscripts.Rect;
+import com.android.ide.common.api.IDragElement;
+import com.android.ide.common.api.Rect;
 
 import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Represents an XML element with a name, attributes and inner elements.
@@ -39,8 +40,8 @@ public class SimpleElement implements IDragElement {
     private final String mParentFqcn;
     private final Rect mBounds;
     private final Rect mParentBounds;
-    private final ArrayList<IDragAttribute> mAttributes = new ArrayList<IDragAttribute>();
-    private final ArrayList<IDragElement> mElements = new ArrayList<IDragElement>();
+    private final List<IDragAttribute> mAttributes = new ArrayList<IDragAttribute>();
+    private final List<IDragElement> mElements = new ArrayList<IDragElement>();
 
     private IDragAttribute[] mCachedAttributes = null;
     private IDragElement[] mCachedElements = null;
@@ -74,7 +75,7 @@ public class SimpleElement implements IDragElement {
     /**
      * Returns the bounds of the element's node, if it originated from an existing
      * canvas. The rectangle is invalid and non-null when the element originated
-     * from the object palette.
+     * from the object palette (unless it successfully rendered a preview)
      */
     public Rect getBounds() {
         return mBounds;
@@ -290,7 +291,7 @@ public class SimpleElement implements IDragElement {
                     mAttributes.size() == se.mAttributes.size() &&
                     mElements.size() == se.mElements.size() &&
                     mAttributes.equals(se.mAttributes) &&
-                    mElements.equals(mElements);
+                    mElements.equals(se.mElements);
         }
         return false;
     }

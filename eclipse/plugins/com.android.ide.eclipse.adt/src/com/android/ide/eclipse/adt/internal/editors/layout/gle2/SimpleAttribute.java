@@ -16,8 +16,7 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 
-import com.android.ide.eclipse.adt.editors.layout.gscripts.IDragElement.IDragAttribute;
-import com.android.ide.eclipse.adt.editors.layout.gscripts.INode.IAttribute;
+import com.android.ide.common.api.INode.IAttribute;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -33,7 +32,7 @@ import java.util.regex.Pattern;
  * For a more detailed explanation of the purpose of this class,
  * please see {@link SimpleXmlTransfer}.
  */
-public class SimpleAttribute implements IDragAttribute, IAttribute {
+public class SimpleAttribute implements IAttribute {
     private final String mName;
     private final String mValue;
     private final String mUri;

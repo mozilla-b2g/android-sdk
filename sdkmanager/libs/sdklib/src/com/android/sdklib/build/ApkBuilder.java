@@ -25,6 +25,7 @@ import com.android.sdklib.internal.build.SignedJarBuilder.IZipEntryFilter;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -46,7 +47,7 @@ import java.util.regex.Pattern;
  * - Native libraries from the project or its library.
  *
  */
-public final class ApkBuilder {
+public final class ApkBuilder implements IArchiveBuilder {
 
     private final static Pattern PATTERN_NATIVELIB_EXT = Pattern.compile("^.+\\.so$",
             Pattern.CASE_INSENSITIVE);
@@ -152,11 +153,11 @@ public final class ApkBuilder {
         }
     }
 
-    private final File mApkFile;
-    private final File mResFile;
-    private final File mDexFile;
-    private final PrintStream mVerboseStream;
-    private final SignedJarBuilder mBuilder;
+    private File mApkFile;
+    private File mResFile;
+    private File mDexFile;
+    private PrintStream mVerboseStream;
+    private SignedJarBuilder mBuilder;
     private boolean mDebugMode = false;
     private boolean mIsSealed = false;
 
@@ -202,72 +203,60 @@ public final class ApkBuilder {
     }
 
     /**
-     * Creates a new instance.
-     * @param apkOsPath the OS path of the file to create.
-     * @param resOsPath the OS path of the packaged resource file.
-     * @param dexOsPath the OS path of the dex file. This can be null for apk with no code.
-     * @throws ApkCreationException
+     * Signing information.
+     *
+     * Both the {@link PrivateKey} and the {@link X509Certificate} are guaranteed to be non-null.
+     *
      */
-    public ApkBuilder(String apkOsPath, String resOsPath, String dexOsPath, String storeOsPath,
-            PrintStream verboseStream) throws ApkCreationException {
-        this(new File(apkOsPath),
-             new File(resOsPath),
-             dexOsPath != null ? new File(dexOsPath) : null,
-             storeOsPath,
-             verboseStream);
+    public final static class SigningInfo {
+        public final PrivateKey key;
+        public final X509Certificate certificate;
+
+        private SigningInfo(PrivateKey key, X509Certificate certificate) {
+            if (key == null || certificate == null) {
+                throw new IllegalArgumentException("key and certificate cannot be null");
+            }
+            this.key = key;
+            this.certificate = certificate;
+        }
     }
 
     /**
-     * Creates a new instance.
+     * Returns the key and certificate from a given debug store.
      *
-     * This creates a new builder that will create the specified output file, using the two
-     * mandatory given input files.
+     * It is expected that the store password is 'android' and the key alias and password are
+     * 'androiddebugkey' and 'android' respectively.
      *
-     * An optional debug keystore can be provided. If set, it is expected that the store password
-     * is 'android' and the key alias and password are 'androiddebugkey' and 'android'.
-     *
-     * An optional {@link PrintStream} can also be provided for verbose output. If null, there will
-     * be no output.
-     *
-     * @param apkFile the file to create
-     * @param resFile the file representing the packaged resource file.
-     * @param dexFile the file representing the dex file. This can be null for apk with no code.
-     * @param storeOsPath the OS path to the debug keystore, if needed or null.
-     * @param verboseStream the stream to which verbose output should go. If null, verbose mode
-     *                      is not enabled.
+     * @param storeOsPath the OS path to the debug store.
+     * @param verboseStream an option {@link PrintStream} to display verbose information
+     * @return they key and certificate in a {@link SigningInfo} object or null.
      * @throws ApkCreationException
      */
-    public ApkBuilder(File apkFile, File resFile, File dexFile, String storeOsPath,
-            PrintStream verboseStream) throws ApkCreationException {
-        checkOutputFile(mApkFile = apkFile);
-        checkInputFile(mResFile = resFile, true /*throwIfDoesntExist*/);
-        if (dexFile != null) {
-            checkInputFile(mDexFile = dexFile, true /*throwIfDoesntExist*/);
-        } else {
-            mDexFile = null;
-        }
-        mVerboseStream = verboseStream;
-
+    public static SigningInfo getDebugKey(String storeOsPath, final PrintStream verboseStream)
+            throws ApkCreationException {
         try {
-            File storeFile = null;
             if (storeOsPath != null) {
-                storeFile = new File(storeOsPath);
-                checkInputFile(storeFile, false /*throwIfDoesntExist*/);
-            }
+                File storeFile = new File(storeOsPath);
+                try {
+                    checkInputFile(storeFile);
+                } catch (FileNotFoundException e) {
+                    // ignore these since the debug store can be created on the fly anyway.
+                }
 
-            if (storeFile != null) {
                 // get the debug key
-                verbosePrintln("Using keystore: %s", storeOsPath);
+                if (verboseStream != null) {
+                    verboseStream.println(String.format("Using keystore: %s", storeOsPath));
+                }
 
                 IKeyGenOutput keygenOutput = null;
-                if (mVerboseStream != null) {
+                if (verboseStream != null) {
                     keygenOutput = new IKeyGenOutput() {
                         public void out(String message) {
-                            mVerboseStream.println(message);
+                            verboseStream.println(message);
                         }
 
                         public void err(String message) {
-                            mVerboseStream.println(message);
+                            verboseStream.println(message);
                         }
                     };
                 }
@@ -289,14 +278,166 @@ public final class ApkBuilder {
                             DateFormat.getInstance().format(certificate.getNotAfter()));
                 }
 
-                mBuilder = new SignedJarBuilder(
-                        new FileOutputStream(mApkFile, false /* append */), key,
-                        certificate);
+                return new SigningInfo(key, certificate);
             } else {
-                mBuilder = new SignedJarBuilder(
-                        new FileOutputStream(mApkFile, false /* append */),
-                        null /* key */, null /* certificate */);
+                return null;
             }
+        } catch (KeytoolException e) {
+            if (e.getJavaHome() == null) {
+                throw new ApkCreationException(e.getMessage() +
+                        "\nJAVA_HOME seems undefined, setting it will help locating keytool automatically\n" +
+                        "You can also manually execute the following command\n:" +
+                        e.getCommandLine(), e);
+            } else {
+                throw new ApkCreationException(e.getMessage() +
+                        "\nJAVA_HOME is set to: " + e.getJavaHome() +
+                        "\nUpdate it if necessary, or manually execute the following command:\n" +
+                        e.getCommandLine(), e);
+            }
+        } catch (ApkCreationException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ApkCreationException(e);
+        }
+    }
+
+    /**
+     * Creates a new instance.
+     *
+     * This creates a new builder that will create the specified output file, using the two
+     * mandatory given input files.
+     *
+     * An optional debug keystore can be provided. If set, it is expected that the store password
+     * is 'android' and the key alias and password are 'androiddebugkey' and 'android'.
+     *
+     * An optional {@link PrintStream} can also be provided for verbose output. If null, there will
+     * be no output.
+     *
+     * @param apkOsPath the OS path of the file to create.
+     * @param resOsPath the OS path of the packaged resource file.
+     * @param dexOsPath the OS path of the dex file. This can be null for apk with no code.
+     * @param verboseStream the stream to which verbose output should go. If null, verbose mode
+     *                      is not enabled.
+     * @throws ApkCreationException
+     */
+    public ApkBuilder(String apkOsPath, String resOsPath, String dexOsPath, String storeOsPath,
+            PrintStream verboseStream) throws ApkCreationException {
+        this(new File(apkOsPath),
+             new File(resOsPath),
+             dexOsPath != null ? new File(dexOsPath) : null,
+             storeOsPath,
+             verboseStream);
+    }
+
+    /**
+     * Creates a new instance.
+     *
+     * This creates a new builder that will create the specified output file, using the two
+     * mandatory given input files.
+     *
+     * Optional {@link PrivateKey} and {@link X509Certificate} can be provided to sign the APK.
+     *
+     * An optional {@link PrintStream} can also be provided for verbose output. If null, there will
+     * be no output.
+     *
+     * @param apkOsPath the OS path of the file to create.
+     * @param resOsPath the OS path of the packaged resource file.
+     * @param dexOsPath the OS path of the dex file. This can be null for apk with no code.
+     * @param key the private key used to sign the package. Can be null.
+     * @param certificate the certificate used to sign the package. Can be null.
+     * @param verboseStream the stream to which verbose output should go. If null, verbose mode
+     *                      is not enabled.
+     * @throws ApkCreationException
+     */
+    public ApkBuilder(String apkOsPath, String resOsPath, String dexOsPath, PrivateKey key,
+            X509Certificate certificate, PrintStream verboseStream) throws ApkCreationException {
+        this(new File(apkOsPath),
+             new File(resOsPath),
+             dexOsPath != null ? new File(dexOsPath) : null,
+             key, certificate,
+             verboseStream);
+    }
+
+    /**
+     * Creates a new instance.
+     *
+     * This creates a new builder that will create the specified output file, using the two
+     * mandatory given input files.
+     *
+     * An optional debug keystore can be provided. If set, it is expected that the store password
+     * is 'android' and the key alias and password are 'androiddebugkey' and 'android'.
+     *
+     * An optional {@link PrintStream} can also be provided for verbose output. If null, there will
+     * be no output.
+     *
+     * @param apkFile the file to create
+     * @param resFile the file representing the packaged resource file.
+     * @param dexFile the file representing the dex file. This can be null for apk with no code.
+     * @param debugStoreOsPath the OS path to the debug keystore, if needed or null.
+     * @param verboseStream the stream to which verbose output should go. If null, verbose mode
+     *                      is not enabled.
+     * @throws ApkCreationException
+     */
+    public ApkBuilder(File apkFile, File resFile, File dexFile, String debugStoreOsPath,
+            final PrintStream verboseStream) throws ApkCreationException {
+
+        SigningInfo info = getDebugKey(debugStoreOsPath, verboseStream);
+        if (info != null) {
+            init(apkFile, resFile, dexFile, info.key, info.certificate, verboseStream);
+        } else {
+            init(apkFile, resFile, dexFile, null /*key*/, null/*certificate*/, verboseStream);
+        }
+    }
+
+    /**
+     * Creates a new instance.
+     *
+     * This creates a new builder that will create the specified output file, using the two
+     * mandatory given input files.
+     *
+     * Optional {@link PrivateKey} and {@link X509Certificate} can be provided to sign the APK.
+     *
+     * An optional {@link PrintStream} can also be provided for verbose output. If null, there will
+     * be no output.
+     *
+     * @param apkFile the file to create
+     * @param resFile the file representing the packaged resource file.
+     * @param dexFile the file representing the dex file. This can be null for apk with no code.
+     * @param key the private key used to sign the package. Can be null.
+     * @param certificate the certificate used to sign the package. Can be null.
+     * @param verboseStream the stream to which verbose output should go. If null, verbose mode
+     *                      is not enabled.
+     * @throws ApkCreationException
+     */
+    public ApkBuilder(File apkFile, File resFile, File dexFile, PrivateKey key,
+            X509Certificate certificate, PrintStream verboseStream) throws ApkCreationException {
+        init(apkFile, resFile, dexFile, key, certificate, verboseStream);
+    }
+
+
+    /**
+     * Constructor init method.
+     *
+     * @see #ApkBuilder(File, File, File, String, PrintStream)
+     * @see #ApkBuilder(String, String, String, String, PrintStream)
+     * @see #ApkBuilder(File, File, File, PrivateKey, X509Certificate, PrintStream)
+     */
+    private void init(File apkFile, File resFile, File dexFile, PrivateKey key,
+            X509Certificate certificate, PrintStream verboseStream) throws ApkCreationException {
+
+        try {
+            checkOutputFile(mApkFile = apkFile);
+            checkInputFile(mResFile = resFile);
+            if (dexFile != null) {
+                checkInputFile(mDexFile = dexFile);
+            } else {
+                mDexFile = null;
+            }
+            mVerboseStream = verboseStream;
+
+            mBuilder = new SignedJarBuilder(
+                    new FileOutputStream(mApkFile, false /* append */), key,
+                    certificate);
 
             verbosePrintln("Packaging %s", mApkFile.getName());
 
@@ -308,23 +449,9 @@ public final class ApkBuilder {
                 addFile(mDexFile, SdkConstants.FN_APK_CLASSES_DEX);
             }
 
-        } catch (KeytoolException e) {
-            if (e.getJavaHome() == null) {
-                throw new ApkCreationException(e.getMessage() +
-                        "\nJAVA_HOME seems undefined, setting it will help locating keytool automatically\n" +
-                        "You can also manually execute the following command\n:" +
-                        e.getCommandLine());
-            } else {
-                throw new ApkCreationException(e.getMessage() +
-                        "\nJAVA_HOME is set to: " + e.getJavaHome() +
-                        "\nUpdate it if necessary, or manually execute the following command:\n" +
-                        e.getCommandLine());
-            }
+        } catch (ApkCreationException e) {
+            throw e;
         } catch (Exception e) {
-            if (e instanceof ApkCreationException) {
-                throw (ApkCreationException)e;
-            }
-
             throw new ApkCreationException(e);
         }
     }
@@ -481,8 +608,7 @@ public final class ApkBuilder {
      * This may or may not copy gdbserver into the apk based on whether the debug mode is set.
      *
      * @param nativeFolder the native folder.
-     * @param abiFilter an optional filter. If not null, then only the matching ABI is included in
-     * the final archive
+     *
      * @throws ApkCreationException if an error occurred
      * @throws SealedApkException if the APK is already sealed.
      * @throws DuplicateFileException if a file conflicts with another already added to the APK
@@ -490,7 +616,7 @@ public final class ApkBuilder {
      *
      * @see #setDebugMode(boolean)
      */
-    public void addNativeLibraries(File nativeFolder, String abiFilter)
+    public void addNativeLibraries(File nativeFolder)
             throws ApkCreationException, SealedApkException, DuplicateFileException {
         if (mIsSealed) {
             throw new SealedApkException("APK is already sealed");
@@ -507,20 +633,11 @@ public final class ApkBuilder {
 
         File[] abiList = nativeFolder.listFiles();
 
-        if (abiFilter != null) {
-            verbosePrintln("Native folder: %1$s with filter %2$ss", nativeFolder, abiFilter);
-        } else {
-            verbosePrintln("Native folder: %s", nativeFolder);
-        }
+        verbosePrintln("Native folder: %s", nativeFolder);
 
         if (abiList != null) {
             for (File abi : abiList) {
                 if (abi.isDirectory()) { // ignore files
-
-                    // check the abi filter and reject all other ABIs
-                    if (abiFilter != null && abiFilter.equals(abi.getName()) == false) {
-                        continue;
-                    }
 
                     File[] libs = abi.listFiles();
                     if (libs != null) {
@@ -548,6 +665,78 @@ public final class ApkBuilder {
             }
         }
     }
+
+    public void addNativeLibraries(List<FileEntry> entries) throws SealedApkException,
+            DuplicateFileException, ApkCreationException {
+        if (mIsSealed) {
+            throw new SealedApkException("APK is already sealed");
+        }
+
+        for (FileEntry entry : entries) {
+            try {
+                doAddFile(entry.mFile, entry.mPath);
+            } catch (IOException e) {
+                throw new ApkCreationException(e, "Failed to add %s", entry.mFile);
+            }
+        }
+    }
+
+    public static final class FileEntry {
+        public final File mFile;
+        public final String mPath;
+
+        FileEntry(File file, String path) {
+            mFile = file;
+            mPath = path;
+        }
+    }
+
+    public static List<FileEntry> getNativeFiles(File nativeFolder, boolean debugMode)
+            throws ApkCreationException  {
+
+        if (nativeFolder.isDirectory() == false) {
+            // not a directory? check if it's a file or doesn't exist
+            if (nativeFolder.exists()) {
+                throw new ApkCreationException("%s is not a folder", nativeFolder);
+            } else {
+                throw new ApkCreationException("%s does not exist", nativeFolder);
+            }
+        }
+
+        List<FileEntry> files = new ArrayList<FileEntry>();
+
+        File[] abiList = nativeFolder.listFiles();
+
+        if (abiList != null) {
+            for (File abi : abiList) {
+                if (abi.isDirectory()) { // ignore files
+
+                    File[] libs = abi.listFiles();
+                    if (libs != null) {
+                        for (File lib : libs) {
+                            // only consider files that are .so or, if in debug mode, that
+                            // are gdbserver executables
+                            if (lib.isFile() &&
+                                    (PATTERN_NATIVELIB_EXT.matcher(lib.getName()).matches() ||
+                                            (debugMode &&
+                                                    SdkConstants.FN_GDBSERVER.equals(
+                                                            lib.getName())))) {
+                                String path =
+                                    SdkConstants.FD_APK_NATIVE_LIBS + "/" +
+                                    abi.getName() + "/" + lib.getName();
+
+                                files.add(new FileEntry(lib, path));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return files;
+    }
+
+
 
     /**
      * Seals the APK, and signs it if necessary.
@@ -594,14 +783,15 @@ public final class ApkBuilder {
     }
 
     /**
-     * Processes a {@link File} that could be a {@link ApkFile}, or a folder containing
+     * Processes a {@link File} that could be an APK {@link File}, or a folder containing
      * java resources.
+     *
      * @param file the {@link File} to process.
-     * @param path the relative path of this file to the source folder. Can be <code>null</code> to
-     * identify a root file.
+     * @param path the relative path of this file to the source folder.
+     *          Can be <code>null</code> to identify a root file.
      * @throws IOException
-     * @throws DuplicateFileException if a file conflicts with another already added to the APK
-     *                                   at the same location inside the APK archive.
+     * @throws DuplicateFileException if a file conflicts with another already added
+     *          to the APK at the same location inside the APK archive.
      */
     private void processFileForResource(File file, String path)
             throws IOException, DuplicateFileException {
@@ -685,11 +875,10 @@ public final class ApkBuilder {
      * - that the file exists (if <var>throwIfDoesntExist</var> is <code>false</code>) and can
      *    be read.
      * @param file the File to check
-     * @param indicates whether the method should throw {@link ApkCreationException} if the file
-     *        does not exist at all.
-     * @throws ApkCreationException If the check fails
+     * @throws FileNotFoundException if the file is not here.
+     * @throws ApkCreationException If the file is a folder or a file that cannot be read.
      */
-    private void checkInputFile(File file, boolean throwIfDoesntExist) throws ApkCreationException {
+    private static void checkInputFile(File file) throws FileNotFoundException, ApkCreationException {
         if (file.isDirectory()) {
             throw new ApkCreationException("%s is a directory!", file);
         }
@@ -698,8 +887,8 @@ public final class ApkBuilder {
             if (file.canRead() == false) {
                 throw new ApkCreationException("Cannot read %s", file);
             }
-        } else if (throwIfDoesntExist) {
-            throw new ApkCreationException("%s does not exist", file);
+        } else {
+            throw new FileNotFoundException(String.format("%s does not exist", file));
         }
     }
 
@@ -746,20 +935,23 @@ public final class ApkBuilder {
      * @return true if the file should be packaged as standard java resources.
      */
     public static boolean checkFileForPackaging(String fileName, String extension) {
-        // Note: this method is used by com.android.ide.eclipse.adt.internal.build.ApkBuilder
-        if (fileName.charAt(0) == '.') { // ignore hidden files.
+        // ignore hidden files and backup files
+        if (fileName.charAt(0) == '.' || fileName.charAt(fileName.length()-1) == '~') {
             return false;
         }
 
         return "aidl".equalsIgnoreCase(extension) == false &&       // Aidl files
+            "rs".equalsIgnoreCase(extension) == false &&            // RenderScript files
+            "rsh".equalsIgnoreCase(extension) == false &&           // RenderScript header files
+            "d".equalsIgnoreCase(extension) == false &&             // Dependency files
             "java".equalsIgnoreCase(extension) == false &&          // Java files
+            "scala".equalsIgnoreCase(extension) == false &&         // Scala files
             "class".equalsIgnoreCase(extension) == false &&         // Java class files
             "scc".equalsIgnoreCase(extension) == false &&           // VisualSourceSafe
             "swp".equalsIgnoreCase(extension) == false &&           // vi swap file
+            "thumbs.db".equalsIgnoreCase(fileName) == false &&      // image index file
+            "picasa.ini".equalsIgnoreCase(fileName) == false &&     // image index file
             "package.html".equalsIgnoreCase(fileName) == false &&   // Javadoc
-            "overview.html".equalsIgnoreCase(fileName) == false &&  // Javadoc
-            ".cvsignore".equalsIgnoreCase(fileName) == false &&     // CVS
-            ".DS_Store".equals(fileName) == false &&                // Mac resources
-            fileName.charAt(fileName.length()-1) != '~';            // Backup files
+            "overview.html".equalsIgnoreCase(fileName) == false;    // Javadoc
     }
 }

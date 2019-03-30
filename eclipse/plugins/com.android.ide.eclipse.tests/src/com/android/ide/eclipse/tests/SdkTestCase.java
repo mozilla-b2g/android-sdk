@@ -15,9 +15,10 @@
  */
 package com.android.ide.eclipse.tests;
 
+import com.android.ide.common.sdk.LoadStatus;
 import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.ide.eclipse.adt.internal.preferences.AdtPrefs;
 import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetParser;
-import com.android.ide.eclipse.adt.internal.sdk.LoadStatus;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.sdklib.IAndroidTarget;
 
@@ -60,6 +61,13 @@ public abstract class SdkTestCase extends TestCase {
             return null;
         }
 
+        // We'll never break out of the SDK load-wait-loop if the AdtPlugin doesn't
+        // actually have a valid SDK location because it won't have started an async load:
+        String sdkLocation = AdtPrefs.getPrefs().getOsSdkFolder();
+        assertTrue("No valid SDK installation is set; for tests you typically need to set the"
+                + " environment variable ADT_TEST_SDK_PATH to point to an SDK folder",
+                sdkLocation != null && sdkLocation.length() > 0);
+
         Object sdkLock = Sdk.getLock();
         LoadStatus loadStatus = LoadStatus.LOADING;
         // wait for ADT to load the SDK on a separate thread
@@ -72,17 +80,21 @@ public abstract class SdkTestCase extends TestCase {
             catch (InterruptedException e) {
                 // ignore
             }
-            synchronized(sdkLock) {
+            synchronized (sdkLock) {
                 loadStatus = adt.getSdkLoadStatus();
             }
         }
         Sdk sdk = null;
-        synchronized(sdkLock) {
+        synchronized (sdkLock) {
             assertEquals(LoadStatus.LOADED, loadStatus);
             sdk = Sdk.getCurrent();
         }
         assertNotNull(sdk);
         return sdk;
+    }
+
+    protected boolean validateSdk(IAndroidTarget target) {
+        return true;
     }
 
     /**
@@ -92,6 +104,9 @@ public abstract class SdkTestCase extends TestCase {
     private void validateSdk(Sdk sdk) {
         assertTrue("sdk has no targets", sdk.getTargets().length > 0);
         for (IAndroidTarget target : sdk.getTargets()) {
+            if (!validateSdk(target)) {
+                continue;
+            }
             IStatus status = new AndroidTargetParser(target).run(new NullProgressMonitor());
             if (status.getCode() != IStatus.OK) {
                 fail("Failed to parse targets data");

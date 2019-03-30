@@ -27,6 +27,7 @@ import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.security.InvalidParameterException;
 import java.util.ArrayList;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -61,6 +62,7 @@ public final class AndroidDebugBridge {
     private static InetSocketAddress sSocketAddr;
 
     private static AndroidDebugBridge sThis;
+    private static boolean sInitialized = false;
     private static boolean sClientSupport;
 
     /** Full path to adb. */
@@ -173,7 +175,11 @@ public final class AndroidDebugBridge {
      * @see AndroidDebugBridge#createBridge(String, boolean)
      * @see DdmPreferences
      */
-    public static void init(boolean clientSupport) {
+    public static synchronized void init(boolean clientSupport) {
+        if (sInitialized) {
+            throw new IllegalStateException("AndroidDebugBridge.init() has already been called.");
+        }
+        sInitialized = true;
         sClientSupport = clientSupport;
 
         // Determine port and instantiate socket address.
@@ -189,12 +195,13 @@ public final class AndroidDebugBridge {
         HandleHeap.register(monitorThread);
         HandleWait.register(monitorThread);
         HandleProfiling.register(monitorThread);
+        HandleNativeHeap.register(monitorThread);
     }
 
     /**
      * Terminates the ddm library. This must be called upon application termination.
      */
-    public static void terminate() {
+    public static synchronized void terminate() {
         // kill the monitoring services
         if (sThis != null && sThis.mDeviceMonitor != null) {
             sThis.mDeviceMonitor.stop();
@@ -205,6 +212,8 @@ public final class AndroidDebugBridge {
         if (monitorThread != null) {
             monitorThread.quit();
         }
+
+        sInitialized = false;
     }
 
     /**
@@ -615,6 +624,7 @@ public final class AndroidDebugBridge {
      * @param line The line to scan.
      * @return True if a version number was found (whether it is acceptable or not).
      */
+    @SuppressWarnings("all") // With Eclipse 3.6, replace by @SuppressWarnings("unused")
     private boolean scanVersionLine(String line) {
         if (line != null) {
             Matcher matcher = sAdbVersion.matcher(line);
@@ -893,7 +903,16 @@ public final class AndroidDebugBridge {
             Log.d(DDMS,
                     String.format("Launching '%1$s %2$s' to ensure ADB is running.", //$NON-NLS-1$
                     mAdbOsLocation, command[1]));
-            proc = Runtime.getRuntime().exec(command);
+            ProcessBuilder processBuilder = new ProcessBuilder(command);
+            if (DdmPreferences.getUseAdbHost()) {
+                String adbHostValue = DdmPreferences.getAdbHostValue();
+                if (adbHostValue != null && adbHostValue.length() > 0) {
+                    //TODO : check that the String is a valid IP address
+                    Map<String, String> env = processBuilder.environment();
+                    env.put("ADBHOST", adbHostValue);
+                }
+            }
+            proc = processBuilder.start();
 
             ArrayList<String> errorOutput = new ArrayList<String>();
             ArrayList<String> stdOutput = new ArrayList<String>();

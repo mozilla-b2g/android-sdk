@@ -16,6 +16,8 @@
 
 package com.android.ide.eclipse.adt.internal.preferences;
 
+import com.android.sdkstats.DdmsPreferenceStore;
+import com.android.sdkstats.SdkStatsPermissionDialog;
 import com.android.sdkstats.SdkStatsService;
 
 import org.eclipse.jface.preference.BooleanFieldEditor;
@@ -28,6 +30,7 @@ import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
+import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Link;
 import org.eclipse.ui.IWorkbench;
 import org.eclipse.ui.IWorkbenchPreferencePage;
@@ -35,8 +38,10 @@ import org.eclipse.ui.IWorkbenchPreferencePage;
 import java.io.IOException;
 
 public class UsagePreferencePage extends PreferencePage implements IWorkbenchPreferencePage {
+    private static final int WRAP_WIDTH_PX = 200;
 
     private BooleanFieldEditor mOptInCheckBox;
+    private DdmsPreferenceStore mStore = new DdmsPreferenceStore();
 
     public UsagePreferencePage() {
     }
@@ -51,25 +56,31 @@ public class UsagePreferencePage extends PreferencePage implements IWorkbenchPre
         top.setLayout(new GridLayout(1, false));
         top.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
 
-        Link text = new Link(top, SWT.WRAP);
+        Label l = new Label(top, SWT.WRAP);
+        l.setText(SdkStatsPermissionDialog.BODY_TEXT);
         GridData gd = new GridData(GridData.FILL_HORIZONTAL);
-        gd.widthHint = 200;
-        text.setLayoutData(gd);
-        text.setText(SdkStatsService.BODY_TEXT);
+        gd.widthHint = WRAP_WIDTH_PX;
+        l.setLayoutData(gd);
 
-        text.addSelectionListener(new SelectionAdapter() {
+        Link privacyPolicyLink = new Link(top, SWT.WRAP);
+        gd = new GridData(GridData.FILL_HORIZONTAL);
+        gd.widthHint = WRAP_WIDTH_PX;
+        privacyPolicyLink.setLayoutData(gd);
+        privacyPolicyLink.setText(SdkStatsPermissionDialog.PRIVACY_POLICY_LINK_TEXT);
+
+        privacyPolicyLink.addSelectionListener(new SelectionAdapter() {
             @Override
             public void widgetSelected(SelectionEvent event) {
-                SdkStatsService.openUrl(event.text);
+                SdkStatsPermissionDialog.openUrl(event.text);
             }
         });
 
-        mOptInCheckBox = new BooleanFieldEditor(SdkStatsService.PING_OPT_IN,
-                SdkStatsService.CHECKBOX_TEXT, top);
+        mOptInCheckBox = new BooleanFieldEditor(DdmsPreferenceStore.PING_OPT_IN,
+                SdkStatsPermissionDialog.CHECKBOX_TEXT, top);
         mOptInCheckBox.setPage(this);
-        mOptInCheckBox.setPreferenceStore(SdkStatsService.getPreferenceStore());
+        mOptInCheckBox.setPreferenceStore(mStore.getPreferenceStore());
         mOptInCheckBox.load();
-        
+
         return top;
     }
 
@@ -108,16 +119,8 @@ public class UsagePreferencePage extends PreferencePage implements IWorkbenchPre
         save();
         super.performApply();
     }
-    
+
     private void save() {
-        try {
-            PreferenceStore store = SdkStatsService.getPreferenceStore();
-            if (store !=  null) {
-                store.setValue(SdkStatsService.PING_OPT_IN, mOptInCheckBox.getBooleanValue());
-                store.save();
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        mStore.setPingOptIn(mOptInCheckBox.getBooleanValue());
     }
 }

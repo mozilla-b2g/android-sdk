@@ -21,12 +21,13 @@ import com.android.ddmlib.DebugPortManager;
 import com.android.ddmlib.Log;
 import com.android.sdkstats.SdkStatsService;
 
+import org.eclipse.swt.widgets.Display;
+import org.eclipse.swt.widgets.Shell;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.lang.management.ManagementFactory;
 import java.lang.management.RuntimeMXBean;
 import java.util.Properties;
@@ -49,12 +50,7 @@ public class Main {
     private static class UncaughtHandler implements Thread.UncaughtExceptionHandler {
         public void uncaughtException(Thread t, Throwable e) {
             Log.e("ddms", "shutting down due to uncaught exception");
-
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            e.printStackTrace(pw);
-            Log.e("ddms", sw.toString());
-
+            Log.e("ddms", e);
             System.exit(1);
         }
     }
@@ -64,8 +60,7 @@ public class Main {
      */
     public static void main(String[] args) {
         // In order to have the AWT/SWT bridge work on Leopard, we do this little hack.
-        String os = System.getProperty("os.name"); //$NON-NLS-1$
-        if (os.startsWith("Mac OS")) { //$NON-NLS-1$
+        if (isMac()) {
             RuntimeMXBean rt = ManagementFactory.getRuntimeMXBean();
             System.setProperty(
                     "JAVA_STARTED_ON_FIRST_THREAD_" + (rt.getName().split("@"))[0], //$NON-NLS-1$
@@ -79,10 +74,19 @@ public class Main {
 
         Log.d("ddms", "Initializing");
 
+        // Create an initial shell display with the correct app name.
+        Display.setAppName(UIThread.APP_NAME);
+        Shell shell = new Shell(Display.getDefault());
+
+        // if this is the first time using ddms or adt, open up the stats service
+        // opt out dialog, and request user for permissions.
+        SdkStatsService stats = new SdkStatsService();
+        stats.checkUserPermissionForPing(shell);
+
         // the "ping" argument means to check in with the server and exit
         // the application name and version number must also be supplied
         if (args.length >= 3 && args[0].equals("ping")) {
-            SdkStatsService.ping(args[1], args[2], null);
+            stats.ping(args[1], args[2]);
             return;
         } else if (args.length > 0) {
             Log.e("ddms", "Unknown argument: " + args[0]);
@@ -92,9 +96,16 @@ public class Main {
         // get the ddms parent folder location
         String ddmsParentLocation = System.getProperty("com.android.ddms.bindir"); //$NON-NLS-1$
 
+        if (ddmsParentLocation == null) {
+            // Tip: for debugging DDMS in eclipse, set this env var to the SDK/tools
+            // directory path.
+            ddmsParentLocation = System.getenv("com.android.ddms.bindir"); //$NON-NLS-1$
+        }
+
         // we're past the point where ddms can be called just to send a ping, so we can
         // ping for ddms itself.
-        ping(ddmsParentLocation);
+        ping(stats, ddmsParentLocation);
+        stats = null;
 
         DebugPortManager.setProvider(DebugPortProvider.getInstance());
 
@@ -116,7 +127,15 @@ public class Main {
         System.exit(0);
     }
 
-    public static void ping(String ddmsParentLocation) {
+    /** Return true iff we're running on a Mac */
+    static boolean isMac() {
+        // TODO: Replace usages of this method with
+        // org.eclipse.jface.util.Util#isMac() when we switch to Eclipse 3.5
+        // (ddms is currently built with SWT 3.4.2 from ANDROID_SWT)
+        return System.getProperty("os.name").startsWith("Mac OS"); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    private static void ping(SdkStatsService stats, String ddmsParentLocation) {
         Properties p = new Properties();
         try{
             File sourceProp;
@@ -125,10 +144,22 @@ public class Main {
             } else {
                 sourceProp = new File("source.properties"); //$NON-NLS-1$
             }
-            p.load(new FileInputStream(sourceProp));
+            FileInputStream fis = null;
+            try {
+                fis = new FileInputStream(sourceProp);
+                p.load(fis);
+            } finally {
+                if (fis != null) {
+                    try {
+                        fis.close();
+                    } catch (IOException ignore) {
+                    }
+                }
+            }
+
             sRevision = p.getProperty("Pkg.Revision"); //$NON-NLS-1$
             if (sRevision != null && sRevision.length() > 0) {
-                SdkStatsService.ping("ddms", sRevision, null);  //$NON-NLS-1$
+                stats.ping("ddms", sRevision);  //$NON-NLS-1$
             }
         } catch (FileNotFoundException e) {
             // couldn't find the file? don't ping.

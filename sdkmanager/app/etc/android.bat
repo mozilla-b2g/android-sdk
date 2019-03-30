@@ -25,7 +25,7 @@ rem and set up progdir to be the fully-qualified pathname of its directory.
 set prog=%~f0
 
 rem Grab current directory before we change it
-set work_dir=%cd%
+set work_dir="%cd%"
 
 rem Change current directory and drive to where the script is, to avoid
 rem issues with directories containing whitespaces.
@@ -37,32 +37,32 @@ set java_exe=
 call lib\find_java.bat
 if not defined java_exe goto :EOF
 
-set jar_path=lib\sdkmanager.jar
+set jar_path=lib\sdkmanager.jar;lib\swtmenubar.jar
 
 rem Set SWT.Jar path based on current architecture (x86 or x86_64)
 for /f %%a in ('%java_exe% -jar lib\archquery.jar') do set swt_path=lib\%%a
 
-if "%1 %2"=="update sdk" goto StartUi
-if not "%1"=="" goto EndTempCopy
-:StartUi
-    echo [INFO] Starting Android SDK and AVD Manager
-
-    rem We're now going to create a temp dir to hold all the Jar files needed
-    rem to run the android tool, copy them in the temp dir and finally execute
-    rem from that path. We do this only when the launcher is run without
-    rem arguments, to display the SDK Updater UI. This allows the updater to
-    rem update the tools directory where the updater itself is located.
+:MkTempCopy
+    rem Copy android.bat and its required libs to a temp dir.
+    rem This avoids locking the tool dir in case the user is trying to update it.
 
     set tmp_dir=%TEMP%\temp-android-tool
     xcopy %swt_path% %tmp_dir%\%swt_path% /I /E /C /G /R /Y /Q > nul
     copy /B /D /Y lib\androidprefs.jar   %tmp_dir%\lib\        > nul
     copy /B /D /Y lib\org.eclipse.*      %tmp_dir%\lib\        > nul
     copy /B /D /Y lib\sdk*               %tmp_dir%\lib\        > nul
+    copy /B /D /Y lib\common.jar         %tmp_dir%\lib\        > nul
     copy /B /D /Y lib\commons-compress*  %tmp_dir%\lib\        > nul
+    copy /B /D /Y lib\swtmenubar.jar     %tmp_dir%\lib\        > nul
+    copy /B /D /Y lib\commons-logging*   %tmp_dir%\lib\        > nul
+    copy /B /D /Y lib\commons-codec*     %tmp_dir%\lib\        > nul
+    copy /B /D /Y lib\httpclient*        %tmp_dir%\lib\        > nul
+    copy /B /D /Y lib\httpcore*          %tmp_dir%\lib\        > nul
+    copy /B /D /Y lib\httpmime*          %tmp_dir%\lib\        > nul
 
     rem jar_path and swt_path are relative to PWD so we don't need to adjust them, just change dirs.
     set tools_dir=%cd%
-    cd %tmp_dir%
+    cd /d %tmp_dir%
 
 :EndTempCopy
 
@@ -76,6 +76,7 @@ if exist %swt_path% goto SetPath
 
 :SetPath
 rem Finally exec the java program and end here.
-call %java_exe% -Dcom.android.sdkmanager.toolsdir="%tools_dir%" -Dcom.android.sdkmanager.workdir="%work_dir%" -classpath "%jar_path%;%swt_path%\swt.jar" com.android.sdkmanager.Main %*
+REM set REMOTE_DEBUG=-Xdebug -Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=8000
+call %java_exe% %REMOTE_DEBUG% -Dcom.android.sdkmanager.toolsdir="%tools_dir%" -Dcom.android.sdkmanager.workdir=%work_dir% -classpath "%jar_path%;%swt_path%\swt.jar" com.android.sdkmanager.Main %*
 
 rem EOF

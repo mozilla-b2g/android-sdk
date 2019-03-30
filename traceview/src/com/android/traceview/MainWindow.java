@@ -18,10 +18,13 @@ package com.android.traceview;
 
 import com.android.sdkstats.SdkStatsService;
 
+import org.eclipse.jface.action.Action;
+import org.eclipse.jface.action.MenuManager;
 import org.eclipse.jface.window.ApplicationWindow;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.custom.SashForm;
 import org.eclipse.swt.graphics.Color;
+import org.eclipse.swt.graphics.Image;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
@@ -34,6 +37,7 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.channels.FileChannel;
 import java.util.HashMap;
 import java.util.Properties;
@@ -41,7 +45,6 @@ import java.util.Properties;
 public class MainWindow extends ApplicationWindow {
 
     private final static String PING_NAME = "Traceview";
-    private final static String PING_VERSION = "1.0";
 
     private TraceReader mReader;
     private String mTraceName;
@@ -53,18 +56,26 @@ public class MainWindow extends ApplicationWindow {
         super(null);
         mReader = reader;
         mTraceName = traceName;
+
+        addMenuBar();
     }
 
     public void run() {
         setBlockOnOpen(true);
         open();
-        Display.getCurrent().dispose();
     }
 
     @Override
     protected void configureShell(Shell shell) {
         super.configureShell(shell);
         shell.setText("Traceview: " + mTraceName);
+
+        InputStream in = getClass().getClassLoader().getResourceAsStream(
+                "icons/traceview-128.png");
+        if (in != null) {
+            shell.setImage(new Image(shell.getDisplay(), in));
+        }
+
         shell.setBounds(100, 10, 1282, 900);
     }
 
@@ -97,6 +108,30 @@ public class MainWindow extends ApplicationWindow {
         // Create the profile view
         new ProfileView(sashForm1, mReader, selectionController);
         return sashForm1;
+    }
+
+    @Override
+    protected MenuManager createMenuManager() {
+        MenuManager manager = super.createMenuManager();
+
+        MenuManager viewMenu = new MenuManager("View");
+        manager.add(viewMenu);
+
+        Action showPropertiesAction = new Action("Show Properties...") {
+            @Override
+            public void run() {
+                showProperties();
+            }
+        };
+        viewMenu.add(showPropertiesAction);
+
+        return manager;
+    }
+
+    private void showProperties() {
+        PropertiesDialog dialog = new PropertiesDialog(getShell());
+        dialog.setProperties(mReader.getProperties());
+        dialog.open();
     }
 
     /**
@@ -143,7 +178,20 @@ public class MainWindow extends ApplicationWindow {
             } else {
                 sourceProp = new File(toolsdir, "source.properties"); //$NON-NLS-1$
             }
-            p.load(new FileInputStream(sourceProp));
+
+            FileInputStream fis = null;
+            try {
+                fis = new FileInputStream(sourceProp);
+                p.load(fis);
+            } finally {
+                if (fis != null) {
+                    try {
+                        fis.close();
+                    } catch (IOException ignore) {
+                    }
+                }
+            }
+
             String revision = p.getProperty("Pkg.Revision"); //$NON-NLS-1$
             if (revision != null && revision.length() > 0) {
                 return revision;
@@ -166,7 +214,7 @@ public class MainWindow extends ApplicationWindow {
 
         String revision = getRevision();
         if (revision != null) {
-            SdkStatsService.ping(PING_NAME, revision, null);
+            new SdkStatsService().ping(PING_NAME, revision);
         }
 
         // Process command line arguments
@@ -218,9 +266,19 @@ public class MainWindow extends ApplicationWindow {
                 }
             }
 
-            reader = new DmTraceReader(traceName, regression);
+            try {
+                reader = new DmTraceReader(traceName, regression);
+            } catch (IOException e) {
+                System.err.printf("Failed to read the trace file");
+                e.printStackTrace();
+                System.exit(1);
+                return;
+            }
         }
+
         reader.getTraceUnits().setTimeScale(TraceUnits.TimeScale.MilliSeconds);
+
+        Display.setAppName("Traceview");
         new MainWindow(traceName, reader).run();
     }
 }

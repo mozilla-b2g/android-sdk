@@ -22,6 +22,12 @@ import com.android.ddmlib.MultiLineReceiver;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Parses the 'raw output mode' results of an instrumentation test run from shell and informs a
@@ -70,12 +76,28 @@ public class InstrumentationResultParser extends MultiLineReceiver {
         private static final String SHORTMSG = "shortMsg";
     }
 
+    /** The set of expected status keys. Used to filter which keys should be stored as metrics */
+    private static final Set<String> KNOWN_KEYS = new HashSet<String>();
+    static {
+        KNOWN_KEYS.add(StatusKeys.TEST);
+        KNOWN_KEYS.add(StatusKeys.CLASS);
+        KNOWN_KEYS.add(StatusKeys.STACK);
+        KNOWN_KEYS.add(StatusKeys.NUMTESTS);
+        KNOWN_KEYS.add(StatusKeys.ERROR);
+        KNOWN_KEYS.add(StatusKeys.SHORTMSG);
+        // unused, but regularly occurring status keys.
+        KNOWN_KEYS.add("stream");
+        KNOWN_KEYS.add("id");
+        KNOWN_KEYS.add("current");
+    }
+
     /** Test result status codes. */
     private static class StatusCodes {
         private static final int FAILURE = -2;
         private static final int START = 1;
         private static final int ERROR = -1;
         private static final int OK = 0;
+        private static final int IN_PROGRESS = 2;
     }
 
     /** Prefixes used to identify output. */
@@ -123,6 +145,9 @@ public class InstrumentationResultParser extends MultiLineReceiver {
         }
     }
 
+    /** the name to provide to {@link ITestRunListener#testRunStarted(String, int)} */
+    private final String mTestRunName;
+
     /** Stores the status values for the test result currently being parsed */
     private TestResult mCurrentTestResult = null;
 
@@ -156,26 +181,54 @@ public class InstrumentationResultParser extends MultiLineReceiver {
     /** The number of tests expected to run  */
     private int mNumTestsExpected = 0;
 
+    /** True if the parser is parsing a line beginning with "INSTRUMENTATION_RESULT" */
+    private boolean mInInstrumentationResultKey = false;
+
+    /**
+     * Stores key-value pairs under INSTRUMENTATION_RESULT header, these are printed at the
+     * end of a test run, if applicable
+     */
+    private Map<String, String> mInstrumentationResultBundle = new HashMap<String, String>();
+
+    /**
+     * Stores key-value pairs of metrics emitted during the execution of each test case.  Note that
+     * standard keys that are stored in the TestResults class are filtered out of this Map.
+     */
+    private Map<String, String> mTestMetrics = new HashMap<String, String>();
+
     private static final String LOG_TAG = "InstrumentationResultParser";
 
     /** Error message supplied when no parseable test results are received from test run. */
     static final String NO_TEST_RESULTS_MSG = "No test results";
 
+    /** Error message supplied when a test start bundle is parsed, but not the test end bundle. */
+    static final String INCOMPLETE_TEST_ERR_MSG_PREFIX = "Test failed to run to completion";
+    static final String INCOMPLETE_TEST_ERR_MSG_POSTFIX = "Check device logcat for details";
+
+    /** Error message supplied when the test run is incomplete. */
+    static final String INCOMPLETE_RUN_ERR_MSG_PREFIX = "Test run failed to complete";
+
     /**
      * Creates the InstrumentationResultParser.
      *
+     * @param runName the test run name to provide to
+     *            {@link ITestRunListener#testRunStarted(String, int)}
      * @param listeners informed of test results as the tests are executing
      */
-    public InstrumentationResultParser(Collection<ITestRunListener> listeners) {
+    public InstrumentationResultParser(String runName, Collection<ITestRunListener> listeners) {
+        mTestRunName = runName;
         mTestListeners = new ArrayList<ITestRunListener>(listeners);
     }
 
     /**
      * Creates the InstrumentationResultParser for a single listener.
      *
+     * @param runName the test run name to provide to
+     *            {@link ITestRunListener#testRunStarted(String, int)}
      * @param listener informed of test results as the tests are executing
      */
-    public InstrumentationResultParser(ITestRunListener listener) {
+    public InstrumentationResultParser(String runName, ITestRunListener listener) {
+        mTestRunName = runName;
         mTestListeners = new ArrayList<ITestRunListener>(1);
         mTestListeners.add(listener);
     }
@@ -216,24 +269,28 @@ public class InstrumentationResultParser extends MultiLineReceiver {
         if (line.startsWith(Prefixes.STATUS_CODE)) {
             // Previous status key-value has been collected. Store it.
             submitCurrentKeyValue();
+            mInInstrumentationResultKey = false;
             parseStatusCode(line);
         } else if (line.startsWith(Prefixes.STATUS)) {
             // Previous status key-value has been collected. Store it.
             submitCurrentKeyValue();
+            mInInstrumentationResultKey = false;
             parseKey(line, Prefixes.STATUS.length());
         } else if (line.startsWith(Prefixes.RESULT)) {
             // Previous status key-value has been collected. Store it.
             submitCurrentKeyValue();
+            mInInstrumentationResultKey = true;
             parseKey(line, Prefixes.RESULT.length());
         } else if (line.startsWith(Prefixes.STATUS_FAILED) ||
                    line.startsWith(Prefixes.CODE)) {
             // Previous status key-value has been collected. Store it.
             submitCurrentKeyValue();
+            mInInstrumentationResultKey = false;
             // these codes signal the end of the instrumentation run
             mTestRunFinished = true;
             // just ignore the remaining data on this line
         } else if (line.startsWith(Prefixes.TIME_REPORT)) {
-            parseTime(line, Prefixes.TIME_REPORT.length());
+            parseTime(line);
         } else {
             if (mCurrentValue != null) {
                 // this is a value that has wrapped to next line.
@@ -246,34 +303,57 @@ public class InstrumentationResultParser extends MultiLineReceiver {
     }
 
     /**
-     * Stores the currently parsed key-value pair into mCurrentTestInfo.
+     * Stores the currently parsed key-value pair in the appropriate place.
      */
     private void submitCurrentKeyValue() {
         if (mCurrentKey != null && mCurrentValue != null) {
-            TestResult testInfo = getCurrentTestInfo();
             String statusValue = mCurrentValue.toString();
-
-            if (mCurrentKey.equals(StatusKeys.CLASS)) {
-                testInfo.mTestClass = statusValue.trim();
-            } else if (mCurrentKey.equals(StatusKeys.TEST)) {
-                testInfo.mTestName = statusValue.trim();
-            } else if (mCurrentKey.equals(StatusKeys.NUMTESTS)) {
-                try {
-                    testInfo.mNumTests = Integer.parseInt(statusValue);
-                } catch (NumberFormatException e) {
-                    Log.e(LOG_TAG, "Unexpected integer number of tests, received " + statusValue);
+            if (mInInstrumentationResultKey) {
+                if (!KNOWN_KEYS.contains(mCurrentKey)) {
+                    mInstrumentationResultBundle.put(mCurrentKey, statusValue);
+                } else if (mCurrentKey.equals(StatusKeys.SHORTMSG)) {
+                    // test run must have failed
+                    handleTestRunFailed(String.format("Instrumentation run failed due to '%1$s'",
+                            statusValue));
                 }
-            } else if (mCurrentKey.equals(StatusKeys.ERROR) ||
-                    mCurrentKey.equals(StatusKeys.SHORTMSG)) {
-                // test run must have failed
-                handleTestRunFailed(statusValue);
-            } else if (mCurrentKey.equals(StatusKeys.STACK)) {
-                testInfo.mStackTrace = statusValue;
+            } else {
+                TestResult testInfo = getCurrentTestInfo();
+
+                if (mCurrentKey.equals(StatusKeys.CLASS)) {
+                    testInfo.mTestClass = statusValue.trim();
+                } else if (mCurrentKey.equals(StatusKeys.TEST)) {
+                    testInfo.mTestName = statusValue.trim();
+                } else if (mCurrentKey.equals(StatusKeys.NUMTESTS)) {
+                    try {
+                        testInfo.mNumTests = Integer.parseInt(statusValue);
+                    } catch (NumberFormatException e) {
+                        Log.w(LOG_TAG, "Unexpected integer number of tests, received "
+                                + statusValue);
+                    }
+                } else if (mCurrentKey.equals(StatusKeys.ERROR)) {
+                    // test run must have failed
+                    handleTestRunFailed(statusValue);
+                } else if (mCurrentKey.equals(StatusKeys.STACK)) {
+                    testInfo.mStackTrace = statusValue;
+                } else if (!KNOWN_KEYS.contains(mCurrentKey)) {
+                    // Not one of the recognized key/value pairs, so dump it in mTestMetrics
+                    mTestMetrics.put(mCurrentKey, statusValue);
+                }
             }
 
             mCurrentKey = null;
             mCurrentValue = null;
         }
+    }
+
+    /**
+     * A utility method to return the test metrics from the current test case execution and get
+     * ready for the next one.
+     */
+    private Map<String, String> getAndResetTestMetrics() {
+        Map<String, String> retVal = mTestMetrics;
+        mTestMetrics = new HashMap<String, String>();
+        return retVal;
     }
 
     private TestResult getCurrentTestInfo() {
@@ -320,15 +400,18 @@ public class InstrumentationResultParser extends MultiLineReceiver {
     private void parseStatusCode(String line) {
         String value = line.substring(Prefixes.STATUS_CODE.length()).trim();
         TestResult testInfo = getCurrentTestInfo();
+        testInfo.mCode = StatusCodes.ERROR;
         try {
             testInfo.mCode = Integer.parseInt(value);
         } catch (NumberFormatException e) {
-            Log.e(LOG_TAG, "Expected integer status code, received: " + value);
+            Log.w(LOG_TAG, "Expected integer status code, received: " + value);
+            testInfo.mCode = StatusCodes.ERROR;
         }
-
-        // this means we're done with current test result bundle
-        reportResult(testInfo);
-        clearCurrentTestInfo();
+        if (testInfo.mCode != StatusCodes.IN_PROGRESS) {
+            // this means we're done with current test result bundle
+            reportResult(testInfo);
+            clearCurrentTestInfo();
+        }
     }
 
     /**
@@ -360,6 +443,7 @@ public class InstrumentationResultParser extends MultiLineReceiver {
         }
         reportTestRunStarted(testInfo);
         TestIdentifier testId = new TestIdentifier(testInfo.mTestClass, testInfo.mTestName);
+        Map<String, String> metrics;
 
         switch (testInfo.mCode) {
             case StatusCodes.START:
@@ -368,32 +452,36 @@ public class InstrumentationResultParser extends MultiLineReceiver {
                 }
                 break;
             case StatusCodes.FAILURE:
+                metrics = getAndResetTestMetrics();
                 for (ITestRunListener listener : mTestListeners) {
                     listener.testFailed(ITestRunListener.TestFailure.FAILURE, testId,
                         getTrace(testInfo));
 
-                    listener.testEnded(testId);
+                    listener.testEnded(testId, metrics);
                 }
                 mNumTestsRun++;
                 break;
             case StatusCodes.ERROR:
+                metrics = getAndResetTestMetrics();
                 for (ITestRunListener listener : mTestListeners) {
                     listener.testFailed(ITestRunListener.TestFailure.ERROR, testId,
                         getTrace(testInfo));
-                    listener.testEnded(testId);
+                    listener.testEnded(testId, metrics);
                 }
                 mNumTestsRun++;
                 break;
             case StatusCodes.OK:
+                metrics = getAndResetTestMetrics();
                 for (ITestRunListener listener : mTestListeners) {
-                    listener.testEnded(testId);
+                    listener.testEnded(testId, metrics);
                 }
                 mNumTestsRun++;
                 break;
             default:
+                metrics = getAndResetTestMetrics();
                 Log.e(LOG_TAG, "Unknown status code received: " + testInfo.mCode);
                 for (ITestRunListener listener : mTestListeners) {
-                    listener.testEnded(testId);
+                    listener.testEnded(testId, metrics);
                 }
                 mNumTestsRun++;
             break;
@@ -411,7 +499,7 @@ public class InstrumentationResultParser extends MultiLineReceiver {
         // if start test run not reported yet
         if (!mTestStartReported && testInfo.mNumTests != null) {
             for (ITestRunListener listener : mTestListeners) {
-                listener.testRunStarted(testInfo.mNumTests);
+                listener.testRunStarted(mTestRunName, testInfo.mNumTests);
             }
             mNumTestsExpected = testInfo.mNumTests;
             mTestStartReported = true;
@@ -433,22 +521,29 @@ public class InstrumentationResultParser extends MultiLineReceiver {
     /**
      * Parses out and store the elapsed time.
      */
-    private void parseTime(String line, int startPos) {
-        String timeString = line.substring(startPos);
-        try {
-            float timeSeconds = Float.parseFloat(timeString);
-            mTestTime = (long) (timeSeconds * 1000);
-        } catch (NumberFormatException e) {
-            Log.e(LOG_TAG, "Unexpected time format " + timeString);
+    private void parseTime(String line) {
+        final Pattern timePattern = Pattern.compile(String.format("%s\\s*([\\d\\.]+)",
+                Prefixes.TIME_REPORT));
+        Matcher timeMatcher = timePattern.matcher(line);
+        if (timeMatcher.find()) {
+            String timeString = timeMatcher.group(1);
+            try {
+                float timeSeconds = Float.parseFloat(timeString);
+                mTestTime = (long) (timeSeconds * 1000);
+            } catch (NumberFormatException e) {
+                Log.w(LOG_TAG, String.format("Unexpected time format %1$s", line));
+            }
+        } else {
+            Log.w(LOG_TAG, String.format("Unexpected time format %1$s", line));
         }
     }
 
     /**
      * Process a instrumentation run failure
      */
-    private void handleTestRunFailed(String errorMsg) {
+    void handleTestRunFailed(String errorMsg) {
         errorMsg = (errorMsg == null ? "Unknown error" : errorMsg);
-        Log.i(LOG_TAG, String.format("test run failed %s", errorMsg));
+        Log.i(LOG_TAG, String.format("test run failed: '%1$s'", errorMsg));
         if (mLastTestResult != null &&
             mLastTestResult.isComplete() &&
             StatusCodes.START == mLastTestResult.mCode) {
@@ -459,13 +554,20 @@ public class InstrumentationResultParser extends MultiLineReceiver {
                     mLastTestResult.mTestName);
             for (ITestRunListener listener : mTestListeners) {
                 listener.testFailed(ITestRunListener.TestFailure.ERROR, testId,
-                    String.format("Incomplete: %s", errorMsg));
-                listener.testEnded(testId);
+                    String.format("%1$s. Reason: '%2$s'. %3$s", INCOMPLETE_TEST_ERR_MSG_PREFIX,
+                            errorMsg, INCOMPLETE_TEST_ERR_MSG_POSTFIX));
+                listener.testEnded(testId, getAndResetTestMetrics());
             }
         }
         for (ITestRunListener listener : mTestListeners) {
+            if (!mTestStartReported) {
+                // test run wasn't started - must have crashed before it started
+                listener.testRunStarted(mTestRunName, 0);
+            }
             listener.testRunFailed(errorMsg);
+            listener.testRunEnded(mTestTime, mInstrumentationResultBundle);
         }
+        mTestStartReported = true;
         mTestRunFailReported = true;
     }
 
@@ -475,22 +577,31 @@ public class InstrumentationResultParser extends MultiLineReceiver {
     @Override
     public void done() {
         super.done();
-        if (!mTestRunFailReported && !mTestStartReported && !mTestRunFinished) {
+        if (!mTestRunFailReported) {
+            handleOutputDone();
+        }
+    }
+
+    /**
+     * Handles the end of the adb session when a test run failure has not been reported yet
+     */
+    private void handleOutputDone() {
+        if (!mTestStartReported && !mTestRunFinished) {
             // no results
             handleTestRunFailed(NO_TEST_RESULTS_MSG);
-        } else if (!mTestRunFailReported && mNumTestsExpected > mNumTestsRun) {
+        } else if (mNumTestsExpected > mNumTestsRun) {
             final String message =
-                String.format("Test run incomplete. Expected %d tests, received %d",
-                        mNumTestsExpected, mNumTestsRun);
+                String.format("%1$s. Expected %2$d tests, received %3$d",
+                        INCOMPLETE_RUN_ERR_MSG_PREFIX, mNumTestsExpected, mNumTestsRun);
             handleTestRunFailed(message);
         } else {
             for (ITestRunListener listener : mTestListeners) {
                 if (!mTestStartReported) {
                     // test run wasn't started, but it finished successfully. Must be a run with
                     // no tests
-                    listener.testRunStarted(0);
+                    listener.testRunStarted(mTestRunName, 0);
                 }
-                listener.testRunEnded(mTestTime);
+                listener.testRunEnded(mTestTime, mInstrumentationResultBundle);
             }
         }
     }

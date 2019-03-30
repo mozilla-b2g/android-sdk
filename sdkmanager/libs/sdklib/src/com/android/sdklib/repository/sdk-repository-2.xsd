@@ -31,7 +31,9 @@
 
          History:
          - v1 is used by the SDK Updater in Tools r3 and r4.
-         - v2 is used by the SDK Updater in Tools r5.
+         - v2 is used by the SDK Updater in Tools r5:
+            - new <sample> repository type.
+            - new <obsolete> in all repository types.
     -->
 
     <xsd:element name="sdk-repository" type="sr2:repositoryType" />
@@ -107,8 +109,7 @@
             <xsd:element name="vendor"    type="xsd:normalizedString" />
             <!-- The Android API Level for the add-on. An int > 0. -->
             <xsd:element name="api-level" type="xsd:positiveInteger"  />
-            <!-- The optional codename for this add-on, if it's a preview. -->
-            <xsd:element name="codename"  type="xsd:string" minOccurs="0" />
+            <!-- Note: Add-ons do not support 'codename' (a.k.a. API previews). -->
 
             <!-- The revision, an int > 0, incremented each time a new
                  package is generated. -->

@@ -21,3 +21,6 @@ LOCAL_SRC_FILES := $(call all-java-files-under,src)
 LOCAL_MODULE := ninepatch
 
 include $(BUILD_HOST_JAVA_LIBRARY)
+
+# Build all sub-directories
+include $(call all-makefiles-under,$(LOCAL_PATH))

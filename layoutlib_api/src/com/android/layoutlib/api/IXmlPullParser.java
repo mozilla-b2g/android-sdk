@@ -16,21 +16,17 @@
 
 package com.android.layoutlib.api;
 
-import com.android.layoutlib.api.ILayoutResult.ILayoutViewInfo;
-
 import org.xmlpull.v1.XmlPullParser;
 
 /**
- * Extended version of {@link XmlPullParser} to use with 
- * {@link ILayoutLibBridge#computeLayout(XmlPullParser, int, int, String, java.util.Map, java.util.Map, java.util.Map, com.android.layoutlib.api.ILayoutLibBridge.IFontInfo)}
+ * @deprecated
  */
 public interface IXmlPullParser extends XmlPullParser {
-    
+
     /**
      * Returns a key for the current XML node.
-     * <p/>This key will be passed back in the {@link ILayoutViewInfo} objects, allowing association
+     * <p/>This key will be passed back in the {@link ViewInfo} objects, allowing association
      * of a particular XML node with its result from the layout computation.
      */
     Object getViewKey();
 }
-

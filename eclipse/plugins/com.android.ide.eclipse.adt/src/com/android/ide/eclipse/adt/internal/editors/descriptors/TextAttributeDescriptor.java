@@ -16,7 +16,7 @@
 
 package com.android.ide.eclipse.adt.internal.editors.descriptors;
 
-import com.android.ide.eclipse.adt.editors.layout.gscripts.IAttributeInfo;
+import com.android.ide.common.api.IAttributeInfo;
 import com.android.ide.eclipse.adt.internal.editors.ui.TextValueCellEditor;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiAttributeNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
@@ -39,6 +39,8 @@ import org.eclipse.ui.views.properties.IPropertyDescriptor;
  * This is the "default" kind of attribute. If in doubt, use this.
  */
 public class TextAttributeDescriptor extends AttributeDescriptor implements IPropertyDescriptor {
+    public static final String DEPRECATED_CATEGORY = "Deprecated";
+
     private String mUiName;
     private String mTooltip;
 
@@ -52,8 +54,12 @@ public class TextAttributeDescriptor extends AttributeDescriptor implements IPro
      * @param tooltip A non-empty tooltip string or null
      * @param attrInfo The {@link IAttributeInfo} of this attribute. Can't be null.
      */
-    public TextAttributeDescriptor(String xmlLocalName, String uiName,
-            String nsUri, String tooltip, IAttributeInfo attrInfo) {
+    public TextAttributeDescriptor(
+            String xmlLocalName,
+            String uiName,
+            String nsUri,
+            String tooltip,
+            IAttributeInfo attrInfo) {
         super(xmlLocalName, nsUri, attrInfo);
         mUiName = uiName;
         mTooltip = (tooltip != null && tooltip.length() > 0) ? tooltip : null;
@@ -98,7 +104,7 @@ public class TextAttributeDescriptor extends AttributeDescriptor implements IPro
 
     public String getCategory() {
         if (isDeprecated()) {
-            return "Deprecated";
+            return DEPRECATED_CATEGORY;
         }
 
         ElementDescriptor parent = getParent();

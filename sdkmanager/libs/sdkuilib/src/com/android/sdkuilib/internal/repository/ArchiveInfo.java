@@ -17,8 +17,7 @@
 package com.android.sdkuilib.internal.repository;
 
 import com.android.sdklib.internal.repository.Archive;
-import com.android.sdklib.internal.repository.IDescription;
-import com.android.sdklib.internal.repository.Package;
+import com.android.sdklib.internal.repository.ArchiveReplacement;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -33,25 +32,28 @@ import java.util.Collection;
  * (new or local) archive, which means the dependent archive needs to be successfully
  * installed first. Finally this archive can also be a dependency for another one.
  * <p/>
- * The accepted and rejected flags are used by {@link UpdateChooserDialog} to follow
+ * The accepted and rejected flags are used by {@link SdkUpdaterChooserDialog} to follow
  * user choices. The installer should never install something that is not accepted.
  * <p/>
  * <em>Note</em>: There is currently no logic to support more than one level of
- * dependency, either here or in the {@link UpdateChooserDialog}, since we currently
+ * dependency, either here or in the {@link SdkUpdaterChooserDialog}, since we currently
  * have no need for it.
  *
  * @see ArchiveInfo#ArchiveInfo(Archive, Archive, ArchiveInfo[])
  */
-class ArchiveInfo implements IDescription {
+class ArchiveInfo extends ArchiveReplacement implements Comparable<ArchiveInfo> {
 
-    private final Archive mNewArchive;
-    private final Archive mReplaced;
     private final ArchiveInfo[] mDependsOn;
     private final ArrayList<ArchiveInfo> mDependencyFor = new ArrayList<ArchiveInfo>();
     private boolean mAccepted;
     private boolean mRejected;
 
     /**
+     * Creates a new replacement where the {@code newArchive} will replace the
+     * currently installed {@code replaced} archive.
+     * When {@code newArchive} is not intended to replace anything (e.g. because
+     * the user is installing a new package not present on her system yet), then
+     * {@code replace} shall be null.
      *
      * @param newArchive A "new archive" to be installed. This is always an archive
      *          that comes from a remote site. This <em>may</em> be null.
@@ -64,25 +66,8 @@ class ArchiveInfo implements IDescription {
      *          However it cannot contain nulls.
      */
     public ArchiveInfo(Archive newArchive, Archive replaced, ArchiveInfo[] dependsOn) {
-        mNewArchive = newArchive;
-        mReplaced = replaced;
+        super(newArchive, replaced);
         mDependsOn = dependsOn;
-    }
-
-    /**
-     * Returns the "new archive" to be installed.
-     * This <em>may</em> be null for missing archives.
-     */
-    public Archive getNewArchive() {
-        return mNewArchive;
-    }
-
-    /**
-     * Returns an optional local archive that the new one will replace.
-     * Can be null if this archive does not replace anything.
-     */
-    public Archive getReplaced() {
-        return mReplaced;
     }
 
     /**
@@ -90,6 +75,7 @@ class ArchiveInfo implements IDescription {
      * archive depends upon. In other words, we can only install this archive if the
      * dependency has been successfully installed. It also means we need to install the
      * dependency first.
+     * <p/>
      * This array can be null or empty. It can't contain nulls though.
      */
     public ArchiveInfo[] getDependsOn() {
@@ -108,12 +94,21 @@ class ArchiveInfo implements IDescription {
      * Adds an {@link ArchiveInfo} for which <em>this</em> package is a dependency.
      * This means the package added here depends on this package.
      */
-    public void addDependencyFor(ArchiveInfo dependencyFor) {
+    public ArchiveInfo addDependencyFor(ArchiveInfo dependencyFor) {
         if (!mDependencyFor.contains(dependencyFor)) {
             mDependencyFor.add(dependencyFor);
         }
+
+        return this;
     }
 
+    /**
+     * Returns the list of {@link ArchiveInfo} for which <em>this</em> package is a dependency.
+     * This means the packages listed here depend on this package.
+     * <p/>
+     * Implementation detail: this is the internal mutable list. Callers should not modify it.
+     * This list can be empty but is never null.
+     */
     public Collection<ArchiveInfo> getDependenciesFor() {
         return mDependencyFor;
     }
@@ -151,30 +146,14 @@ class ArchiveInfo implements IDescription {
     }
 
     /**
-     * Returns the long description of the parent package of the new archive, if not null.
-     * Otherwise returns an empty string.
+     * ArchiveInfos are compared using ther "new archive" ordering.
+     *
+     * @see Archive#compareTo(Archive)
      */
-    public String getLongDescription() {
-        if (mNewArchive != null) {
-            Package p = mNewArchive.getParentPackage();
-            if (p != null) {
-                return p.getLongDescription();
-            }
+    public int compareTo(ArchiveInfo rhs) {
+        if (getNewArchive() != null && rhs != null) {
+            return getNewArchive().compareTo(rhs.getNewArchive());
         }
-        return "";
-    }
-
-    /**
-     * Returns the short description of the parent package of the new archive, if not null.
-     * Otherwise returns an empty string.
-     */
-    public String getShortDescription() {
-        if (mNewArchive != null) {
-            Package p = mNewArchive.getParentPackage();
-            if (p != null) {
-                return p.getShortDescription();
-            }
-        }
-        return "";
+        return 0;
     }
 }

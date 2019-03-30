@@ -16,19 +16,29 @@
 
 package com.android.ide.eclipse.adt.internal.sdk;
 
+import static com.android.ide.eclipse.adt.AdtConstants.DOT_XML;
+import static com.android.ide.eclipse.adt.AdtUtils.endsWith;
+import static com.android.sdklib.SdkConstants.FD_RES;
+
+import com.android.AndroidConstants;
 import com.android.ddmlib.IDevice;
+import com.android.ide.common.rendering.LayoutLibrary;
+import com.android.ide.common.sdk.LoadStatus;
+import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
+import com.android.ide.eclipse.adt.internal.build.DexWrapper;
 import com.android.ide.eclipse.adt.internal.project.AndroidClasspathContainerInitializer;
 import com.android.ide.eclipse.adt.internal.project.BaseProjectHelper;
-import com.android.ide.eclipse.adt.internal.project.ProjectHelper;
+import com.android.ide.eclipse.adt.internal.project.LibraryClasspathContainerInitializer;
 import com.android.ide.eclipse.adt.internal.resources.manager.GlobalProjectMonitor;
 import com.android.ide.eclipse.adt.internal.resources.manager.GlobalProjectMonitor.IFileListener;
 import com.android.ide.eclipse.adt.internal.resources.manager.GlobalProjectMonitor.IProjectListener;
 import com.android.ide.eclipse.adt.internal.resources.manager.GlobalProjectMonitor.IResourceEventListener;
-import com.android.ide.eclipse.adt.internal.sdk.AndroidTargetData.LayoutBridge;
 import com.android.ide.eclipse.adt.internal.sdk.ProjectState.LibraryDifference;
 import com.android.ide.eclipse.adt.internal.sdk.ProjectState.LibraryState;
+import com.android.io.StreamException;
 import com.android.prefs.AndroidLocation.AndroidLocationException;
+import com.android.resources.ResourceFolderType;
 import com.android.sdklib.AndroidVersion;
 import com.android.sdklib.IAndroidTarget;
 import com.android.sdklib.ISdkLog;
@@ -36,44 +46,38 @@ import com.android.sdklib.SdkConstants;
 import com.android.sdklib.SdkManager;
 import com.android.sdklib.internal.avd.AvdManager;
 import com.android.sdklib.internal.project.ProjectProperties;
-import com.android.sdklib.internal.project.ProjectPropertiesWorkingCopy;
 import com.android.sdklib.internal.project.ProjectProperties.PropertyType;
-import com.android.sdklib.io.StreamException;
+import com.android.sdklib.internal.project.ProjectPropertiesWorkingCopy;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IMarkerDelta;
-import org.eclipse.core.resources.IPathVariableManager;
 import org.eclipse.core.resources.IProject;
-import org.eclipse.core.resources.IProjectDescription;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.IResourceDelta;
-import org.eclipse.core.resources.IWorkspaceRoot;
 import org.eclipse.core.resources.IncrementalProjectBuilder;
-import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
-import org.eclipse.core.runtime.Path;
+import org.eclipse.core.runtime.QualifiedName;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.jobs.Job;
-import org.eclipse.jdt.core.IClasspathEntry;
 import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.JavaCore;
+import org.eclipse.ui.ide.IDE;
 
 import java.io.File;
 import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.Map.Entry;
+import java.util.Set;
 
 /**
  * Central point to load, manipulate and deal with the Android SDK. Only one SDK can be used
@@ -85,11 +89,9 @@ import java.util.Map.Entry;
  * To get the list of platforms or add-ons present in the SDK, call {@link #getTargets()}.
  */
 public final class Sdk  {
-    private static final String PROP_LIBRARY = "_library"; //$NON-NLS-1$
-    private static final String PROP_LIBRARY_NAME = "_library_name"; //$NON-NLS-1$
-    public static final String CREATOR_ADT = "ADT";        //$NON-NLS-1$
-    public static final String PROP_CREATOR = "_creator";  //$NON-NLS-1$
-    private final static Object sLock = new Object();
+    private final static boolean DEBUG = false;
+
+    private final static Object LOCK = new Object();
 
     private static Sdk sCurrentSdk = null;
 
@@ -112,6 +114,7 @@ public final class Sdk  {
     }
 
     private final SdkManager mManager;
+    private final DexWrapper mDexWrapper;
     private final AvdManager mAvdManager;
 
     /** Map associating an {@link IAndroidTarget} to an {@link AndroidTargetData} */
@@ -120,6 +123,12 @@ public final class Sdk  {
     /** Map associating an {@link IAndroidTarget} and its {@link TargetLoadBundle}. */
     private final HashMap<IAndroidTarget, TargetLoadBundle> mTargetDataStatusMap =
         new HashMap<IAndroidTarget, TargetLoadBundle>();
+
+    /**
+     * If true the target data will never load anymore. The only way to reload them is to
+     * completely reload the SDK with {@link #loadSdk(String)}
+     */
+    private boolean mDontLoadTargetData = false;
 
     private final String mDocBaseUrl;
 
@@ -188,7 +197,7 @@ public final class Sdk  {
      * projects.
      */
     public static final Object getLock() {
-        return sLock;
+        return LOCK;
     }
 
     /**
@@ -197,7 +206,7 @@ public final class Sdk  {
      * @param sdkLocation the OS path to the SDK.
      */
     public static Sdk loadSdk(String sdkLocation) {
-        synchronized (sLock) {
+        synchronized (LOCK) {
             if (sCurrentSdk != null) {
                 sCurrentSdk.dispose();
                 sCurrentSdk = null;
@@ -227,13 +236,25 @@ public final class Sdk  {
             // get an SdkManager object for the location
             SdkManager manager = SdkManager.createManager(sdkLocation, log);
             if (manager != null) {
+                // load DX.
+                DexWrapper dexWrapper = new DexWrapper();
+                String dexLocation =
+                        sdkLocation + File.separator +
+                        SdkConstants.OS_SDK_PLATFORM_TOOLS_LIB_FOLDER + SdkConstants.FN_DX_JAR;
+                IStatus res = dexWrapper.loadDex(dexLocation);
+                if (res != Status.OK_STATUS) {
+                    log.error(null, res.getMessage());
+                    dexWrapper = null;
+                }
+
+                // create the AVD Manager
                 AvdManager avdManager = null;
                 try {
                     avdManager = new AvdManager(manager, log);
                 } catch (AndroidLocationException e) {
                     log.error(e, "Error parsing the AVDs");
                 }
-                sCurrentSdk = new Sdk(manager, avdManager);
+                sCurrentSdk = new Sdk(manager, dexWrapper, avdManager);
                 return sCurrentSdk;
             } else {
                 StringBuilder sb = new StringBuilder("Error Loading the SDK:\n");
@@ -251,7 +272,7 @@ public final class Sdk  {
      * Returns the current {@link Sdk} object.
      */
     public static Sdk getCurrent() {
-        synchronized (sLock) {
+        synchronized (LOCK) {
             return sCurrentSdk;
         }
     }
@@ -291,7 +312,7 @@ public final class Sdk  {
     }
 
     /**
-     * Initializes a new project with a target. This creates the <code>default.properties</code>
+     * Initializes a new project with a target. This creates the <code>project.properties</code>
      * file.
      * @param project the project to intialize
      * @param target the project's target.
@@ -304,7 +325,7 @@ public final class Sdk  {
             return;
         }
 
-        synchronized (sLock) {
+        synchronized (LOCK) {
             // check if there's already a state?
             ProjectState state = getProjectState(project);
 
@@ -321,7 +342,7 @@ public final class Sdk  {
                     return;
                 }
 
-                properties = ProjectProperties.create(location.toOSString(), PropertyType.DEFAULT);
+                properties = ProjectProperties.create(location.toOSString(), PropertyType.PROJECT);
             }
 
             // save the target hash string in the project persistent property
@@ -342,27 +363,53 @@ public final class Sdk  {
      * @param project the request project
      * @return the ProjectState for the project.
      */
+    @SuppressWarnings("deprecation")
     public static ProjectState getProjectState(IProject project) {
         if (project == null) {
             return null;
         }
 
-        synchronized (sLock) {
+        synchronized (LOCK) {
             ProjectState state = sProjectStateMap.get(project);
             if (state == null) {
-                // load the default.properties from the project folder.
+                // load the project.properties from the project folder.
                 IPath location = project.getLocation();
                 if (location == null) {  // can return null when the project is being deleted.
                     // do nothing and return null;
                     return null;
                 }
 
-                ProjectProperties properties = ProjectProperties.load(location.toOSString(),
-                        PropertyType.DEFAULT);
+                String projectLocation = location.toOSString();
+
+                ProjectProperties properties = ProjectProperties.load(projectLocation,
+                        PropertyType.PROJECT);
                 if (properties == null) {
-                    AdtPlugin.log(IStatus.ERROR, "Failed to load properties file for project '%s'",
-                            project.getName());
-                    return null;
+                    // legacy support: look for default.properties and rename it if needed.
+                    properties = ProjectProperties.load(projectLocation,
+                            PropertyType.LEGACY_DEFAULT);
+
+                    if (properties == null) {
+                        AdtPlugin.log(IStatus.ERROR,
+                                "Failed to load properties file for project '%s'",
+                                project.getName());
+                        return null;
+                    } else {
+                        //legacy mode.
+                        // get a working copy with the new type "project"
+                        ProjectPropertiesWorkingCopy wc = properties.makeWorkingCopy(
+                                PropertyType.PROJECT);
+                        // and save it
+                        try {
+                            wc.save();
+
+                            // delete the old file.
+                            ProjectProperties.delete(projectLocation, PropertyType.LEGACY_DEFAULT);
+                        } catch (Exception e) {
+                            AdtPlugin.log(IStatus.ERROR,
+                                    "Failed to rename properties file to %1$s for project '%s2$'",
+                                    PropertyType.PROJECT.getFilename(), project.getName());
+                        }
+                    }
                 }
 
                 state = new ProjectState(project, properties);
@@ -403,9 +450,11 @@ public final class Sdk  {
      */
     public IAndroidTarget loadTarget(ProjectState state) {
         IAndroidTarget target = null;
-        String hash = state.getTargetHashString();
-        if (hash != null) {
-            state.setTarget(target = getTargetFromHashString(hash));
+        if (state != null) {
+            String hash = state.getTargetHashString();
+            if (hash != null) {
+                state.setTarget(target = getTargetFromHashString(hash));
+            }
         }
 
         return target;
@@ -427,7 +476,11 @@ public final class Sdk  {
     public LoadStatus checkAndLoadTargetData(final IAndroidTarget target, IJavaProject project) {
         boolean loadData = false;
 
-        synchronized (sLock) {
+        synchronized (LOCK) {
+            if (mDontLoadTargetData) {
+                return LoadStatus.FAILED;
+            }
+
             TargetLoadBundle bundle = mTargetDataStatusMap.get(target);
             if (bundle == null) {
                 bundle = new TargetLoadBundle();
@@ -465,7 +518,7 @@ public final class Sdk  {
 
                         IJavaProject[] javaProjectArray = null;
 
-                        synchronized (sLock) {
+                        synchronized (LOCK) {
                             TargetLoadBundle bundle = mTargetDataStatusMap.get(target);
 
                             if (status.getCode() != IStatus.OK) {
@@ -490,7 +543,7 @@ public final class Sdk  {
 
                         return status;
                     } catch (Throwable t) {
-                        synchronized (sLock) {
+                        synchronized (LOCK) {
                             TargetLoadBundle bundle = mTargetDataStatusMap.get(target);
                             bundle.status = LoadStatus.FAILED;
                         }
@@ -517,7 +570,7 @@ public final class Sdk  {
      * Return the {@link AndroidTargetData} for a given {@link IAndroidTarget}.
      */
     public AndroidTargetData getTargetData(IAndroidTarget target) {
-        synchronized (sLock) {
+        synchronized (LOCK) {
             return mTargetDataMap.get(target);
         }
     }
@@ -526,7 +579,7 @@ public final class Sdk  {
      * Return the {@link AndroidTargetData} for a given {@link IProject}.
      */
     public AndroidTargetData getTargetData(IProject project) {
-        synchronized (sLock) {
+        synchronized (LOCK) {
             IAndroidTarget target = getTarget(project);
             if (target != null) {
                 return getTargetData(target);
@@ -534,6 +587,14 @@ public final class Sdk  {
         }
 
         return null;
+    }
+
+    /**
+     * Returns a {@link DexWrapper} object to be used to execute dx commands. If dx.jar was not
+     * loaded properly, then this will return <code>null</code>.
+     */
+    public DexWrapper getDexWrapper() {
+        return mDexWrapper;
     }
 
     /**
@@ -570,7 +631,7 @@ public final class Sdk  {
      * @return a possibly empty list of ProjectState.
      */
     public static Set<ProjectState> getMainProjectsFor(IProject project) {
-        synchronized (sLock) {
+        synchronized (LOCK) {
             // first get the project directly depending on this.
             HashSet<ProjectState> list = new HashSet<ProjectState>();
 
@@ -598,15 +659,43 @@ public final class Sdk  {
         }
     }
 
-    private Sdk(SdkManager manager, AvdManager avdManager) {
+    /**
+     * Unload the SDK's target data.
+     *
+     * If <var>preventReload</var>, this effect is final until the SDK instance is changed
+     * through {@link #loadSdk(String)}.
+     *
+     * The goal is to unload the targets to be able to replace existing targets with new ones,
+     * before calling {@link #loadSdk(String)} to fully reload the SDK.
+     *
+     * @param preventReload prevent the data from being loaded again for the remaining live of
+     *   this {@link Sdk} instance.
+     */
+    public void unloadTargetData(boolean preventReload) {
+        synchronized (LOCK) {
+            mDontLoadTargetData = preventReload;
+
+            // dispose of the target data.
+            for (AndroidTargetData data : mTargetDataMap.values()) {
+                data.dispose();
+            }
+
+            mTargetDataMap.clear();
+        }
+    }
+
+    private Sdk(SdkManager manager, DexWrapper dexWrapper, AvdManager avdManager) {
         mManager = manager;
+        mDexWrapper = dexWrapper;
         mAvdManager = avdManager;
 
         // listen to projects closing
         GlobalProjectMonitor monitor = GlobalProjectMonitor.getMonitor();
+        // need to register the resource event listener first because the project listener
+        // is called back during registration with project opened in the workspace.
+        monitor.addResourceEventListener(mResourceEventListener);
         monitor.addProjectListener(mProjectListener);
         monitor.addFileListener(mFileListener, IResourceDelta.CHANGED | IResourceDelta.ADDED);
-        monitor.addResourceEventListener(mResourceEventListener);
 
         // pre-compute some paths
         mDocBaseUrl = getDocumentationBaseUrl(mManager.getLocation() +
@@ -618,7 +707,7 @@ public final class Sdk  {
         loadLayoutDevices();
 
         // update whatever ProjectState is already present with new IAndroidTarget objects.
-        synchronized (sLock) {
+        synchronized (LOCK) {
             for (Entry<IProject, ProjectState> entry: sProjectStateMap.entrySet()) {
                 entry.getValue().setTarget(
                         getTargetFromHashString(entry.getValue().getTargetHashString()));
@@ -636,15 +725,22 @@ public final class Sdk  {
         monitor.removeResourceEventListener(mResourceEventListener);
 
         // the IAndroidTarget objects are now obsolete so update the project states.
-        synchronized (sLock) {
+        synchronized (LOCK) {
             for (Entry<IProject, ProjectState> entry: sProjectStateMap.entrySet()) {
                 entry.getValue().setTarget(null);
             }
+
+            // dispose of the target data.
+            for (AndroidTargetData data : mTargetDataMap.values()) {
+                data.dispose();
+            }
+
+            mTargetDataMap.clear();
         }
     }
 
     void setTargetData(IAndroidTarget target, AndroidTargetData data) {
-        synchronized (sLock) {
+        synchronized (LOCK) {
             mTargetDataMap.put(target, data);
         }
     }
@@ -716,71 +812,69 @@ public final class Sdk  {
             onProjectRemoved(project, true /*deleted*/);
         }
 
-        private void onProjectRemoved(IProject project, boolean deleted) {
+        private void onProjectRemoved(IProject removedProject, boolean deleted) {
+            try {
+                if (removedProject.hasNature(AdtConstants.NATURE_DEFAULT) == false) {
+                    return;
+                }
+            } catch (CoreException e) {
+                // this can only happen if the project does not exist or is not open, neither
+                // of which can happen here since we're processing a Project removed/deleted event
+                // which is processed before the project is actually removed/closed.
+            }
+
+            if (DEBUG) {
+                System.out.println(">>> CLOSED: " + removedProject.getName());
+            }
+
             // get the target project
-            synchronized (sLock) {
+            synchronized (LOCK) {
                 // Don't use getProject() as it could create the ProjectState if it's not
                 // there yet and this is not what we want. We want the current object.
                 // Therefore, direct access to the map.
-                ProjectState state = sProjectStateMap.get(project);
-                if (state != null) {
+                ProjectState removedState = sProjectStateMap.get(removedProject);
+                if (removedState != null) {
                     // 1. clear the layout lib cache associated with this project
-                    IAndroidTarget target = state.getTarget();
+                    IAndroidTarget target = removedState.getTarget();
                     if (target != null) {
                         // get the bridge for the target, and clear the cache for this project.
                         AndroidTargetData data = mTargetDataMap.get(target);
                         if (data != null) {
-                            LayoutBridge bridge = data.getLayoutBridge();
-                            if (bridge != null && bridge.status == LoadStatus.LOADED) {
-                                bridge.bridge.clearCaches(project);
+                            LayoutLibrary layoutLib = data.getLayoutLibrary();
+                            if (layoutLib != null && layoutLib.getStatus() == LoadStatus.LOADED) {
+                                layoutLib.clearCaches(removedProject);
                             }
                         }
                     }
 
                     // 2. if the project is a library, make sure to update the
-                    // LibraryState for any main project using this.
+                    // LibraryState for any project referencing it.
                     // Also, record the updated projects that are libraries, to update
                     // projects that depend on them.
-                    ArrayList<ProjectState> updatedLibraries = new ArrayList<ProjectState>();
                     for (ProjectState projectState : sProjectStateMap.values()) {
-                        LibraryState libState = projectState.getLibrary(project);
+                        LibraryState libState = projectState.getLibrary(removedProject);
                         if (libState != null) {
-                            // get the current libraries.
-                            IProject[] oldLibraries = projectState.getFullLibraryProjects();
-
-                            // the unlink below will work in the job, but we need to close
-                            // the library right away.
+                            // Close the library right away.
+                            // This remove links between the LibraryState and the projectState.
                             // This is because in case of a rename of a project, projectClosed and
                             // projectOpened will be called before any other job is run, so we
                             // need to make sure projectOpened is closed with the main project
                             // state up to date.
                             libState.close();
 
-
-                            // edit the project to remove the linked source folder.
-                            // this also calls LibraryState.close();
-                            LinkUpdateBundle bundle = getLinkBundle(projectState, oldLibraries);
-                            if (bundle != null) {
-                                queueLinkUpdateBundle(bundle);
-                            }
-
-                            if (projectState.isLibrary()) {
-                                updatedLibraries.add(projectState);
-                            }
+                            // record that this project changed, and in case it's a library
+                            // that its parents need to be updated as well.
+                            markProject(projectState, projectState.isLibrary());
                         }
                     }
 
-                    if (deleted) {
-                        // remove the linked path variable
-                        disposeLibraryProject(project);
-                    }
-
                     // now remove the project for the project map.
-                    sProjectStateMap.remove(project);
-
-                    // update the projects that depend on the updated project
-                    updateProjectsWithNewLibraries(updatedLibraries);
+                    sProjectStateMap.remove(removedProject);
                 }
+            }
+
+            if (DEBUG) {
+                System.out.println("<<<");
             }
         }
 
@@ -794,109 +888,85 @@ public final class Sdk  {
         }
 
         private void onProjectOpened(final IProject openedProject) {
+            try {
+                if (openedProject.hasNature(AdtConstants.NATURE_DEFAULT) == false) {
+                    return;
+                }
+            } catch (CoreException e) {
+                // this can only happen if the project does not exist or is not open, neither
+                // of which can happen here since we're processing a Project opened event.
+            }
+
+
             ProjectState openedState = getProjectState(openedProject);
             if (openedState != null) {
-                if (openedState.hasLibraries()) {
-                    // list of library to link to the opened project.
-                    final ArrayList<IProject> libsToLink = new ArrayList<IProject>();
+                if (DEBUG) {
+                    System.out.println(">>> OPENED: " + openedProject.getName());
+                }
 
-                    // Look for all other opened projects to see if any is a library for the opened
-                    // project.
-                    synchronized (sLock) {
+                synchronized (LOCK) {
+                    final boolean isLibrary = openedState.isLibrary();
+                    final boolean hasLibraries = openedState.hasLibraries();
+
+                    if (isLibrary || hasLibraries) {
+                        boolean foundLibraries = false;
+                        // loop on all the existing project and update them based on this new
+                        // project
                         for (ProjectState projectState : sProjectStateMap.values()) {
                             if (projectState != openedState) {
-                                // ProjectState#needs() both checks if this is a missing library
-                                // and updates LibraryState to contains the new values.
-                                LibraryState libState = openedState.needs(projectState);
+                                // If the project has libraries, check if this project
+                                // is a reference.
+                                if (hasLibraries) {
+                                    // ProjectState#needs() both checks if this is a missing library
+                                    // and updates LibraryState to contains the new values.
+                                    // This must always be called.
+                                    LibraryState libState = openedState.needs(projectState);
 
-                                if (libState != null) {
-                                    // we have a match! Add the library to the list (if it was
-                                    // not added through an indirect dependency before).
-                                    IProject libProject = libState.getProjectState().getProject();
-                                    if (libsToLink.contains(libProject) == false) {
-                                        libsToLink.add(libProject);
+                                    if (libState != null) {
+                                        // found a library! Add the main project to the list of
+                                        // modified project
+                                        foundLibraries = true;
                                     }
+                                }
 
-                                    // now find what this depends on, and add it too.
-                                    // The order here doesn't matter
-                                    // as it's just to add the linked source folder, so there's no
-                                    // need to use ProjectState#getFullLibraryProjects() which
-                                    // could return project that have already been added anyway.
-                                    fillProjectDependenciesList(libState.getProjectState(),
-                                            libsToLink);
+                                // if the project is a library check if the other project depend
+                                // on it.
+                                if (isLibrary) {
+                                    // ProjectState#needs() both checks if this is a missing library
+                                    // and updates LibraryState to contains the new values.
+                                    // This must always be called.
+                                    LibraryState libState = projectState.needs(openedState);
+
+                                    if (libState != null) {
+                                        // There's a dependency! Add the project to the list of
+                                        // modified project, but also to a list of projects
+                                        // that saw one of its dependencies resolved.
+                                        markProject(projectState, projectState.isLibrary());
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    // create a link bundle always, because even if there's no libraries to add
-                    // to the CPE, the cleaning of invalid CPE must happen.
-                    LinkUpdateBundle bundle = new LinkUpdateBundle();
-                    bundle.mProject = openedProject;
-                    bundle.mNewLibraryProjects = libsToLink.toArray(
-                            new IProject[libsToLink.size()]);
-                    bundle.mCleanupCPE = true;
-                    queueLinkUpdateBundle(bundle);
+                        // if the project has a libraries and we found at least one, we add
+                        // the project to the list of modified project.
+                        // Since we already went through the parent, no need to update them.
+                        if (foundLibraries) {
+                            markProject(openedState, false /*updateParents*/);
+                        }
+                    }
                 }
 
-                // if the project is a library, then add it to the list of projects being opened.
-                // They will be processed in IResourceEventListener#resourceChangeEventEnd.
-                // This is done so that we are sure to process all the projects being opened
-                // first and only then process projects depending on the projects that were opened.
-                if (openedState.isLibrary()) {
-                    setupLibraryProject(openedProject);
+                // Correct file editor associations.
+                fixEditorAssociations(openedProject);
 
-                    mOpenedLibraryProjects.add(openedState);
+                if (DEBUG) {
+                    System.out.println("<<<");
                 }
             }
         }
 
         public void projectRenamed(IProject project, IPath from) {
-            System.out.println("RENAMED: " + project);
-            // a project was renamed.
-            // if the project is a library, look for any project that depended on it
-            // and update it. (default.properties and linked source folder)
-            ProjectState renamedState = getProjectState(project);
-            if (renamedState.isLibrary()) {
-                // remove the variable
-                disposeLibraryProject(from.lastSegment());
-
-                // update the project depending on the library
-                synchronized (sLock) {
-                    for (ProjectState projectState : sProjectStateMap.values()) {
-                        if (projectState != renamedState && projectState.isMissingLibraries()) {
-                            IPath oldRelativePath = makeRelativeTo(from,
-                                    projectState.getProject().getFullPath());
-
-                            IPath newRelativePath = makeRelativeTo(project.getFullPath(),
-                                    projectState.getProject().getFullPath());
-
-                            // get the current libraries
-                            IProject[] oldLibraries = projectState.getFullLibraryProjects();
-
-                            // update the library for the main project.
-                            LibraryState libState = projectState.updateLibrary(
-                                    oldRelativePath.toString(), newRelativePath.toString(),
-                                    renamedState);
-                            if (libState != null) {
-                                // this project depended on the renamed library, create a bundle
-                                // with the whole library difference (in case the renamed library
-                                // also depends on libraries).
-
-                                LinkUpdateBundle bundle = getLinkBundle(projectState,
-                                        oldLibraries);
-                                queueLinkUpdateBundle(bundle);
-
-                                // add it to the opened projects to update whatever depends
-                                // on it
-                                if (projectState.isLibrary()) {
-                                    mOpenedLibraryProjects.add(projectState);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            // we don't actually care about this anymore.
         }
     };
 
@@ -905,12 +975,17 @@ public final class Sdk  {
      */
     private IFileListener mFileListener = new IFileListener() {
         public void fileChanged(final IFile file, IMarkerDelta[] markerDeltas, int kind) {
-            if (SdkConstants.FN_DEFAULT_PROPERTIES.equals(file.getName()) &&
+            if (SdkConstants.FN_PROJECT_PROPERTIES.equals(file.getName()) &&
                     file.getParent() == file.getProject()) {
                 try {
-                    // reload the content of the default.properties file and update
+                    // reload the content of the project.properties file and update
                     // the target.
                     IProject iProject = file.getProject();
+
+                    if (iProject.hasNature(AdtConstants.NATURE_DEFAULT) == false) {
+                        return;
+                    }
+
                     ProjectState state = Sdk.getProjectState(iProject);
 
                     // get the current target
@@ -919,23 +994,15 @@ public final class Sdk  {
                     // get the current library flag
                     boolean wasLibrary = state.isLibrary();
 
-                    // get the current list of project dependencies
-                    IProject[] oldLibraries = state.getFullLibraryProjects();
-
                     LibraryDifference diff = state.reloadProperties();
 
                     // load the (possibly new) target.
                     IAndroidTarget newTarget = loadTarget(state);
 
-                    // check if this is a new library
-                    if (state.isLibrary() && wasLibrary == false) {
-                        setupLibraryProject(iProject);
-                    }
-
                     // reload the libraries if needed
                     if (diff.hasDiff()) {
                         if (diff.added) {
-                            synchronized (sLock) {
+                            synchronized (LOCK) {
                                 for (ProjectState projectState : sProjectStateMap.values()) {
                                     if (projectState != state) {
                                         // need to call needs to do the libraryState link,
@@ -948,16 +1015,7 @@ public final class Sdk  {
                             }
                         }
 
-                        // and build the real difference. A list of new projects and a list of
-                        // removed project.
-                        // This is not the same as the added/removed libraries because libraries
-                        // could be indirect dependencies through several different direct
-                        // dependencies so it's easier to compare the full lists before and after
-                        // the reload.
-                        LinkUpdateBundle bundle = getLinkBundle(state, oldLibraries);
-                        if (bundle != null) {
-                            queueLinkUpdateBundle(bundle);
-                        }
+                        markProject(state, wasLibrary || state.isLibrary());
                     }
 
                     // apply the new target if needed.
@@ -980,11 +1038,34 @@ public final class Sdk  {
         }
     };
 
-    /** List of opened project. This is filled in {@link IProjectListener#projectOpened(IProject)}
-     * and {@link IProjectListener#projectOpenedWithWorkspace(IProject)}, and processed in
+    /** List of modified projects. This is filled in
+     * {@link IProjectListener#projectOpened(IProject)},
+     * {@link IProjectListener#projectOpenedWithWorkspace(IProject)},
+     * {@link IProjectListener#projectClosed(IProject)}, and
+     * {@link IProjectListener#projectDeleted(IProject)} and processed in
      * {@link IResourceEventListener#resourceChangeEventEnd()}.
      */
-    private final ArrayList<ProjectState> mOpenedLibraryProjects = new ArrayList<ProjectState>();
+    private final List<ProjectState> mModifiedProjects = new ArrayList<ProjectState>();
+    private final List<ProjectState> mModifiedChildProjects = new ArrayList<ProjectState>();
+
+    private void markProject(ProjectState projectState, boolean updateParents) {
+        if (mModifiedProjects.contains(projectState) == false) {
+            if (DEBUG) {
+                System.out.println("\tMARKED: " + projectState.getProject().getName());
+            }
+            mModifiedProjects.add(projectState);
+        }
+
+        // if the project is resolved also add it to this list.
+        if (updateParents) {
+            if (mModifiedChildProjects.contains(projectState) == false) {
+                if (DEBUG) {
+                    System.out.println("\tMARKED(child): " + projectState.getProject().getName());
+                }
+                mModifiedChildProjects.add(projectState);
+            }
+        }
+    }
 
     /**
      * Delegate listener for resource changes. This is called before and after any calls to the
@@ -992,557 +1073,47 @@ public final class Sdk  {
      */
     private IResourceEventListener mResourceEventListener = new IResourceEventListener() {
         public void resourceChangeEventStart() {
-            // pass
+            mModifiedProjects.clear();
+            mModifiedChildProjects.clear();
         }
 
         public void resourceChangeEventEnd() {
-            updateProjectsWithNewLibraries(mOpenedLibraryProjects);
-            mOpenedLibraryProjects.clear();
-        }
-    };
+            if (mModifiedProjects.size() == 0) {
+                return;
+            }
 
-    /**
-     * Action bundle to update library links on a project.
-     *
-     * @see Sdk#queueLinkUpdateBundle(LinkUpdateBundle)
-     * @see Sdk#updateLibraryLinks(LinkUpdateBundle, IProgressMonitor)
-     */
-    private static class LinkUpdateBundle {
+            // first make sure all the parents are updated
+            updateParentProjects();
 
-        /** The main project receiving the library links. */
-        IProject mProject = null;
-        /** A list (possibly null/empty) of projects that should be linked. */
-        IProject[] mNewLibraryProjects = null;
-        /** an optional old library path that needs to be removed at the same time as the new
-         * libraries are added. Can be <code>null</code> in which case no libraries are removed. */
-        IPath mDeletedLibraryPath = null;
-        /** A list (possibly null/empty) of projects that should be unlinked */
-        IProject[] mRemovedLibraryProjects = null;
-        /** Whether unknown IClasspathEntry (that were flagged as being added by ADT) are to be
-         * removed. This is typically only set to <code>true</code> when the project is opened. */
-        boolean mCleanupCPE = false;
+            // for all modified projects, update their library list
+            // and gather their IProject
+            final List<IJavaProject> projectList = new ArrayList<IJavaProject>();
+            for (ProjectState state : mModifiedProjects) {
+                state.updateFullLibraryList();
+                projectList.add(JavaCore.create(state.getProject()));
+            }
 
-        @Override
-        public String toString() {
-            return String.format(
-                    "LinkUpdateBundle: %1$s (clean: %2$s) > added: %3$s, removed: %4$s, deleted: %5$s", //$NON-NLS-1$
-                    mProject.getName(),
-                    mCleanupCPE,
-                    Arrays.toString(mNewLibraryProjects),
-                    Arrays.toString(mRemovedLibraryProjects),
-                    mDeletedLibraryPath);
-        }
-    }
-
-    private final ArrayList<LinkUpdateBundle> mLinkActionBundleQueue =
-            new ArrayList<LinkUpdateBundle>();
-
-    /**
-     * Queues a {@link LinkUpdateBundle} bundle to be run by a job.
-     *
-     * All action bundles are executed in a job in the exact order they are added.
-     * This is convenient when several actions must be executed in a job consecutively (instead
-     * of in parallel as it would happen if each started its own job) but it is impossible
-     * to manually control the job that's running them (for instance each action is started from
-     * different callbacks such as {@link IProjectListener#projectOpened(IProject)}.
-     *
-     * If the job is not yet started, or has terminated due to lack of action bundle, it is
-     * restarted.
-     *
-     * @param bundle the action bundle to execute
-     */
-    private void queueLinkUpdateBundle(LinkUpdateBundle bundle) {
-        boolean startJob = false;
-        synchronized (mLinkActionBundleQueue) {
-            startJob = mLinkActionBundleQueue.size() == 0;
-            mLinkActionBundleQueue.add(bundle);
-        }
-
-        if (startJob) {
             Job job = new Job("Android Library Update") { //$NON-NLS-1$
                 @Override
                 protected IStatus run(IProgressMonitor monitor) {
-                    // loop until there's no bundle to process
-                    while (true) {
-                        // get the bundle, but don't remove until we're done, or a new job could be
-                        // started.
-                        LinkUpdateBundle bundle = null;
-                        synchronized (mLinkActionBundleQueue) {
-                            // there is always a bundle at this point, as they are only removed
-                            // at the end of this method, and the job is only started after adding
-                            // one
-                            bundle = mLinkActionBundleQueue.get(0);
-                        }
+                    LibraryClasspathContainerInitializer.updateProjects(
+                            projectList.toArray(new IJavaProject[projectList.size()]));
 
-                        // process the bundle.
+                    for (IJavaProject javaProject : projectList) {
                         try {
-                            updateLibraryLinks(bundle, monitor);
-                        } catch (Exception e) {
-                            AdtPlugin.log(e, "Failed to process bundle: %1$s", //$NON-NLS-1$
-                                    bundle.toString());
-                        }
-
-                        try {
-                            // force a recompile
-                            bundle.mProject.build(IncrementalProjectBuilder.FULL_BUILD, monitor);
-                        } catch (Exception e) {
-                            // no need to log those.
-                        }
-
-                        // remove it from the list.
-                        synchronized (mLinkActionBundleQueue) {
-                            mLinkActionBundleQueue.remove(0);
-
-                            // no more bundle to process? done.
-                            if (mLinkActionBundleQueue.size() == 0) {
-                                return Status.OK_STATUS;
-                            }
+                            javaProject.getProject().build(IncrementalProjectBuilder.FULL_BUILD,
+                                    monitor);
+                        } catch (CoreException e) {
+                            // pass
                         }
                     }
+                    return Status.OK_STATUS;
                 }
             };
             job.setPriority(Job.BUILD);
             job.schedule();
         }
-    }
-
-
-    /**
-     * Adds to a list the resolved {@link IProject} dependencies for a given {@link ProjectState}.
-     * This recursively goes down to indirect dependencies.
-     *
-     * <strong>The list is filled in an order that is not valid for calling <code>aapt</code>
-     * </strong>.
-     * Use {@link ProjectState#getFullLibraryProjects()} for use with <code>aapt</code>.
-     *
-     * @param projectState the ProjectState of the project from which to add the libraries.
-     * @param libraries the list of {@link IProject} to fill.
-     */
-    private void fillProjectDependenciesList(ProjectState projectState,
-            ArrayList<IProject> libraries) {
-        for (LibraryState libState : projectState.getLibraries()) {
-            ProjectState libProjectState = libState.getProjectState();
-
-            // only care if the LibraryState has a resolved ProjectState
-            if (libProjectState != null) {
-                // try not to add duplicate. This can happen if a project depends on 2 different
-                // libraries that both depend on the same one.
-                IProject libProject = libProjectState.getProject();
-                if (libraries.contains(libProject) == false) {
-                    libraries.add(libProject);
-                }
-
-                // process the libraries of this library too.
-                fillProjectDependenciesList(libProjectState, libraries);
-            }
-        }
-    }
-
-    /**
-     * Sets up a path variable for a given project.
-     * The name of the variable is based on the name of the project. However some valid character
-     * for project names can be invalid for variable paths.
-     * {@link #getLibraryVariableName(String)} return the name of the variable based on the
-     * project name.
-     *
-     * @param libProject the project
-     *
-     * @see IPathVariableManager
-     * @see #getLibraryVariableName(String)
-     */
-    private void setupLibraryProject(IProject libProject) {
-        // if needed add a path var for this library
-        IPathVariableManager pathVarMgr =
-            ResourcesPlugin.getWorkspace().getPathVariableManager();
-        IPath libPath = libProject.getLocation();
-
-        final String varName = getLibraryVariableName(libProject.getName());
-
-        if (libPath.equals(pathVarMgr.getValue(varName)) == false) {
-            try {
-                pathVarMgr.setValue(varName, libPath);
-            } catch (CoreException e) {
-                AdtPlugin.logAndPrintError(e, "Library Project",
-                        "Unable to set linked path var '%1$s' for library %2$s: %3$s", //$NON-NLS-1$
-                        varName, libPath.toOSString(), e.getMessage());
-            }
-        }
-    }
-
-
-    /**
-     * Deletes the path variable that was setup for the given project.
-     * @param project the project
-     * @see #disposeLibraryProject(String)
-     */
-    private void disposeLibraryProject(IProject project) {
-        disposeLibraryProject(project.getName());
-    }
-
-    /**
-     * Deletes the path variable that was setup for the given project name.
-     * The name of the variable is based on the name of the project. However some valid character
-     * for project names can be invalid for variable paths.
-     * {@link #getLibraryVariableName(String)} return the name of the variable based on the
-     * project name.
-     * @param projectName the name of the project, unmodified.
-     */
-    private void disposeLibraryProject(String projectName) {
-        IPathVariableManager pathVarMgr =
-            ResourcesPlugin.getWorkspace().getPathVariableManager();
-
-        final String varName = getLibraryVariableName(projectName);
-
-        // remove the value by setting the value to null.
-        try {
-            pathVarMgr.setValue(varName, null /*path*/);
-        } catch (CoreException e) {
-            String message = String.format("Unable to remove linked path var '%1$s'", //$NON-NLS-1$
-                    varName);
-            AdtPlugin.log(e, message);
-        }
-    }
-
-    /**
-     * Returns a valid path variable name based on the name of a library project.
-     * @param name the name of the library project.
-     */
-    private String getLibraryVariableName(String name) {
-        return "_android_" + name.replaceAll("-", "_"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-    }
-
-    /**
-     * Update the library links for a project
-     *
-     * This does the follow:
-     * - add/remove the library projects to the main projects dynamic reference list. This is used
-     *   by the builders to receive resource change deltas for library projects and figure out what
-     *   needs to be recompiled/recreated.
-     * - create new {@link IClasspathEntry} of type {@link IClasspathEntry#CPE_SOURCE} for each
-     *   source folder for each new library project.
-     * - remove the {@link IClasspathEntry} of type {@link IClasspathEntry#CPE_SOURCE} for each
-     *   source folder for each removed library project.
-     * - If {@link LinkUpdateBundle#mCleanupCPE} is set to true, all CPE created by ADT that cannot
-     *   be resolved are removed. This should only be used when the project is opened.
-     *
-     * <strong>This must not be called directly. Instead the {@link LinkUpdateBundle} must
-     * be run through a job with {@link #queueLinkUpdateBundle(LinkUpdateBundle)}.</strong>
-     *
-     * @param bundle The {@link LinkUpdateBundle} action bundle that contains all the parameters
-     *               necessary to execute the action.
-     * @param monitor an {@link IProgressMonitor}.
-     * @return an {@link IStatus} with the status of the action.
-     */
-    private IStatus updateLibraryLinks(LinkUpdateBundle bundle, IProgressMonitor monitor) {
-        if (bundle.mProject.isOpen() == false) {
-            return Status.OK_STATUS;
-        }
-        try {
-            // add the library to the list of dynamic references. This is necessary to receive
-            // notifications that the library content changed in the builders.
-            IProjectDescription projectDescription = bundle.mProject.getDescription();
-            IProject[] refs = projectDescription.getDynamicReferences();
-
-            if (refs.length > 0) {
-                ArrayList<IProject> list = new ArrayList<IProject>(Arrays.asList(refs));
-
-                // remove a previous library if needed (in case of a rename)
-                if (bundle.mDeletedLibraryPath != null) {
-                    // since project basically have only one segment that matter,
-                    // just check the names
-                    removeFromList(list, bundle.mDeletedLibraryPath.lastSegment());
-                }
-
-                if (bundle.mRemovedLibraryProjects != null) {
-                    for (IProject removedProject : bundle.mRemovedLibraryProjects) {
-                        removeFromList(list, removedProject.getName());
-                    }
-                }
-
-                // add the new ones if they don't exist
-                if (bundle.mNewLibraryProjects != null) {
-                    for (IProject newProject : bundle.mNewLibraryProjects) {
-                        if (list.contains(newProject) == false) {
-                            list.add(newProject);
-                        }
-                    }
-                }
-
-                // set the changed list
-                projectDescription.setDynamicReferences(
-                        list.toArray(new IProject[list.size()]));
-            } else {
-                if (bundle.mNewLibraryProjects != null) {
-                    projectDescription.setDynamicReferences(bundle.mNewLibraryProjects);
-                }
-            }
-
-            // get the current classpath entries for the project to add the new source
-            // folders.
-            IJavaProject javaProject = JavaCore.create(bundle.mProject);
-            IClasspathEntry[] entries = javaProject.getRawClasspath();
-            ArrayList<IClasspathEntry> classpathEntries = new ArrayList<IClasspathEntry>(
-                    Arrays.asList(entries));
-
-            IWorkspaceRoot wsRoot = ResourcesPlugin.getWorkspace().getRoot();
-
-            // loop on the classpath entries and look for CPE_SOURCE entries that
-            // are linked folders, then record them for comparison later as we add the new
-            // ones.
-            ArrayList<IClasspathEntry> cpeToRemove = new ArrayList<IClasspathEntry>();
-            for (IClasspathEntry classpathEntry : classpathEntries) {
-                if (classpathEntry.getEntryKind() == IClasspathEntry.CPE_SOURCE) {
-                    IPath path = classpathEntry.getPath();
-                    IResource linkedRes = wsRoot.findMember(path);
-                    if (linkedRes != null && linkedRes.isLinked() &&
-                            CREATOR_ADT.equals(ProjectHelper.loadStringProperty(
-                                    linkedRes, PROP_CREATOR))) {
-
-                        // add always to list if we're doing clean-up
-                        if (bundle.mCleanupCPE) {
-                            cpeToRemove.add(classpathEntry);
-                        } else {
-                            String libName = ProjectHelper.loadStringProperty(linkedRes,
-                                    PROP_LIBRARY_NAME);
-                            if (libName != null && isRemovedLibrary(bundle, libName)) {
-                                cpeToRemove.add(classpathEntry);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // loop on the projects to add.
-            if (bundle.mNewLibraryProjects != null) {
-                for (IProject library : bundle.mNewLibraryProjects) {
-                    if (library.isOpen() == false) {
-                        continue;
-                    }
-                    final String libName = library.getName();
-                    final String varName = getLibraryVariableName(libName);
-
-                    // get the list of source folders for the library.
-                    ArrayList<IPath> sourceFolderPaths = BaseProjectHelper.getSourceClasspaths(
-                            library);
-
-                    // loop on all the source folder, ignoring FD_GEN and add them
-                    // as linked folder
-                    for (IPath sourceFolderPath : sourceFolderPaths) {
-                        IResource sourceFolder = wsRoot.findMember(sourceFolderPath);
-                        if (sourceFolder == null || sourceFolder.isLinked()) {
-                            continue;
-                        }
-
-                        IPath relativePath = sourceFolder.getProjectRelativePath();
-                        if (SdkConstants.FD_GEN_SOURCES.equals(relativePath.toString())) {
-                            continue;
-                        }
-
-                        // create the linked path
-                        IPath linkedPath = new Path(varName).append(relativePath);
-
-                        // look for an existing CPE that has the same linked path and that was
-                        // going to be removed.
-                        IClasspathEntry match = findClasspathEntryMatch(cpeToRemove, linkedPath,
-                                null);
-
-                        if (match == null) {
-                            // no match, create one
-                            // get a string version, to make up the linked folder name
-                            String srcFolderName = relativePath.toString().replace(
-                                    "/",  //$NON-NLS-1$
-                                    "_"); //$NON-NLS-1$
-
-                            // folder name
-                            String folderName = libName + "_" + srcFolderName; //$NON-NLS-1$
-
-                            // create a linked resource for the library using the path var.
-                            IFolder libSrc = bundle.mProject.getFolder(folderName);
-                            IPath libSrcPath = libSrc.getFullPath();
-
-                            // check if there's a CPE that would conflict, in which case it needs to
-                            // be removed (this can happen for existing CPE that don't match an open
-                            // project)
-                            match = findClasspathEntryMatch(classpathEntries, null/*rawPath*/,
-                                    libSrcPath);
-                            if (match != null) {
-                                classpathEntries.remove(match);
-                            }
-
-                            // the path of the linked resource is based on the path variable
-                            // representing the library project, followed by the source folder name.
-                            libSrc.createLink(linkedPath, IResource.REPLACE, monitor);
-
-                            // set some persistent properties on it to know that it was
-                            // created by ADT.
-                            ProjectHelper.saveStringProperty(libSrc, PROP_CREATOR, CREATOR_ADT);
-                            ProjectHelper.saveResourceProperty(libSrc, PROP_LIBRARY, library);
-                            ProjectHelper.saveStringProperty(libSrc, PROP_LIBRARY_NAME,
-                                    library.getName());
-
-                            // add the source folder to the classpath entries
-                            classpathEntries.add(JavaCore.newSourceEntry(libSrcPath));
-                        } else {
-                            // there's a valid match, do nothing, but remove the match from
-                            // the list of previously existing CPE.
-                            cpeToRemove.remove(match);
-                        }
-                    }
-                }
-            }
-
-            // remove the CPE that should be removed.
-            classpathEntries.removeAll(cpeToRemove);
-
-            // set the new list
-            javaProject.setRawClasspath(
-                    classpathEntries.toArray(new IClasspathEntry[classpathEntries.size()]),
-                    monitor);
-
-            // and delete the folders of the CPE that were removed (must be done after)
-            for (IClasspathEntry cpe : cpeToRemove) {
-                IResource res = wsRoot.findMember(cpe.getPath());
-                res.delete(true, monitor);
-            }
-
-            return Status.OK_STATUS;
-        } catch (CoreException e) {
-            AdtPlugin.logAndPrintError(e, bundle.mProject.getName(),
-                    "Failed to create library links: %1$s", //$NON-NLS-1$
-                    e.getMessage());
-            return e.getStatus();
-        }
-    }
-
-    private boolean isRemovedLibrary(LinkUpdateBundle bundle, String libName) {
-        if (bundle.mDeletedLibraryPath != null &&
-                libName.equals(bundle.mDeletedLibraryPath.lastSegment())) {
-            return true;
-        }
-
-        if (bundle.mRemovedLibraryProjects != null) {
-            for (IProject removedProject : bundle.mRemovedLibraryProjects) {
-                if (libName.equals(removedProject.getName())) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Computes the library difference based on a previous list and a current state, and creates
-     * a {@link LinkUpdateBundle} action to update the given project.
-     * @param project The current project state
-     * @param oldLibraries the list of old libraries. Typically the result of
-     *            {@link ProjectState#getFullLibraryProjects()} before the ProjectState is updated.
-     * @return null if there no action to take, or a {@link LinkUpdateBundle} object to run.
-     */
-    private LinkUpdateBundle getLinkBundle(ProjectState project, IProject[] oldLibraries) {
-        // get the new full list of projects
-        IProject[] newLibraries = project.getFullLibraryProjects();
-
-        // and build the real difference. A list of new projects and a list of
-        // removed project.
-        // This is not the same as the added/removed libraries because libraries
-        // could be indirect dependencies through several different direct
-        // dependencies so it's easier to compare the full lists before and after
-        // the reload.
-
-        List<IProject> addedLibs = new ArrayList<IProject>();
-        List<IProject> removedLibs = new ArrayList<IProject>();
-
-        // first get the list of new projects.
-        for (IProject newLibrary : newLibraries) {
-            boolean found = false;
-            for (IProject oldLibrary : oldLibraries) {
-                if (newLibrary.equals(oldLibrary)) {
-                    found = true;
-                    break;
-                }
-            }
-
-            // if it was not found in the old libraries, it's really new
-            if (found == false) {
-                addedLibs.add(newLibrary);
-            }
-        }
-
-        // now the list of removed projects.
-        for (IProject oldLibrary : oldLibraries) {
-            boolean found = false;
-            for (IProject newLibrary : newLibraries) {
-                if (newLibrary.equals(oldLibrary)) {
-                    found = true;
-                    break;
-                }
-            }
-
-            // if it was not found in the new libraries, it's really been removed
-            if (found == false) {
-                removedLibs.add(oldLibrary);
-            }
-        }
-
-        if (addedLibs.size() > 0 || removedLibs.size() > 0) {
-            LinkUpdateBundle bundle = new LinkUpdateBundle();
-            bundle.mProject = project.getProject();
-            bundle.mNewLibraryProjects =
-                addedLibs.toArray(new IProject[addedLibs.size()]);
-            bundle.mRemovedLibraryProjects =
-                removedLibs.toArray(new IProject[removedLibs.size()]);
-            return bundle;
-        }
-
-        return null;
-    }
-
-    /**
-     * Removes a project from a list based on its name.
-     * @param projects the list of projects.
-     * @param name the name of the project to remove.
-     */
-    private void removeFromList(List<IProject> projects, String name) {
-        final int count = projects.size();
-        for (int i = 0 ; i < count ; i++) {
-            // since project basically have only one segment that matter,
-            // just check the names
-            if (projects.get(i).getName().equals(name)) {
-                projects.remove(i);
-                return;
-            }
-        }
-    }
-
-    /**
-     * Returns a {@link IClasspathEntry} from the given list whose linked path match the given path.
-     * @param cpeList a list of {@link IClasspathEntry} of {@link IClasspathEntry#getEntryKind()}
-     *                {@link IClasspathEntry#CPE_SOURCE} whose {@link IClasspathEntry#getPath()}
-     *                points to a linked folder.
-     * @param rawPath the raw path to compare to. Can be null if <var>path</var> is used instead.
-     * @param path the path to compare to. Can be null if <var>rawPath</var> is used instead.
-     * @return the matching IClasspathEntry or null.
-     */
-    private IClasspathEntry findClasspathEntryMatch(ArrayList<IClasspathEntry> cpeList,
-            IPath rawPath, IPath path) {
-        IWorkspaceRoot wsRoot = ResourcesPlugin.getWorkspace().getRoot();
-        for (IClasspathEntry cpe : cpeList) {
-            IPath cpePath = cpe.getPath();
-            // test the normal path of the resource.
-            if (path != null && path.equals(cpePath)) {
-                return cpe;
-            }
-
-            IResource res = wsRoot.findMember(cpePath);
-            // getRawLocation returns the path that the linked folder points to.
-            if (rawPath != null && res.getRawLocation().equals(rawPath)) {
-                return cpe;
-            }
-
-        }
-        return null;
-    }
+    };
 
     /**
      * Updates all existing projects with a given list of new/updated libraries.
@@ -1550,98 +1121,112 @@ public final class Sdk  {
      * library project, and if they do, they are linked together.
      * @param libraries the list of new/updated library projects.
      */
-    private void updateProjectsWithNewLibraries(List<ProjectState> libraries) {
-        if (libraries.size() == 0) {
+    private void updateParentProjects() {
+        if (mModifiedChildProjects.size() == 0) {
             return;
         }
 
-        ArrayList<ProjectState> updatedLibraries = new ArrayList<ProjectState>();
-        synchronized (sLock) {
-            // for each projects, look for projects that depend on it, and update them.
-            // Once they are updated (meaning ProjectState#needs() has been called on them),
-            // we add them to the list so that can be updated as well.
-            for (ProjectState projectState : sProjectStateMap.values()) {
-                // record the current library dependencies
-                IProject[] oldLibraries = projectState.getFullLibraryProjects();
-
-                boolean needLibraryDependenciesUpdated = false;
-                for (ProjectState library : libraries) {
-                    // Normally we would only need to test if ProjectState#needs returns non null,
-                    // meaning the link between the project and the library has not been
-                    // done yet.
-                    // However what matters here is that the library is a dependency,
-                    // period. If the library project was updated, then we redo the link,
-                    // with all indirect dependencies (which *have* changed, since this is
-                    // what this method is all about.)
-                    // We still need to call ProjectState#needs to make the link in case it's not
-                    // been done yet (which can happen if the library project was just opened).
-                    if (projectState != library) {
-                        // call needs in case this new library was just opened, and the link needs
-                        // to be done
-                        LibraryState libState = projectState.needs(library);
-                        if (libState == null && projectState.dependsOn(library)) {
-                            // ProjectState.needs only returns true if the library was needed.
-                            // but we also need to check the case where the project depends on
-                            // the library but the link was already done.
-                            needLibraryDependenciesUpdated = true;
-                        }
-                    }
+        ArrayList<ProjectState> childProjects = new ArrayList<ProjectState>(mModifiedChildProjects);
+        mModifiedChildProjects.clear();
+        synchronized (LOCK) {
+            // for each project for which we must update its parent, we loop on the parent
+            // projects and adds them to the list of modified projects. If they are themselves
+            // libraries, we add them too.
+            for (ProjectState state : childProjects) {
+                if (DEBUG) {
+                    System.out.println(">>> Updating parents of " + state.getProject().getName());
                 }
-
-                if (needLibraryDependenciesUpdated) {
-                    projectState.updateFullLibraryList();
+                List<ProjectState> parents = state.getParentProjects();
+                for (ProjectState parent : parents) {
+                    markProject(parent, parent.isLibrary());
                 }
-
-                LinkUpdateBundle bundle = getLinkBundle(projectState, oldLibraries);
-                if (bundle != null) {
-                    queueLinkUpdateBundle(bundle);
-
-                    // if this updated project is a library, add it to the list, so that
-                    // projects depending on it get updated too.
-                    if (projectState.isLibrary() &&
-                            updatedLibraries.contains(projectState) == false) {
-                        updatedLibraries.add(projectState);
-                    }
+                if (DEBUG) {
+                    System.out.println("<<<");
                 }
             }
         }
 
-        // done, but there may be updated projects that were libraries, so we need to do the same
-        // for this libraries, to update the project there were depending on.
-        updateProjectsWithNewLibraries(updatedLibraries);
+        // done, but there may be parents that are also libraries. Need to update their parents.
+        updateParentProjects();
     }
 
-    /**
-     * Computes a new IPath targeting a given target, but relative to a given base.
-     * <p/>{@link IPath#makeRelativeTo(IPath, IPath)} is only available in 3.5 and later.
-     * <p/>This is based on the implementation {@link Path#makeRelativeTo(IPath)}.
-     * @param target the target of the IPath
-     * @param base the IPath to base the relative path on.
-     * @return the relative IPath
+    /** Fix editor associations for the given project, if not already done.
+     * <p>
+     * Eclipse has a per-file setting for which editor should be used for each file
+     * (see {@link IDE#setDefaultEditor(IFile, String)}).
+     * We're using this flag to pick between the various XML editors (layout, drawable, etc)
+     * since they all have the same file name extension.
+     * <p>
+     * Unfortunately, the file setting can be "wrong" for two reasons:
+     * <ol>
+     *   <li> The editor type was added <b>after</b> a file had been seen by the IDE.
+     *        For example, we added new editors for animations and for drawables around
+     *        ADT 12, but any file seen by ADT in earlier versions will continue to use
+     *        the vanilla Eclipse XML editor instead.
+     *   <li> A bug in ADT 14 and ADT 15 (see issue 21124) meant that files created in new
+     *        folders would end up with wrong editor associations. Even though that bug
+     *        is fixed in ADT 16, the fix only affects new files, it cannot retroactively
+     *        fix editor associations that were set incorrectly by ADT 14 or 15.
+     * </ol>
+     * <p>
+     * This method attempts to fix the editor bindings retroactively by scanning all the
+     * resource XML files and resetting the editor associations.
+     * Since this is a potentially slow operation, this is only done "once"; we use a
+     * persistent project property to avoid looking repeatedly. In the future if we add
+     * additional editors, we can rev the scanned version value.
      */
-    public static IPath makeRelativeTo(IPath target, IPath base) {
-        //can't make relative if devices are not equal
-        if (target.getDevice() != base.getDevice() && (target.getDevice() == null ||
-                !target.getDevice().equalsIgnoreCase(base.getDevice())))
-            return target;
-        int commonLength = target.matchingFirstSegments(base);
-        final int differenceLength = base.segmentCount() - commonLength;
-        final int newSegmentLength = differenceLength + target.segmentCount() - commonLength;
-        if (newSegmentLength == 0)
-            return Path.EMPTY;
-        String[] newSegments = new String[newSegmentLength];
-        //add parent references for each segment different from the base
-        Arrays.fill(newSegments, 0, differenceLength, ".."); //$NON-NLS-1$
-        //append the segments of this path not in common with the base
-        System.arraycopy(target.segments(), commonLength, newSegments,
-                differenceLength, newSegmentLength - differenceLength);
+    private void fixEditorAssociations(final IProject project) {
+        QualifiedName KEY = new QualifiedName(AdtPlugin.PLUGIN_ID, "editorbinding"); //$NON-NLS-1$
 
-        StringBuilder sb = new StringBuilder();
-        for (String s : newSegments) {
-            sb.append(s).append('/');
+        try {
+            String value = project.getPersistentProperty(KEY);
+
+            if (value != null) {
+                return;
+            }
+
+            // Set to specific version such that we can rev the version in the future
+            // to trigger further scanning
+            project.setPersistentProperty(KEY, "1"); //$NON-NLS-1$
+
+            Job job = new Job("Update Android editor bindings") { //$NON-NLS-1$
+                @Override
+                protected IStatus run(IProgressMonitor monitor) {
+                    try {
+                        for (IResource folderResource : project.getFolder(FD_RES).members()) {
+                            if (folderResource instanceof IFolder) {
+                                IFolder folder = (IFolder) folderResource;
+
+                                String[] folderSegments = folder.getName().split(
+                                        AndroidConstants.RES_QUALIFIER_SEP);
+
+                                ResourceFolderType type = ResourceFolderType.getTypeByName(
+                                        folderSegments[0]);
+
+                                if (type == null) {
+                                    continue;
+                                }
+
+                                for (IResource resource : folder.members()) {
+                                    if (endsWith(resource.getName(), DOT_XML)
+                                            && resource instanceof IFile) {
+                                        IFile file = (IFile) resource;
+                                        AdtPlugin.assignEditor(file, type);
+                                    }
+                                }
+                            }
+                        }
+                    } catch (CoreException e) {
+                        AdtPlugin.log(e, null);
+                    }
+
+                    return Status.OK_STATUS;
+                }
+            };
+            job.setPriority(Job.BUILD);
+            job.schedule();
+        } catch (CoreException e) {
+            AdtPlugin.log(e, null);
         }
-
-        return new Path(null, sb.toString());
     }
 }
-

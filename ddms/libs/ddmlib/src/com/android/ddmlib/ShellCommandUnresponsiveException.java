@@ -16,13 +16,12 @@
 
 package com.android.ddmlib;
 
-import java.io.IOException;
 
 /**
  * Exception thrown when a shell command executed on a device takes too long to send its output.
  * <p/>The command may not actually be unresponsive, it just has spent too much time not outputting
  * any thing to the console.
  */
-public class ShellCommandUnresponsiveException extends IOException {
+public class ShellCommandUnresponsiveException extends Exception {
     private static final long serialVersionUID = 1L;
 }

@@ -40,7 +40,7 @@ public abstract class TablePanel extends ClientDisplayPanel {
      *
      * @param listener
      */
-    public final void setTableFocusListener(ITableFocusListener listener) {
+    public void setTableFocusListener(ITableFocusListener listener) {
         // record the global listener, to make sure table created after
         // this call will still be setup.
         mGlobalListener = listener;
@@ -89,7 +89,7 @@ public abstract class TablePanel extends ClientDisplayPanel {
 
                 // now add that to the clipboard if the string has content
                 String data = sb.toString();
-                if (data != null || data.length() > 0) {
+                if (data != null && data.length() > 0) {
                     clipboard.setContents(
                             new Object[] { data },
                             new Transfer[] { TextTransfer.getInstance() });

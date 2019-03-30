@@ -16,9 +16,12 @@
 
 package com.android.ide.eclipse.adt.internal.editors.layout.uimodel;
 
+import static com.android.ide.common.layout.LayoutConstants.FQCN_FRAME_LAYOUT;
+
+import com.android.ide.common.layout.LayoutConstants;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.AttributeDescriptor;
-import com.android.ide.eclipse.adt.internal.editors.descriptors.ElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.descriptors.XmlnsAttributeDescriptor;
+import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors;
 import com.android.ide.eclipse.adt.internal.editors.layout.descriptors.ViewElementDescriptor;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiDocumentNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
@@ -29,13 +32,12 @@ import com.android.sdklib.SdkConstants;
 
 import org.eclipse.core.resources.IProject;
 
-import java.util.List;
-
 /**
  * Specialized version of {@link UiElementNode} for the {@link ViewElementDescriptor}s.
  */
 public class UiViewElementNode extends UiElementNode {
 
+    /** An AttributeDescriptor array that depends on the current UiParent. */
     private AttributeDescriptor[] mCachedAttributeDescriptors;
 
     public UiViewElementNode(ViewElementDescriptor elementDescriptor) {
@@ -66,7 +68,6 @@ public class UiViewElementNode extends UiElementNode {
             // owned by a FrameLayout.
             // TODO replace by something user-configurable.
 
-            List<ElementDescriptor> layoutDescriptors = null;
             IProject project = getEditor().getProject();
             if (project != null) {
                 Sdk currentSdk = Sdk.getCurrent();
@@ -75,23 +76,18 @@ public class UiViewElementNode extends UiElementNode {
                     if (target != null) {
                         AndroidTargetData data = currentSdk.getTargetData(target);
                         if (data != null) {
-                            layoutDescriptors = data.getLayoutDescriptors().getLayoutDescriptors();
+                            LayoutDescriptors descriptors = data.getLayoutDescriptors();
+                            ViewElementDescriptor desc =
+                                descriptors.findDescriptorByClass(FQCN_FRAME_LAYOUT);
+                            if (desc != null) {
+                                layout_attrs = desc.getLayoutAttributes();
+                                need_xmlns = true;
+                            }
                         }
                     }
                 }
             }
-
-            if (layoutDescriptors != null) {
-                for (ElementDescriptor desc : layoutDescriptors) {
-                    if (desc instanceof ViewElementDescriptor &&
-                            desc.getXmlName().equals(SdkConstants.CLASS_NAME_FRAMELAYOUT)) {
-                        layout_attrs = ((ViewElementDescriptor) desc).getLayoutAttributes();
-                        need_xmlns = true;
-                        break;
-                    }
-                }
-            }
-        } else if (ui_parent instanceof UiViewElementNode){
+        } else if (ui_parent instanceof UiViewElementNode) {
             layout_attrs =
                 ((ViewElementDescriptor) ui_parent.getDescriptor()).getLayoutAttributes();
         }
@@ -112,7 +108,7 @@ public class UiViewElementNode extends UiElementNode {
                 layout_attrs.length);
         if (need_xmlns) {
             AttributeDescriptor desc = new XmlnsAttributeDescriptor(
-                    "android",  //$NON-NLS-1$
+                    LayoutConstants.ANDROID_NS_NAME,
                     SdkConstants.NS_RESOURCES);
             mCachedAttributeDescriptors[direct_attrs.length + layout_attrs.length] = desc;
         }

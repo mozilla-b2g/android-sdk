@@ -31,26 +31,18 @@ import java.util.Properties;
 
 final class TaskHelper {
 
-    public final static String PROP_RULES_REV = "android.ant.rules.revision";
-
     static File getSdkLocation(Project antProject) {
         // get the SDK location
-        String sdkLocation = antProject.getProperty(ProjectProperties.PROPERTY_SDK);
+        String sdkOsPath = antProject.getProperty(ProjectProperties.PROPERTY_SDK);
 
         // check if it's valid and exists
-        if (sdkLocation == null || sdkLocation.length() == 0) {
-            // LEGACY support: project created with 1.6 or before may be using a different
-            // property to declare the location of the SDK. At this point, we cannot
-            // yet check which target is running so we check both always.
-            sdkLocation = antProject.getProperty(ProjectProperties.PROPERTY_SDK_LEGACY);
-            if (sdkLocation == null || sdkLocation.length() == 0) {
-                throw new BuildException("SDK Location is not set.");
-            }
+        if (sdkOsPath == null || sdkOsPath.length() == 0) {
+            throw new BuildException("SDK Location is not set.");
         }
 
-        File sdk = new File(sdkLocation);
+        File sdk = new File(sdkOsPath);
         if (sdk.isDirectory() == false) {
-            throw new BuildException(String.format("SDK Location '%s' is not valid.", sdkLocation));
+            throw new BuildException(String.format("SDK Location '%s' is not valid.", sdkOsPath));
         }
 
         return sdk;
@@ -67,7 +59,20 @@ final class TaskHelper {
             // tools folder must exist, or this custom task wouldn't run!
             File toolsFolder= new File(sdkFile, SdkConstants.FD_TOOLS);
             File sourceProp = new File(toolsFolder, SdkConstants.FN_SOURCE_PROP);
-            p.load(new FileInputStream(sourceProp));
+
+            FileInputStream fis = null;
+            try {
+                fis = new FileInputStream(sourceProp);
+                p.load(fis);
+            } finally {
+                if (fis != null) {
+                    try {
+                        fis.close();
+                    } catch (IOException ignore) {
+                    }
+                }
+            }
+
             String value = p.getProperty("Pkg.Revision"); //$NON-NLS-1$
             if (value != null) {
                 return Integer.parseInt(value);

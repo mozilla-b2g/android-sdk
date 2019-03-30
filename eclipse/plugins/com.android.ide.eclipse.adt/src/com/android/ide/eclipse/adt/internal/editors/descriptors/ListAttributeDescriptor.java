@@ -16,7 +16,7 @@
 
 package com.android.ide.eclipse.adt.internal.editors.descriptors;
 
-import com.android.ide.eclipse.adt.editors.layout.gscripts.IAttributeInfo;
+import com.android.ide.common.api.IAttributeInfo;
 import com.android.ide.eclipse.adt.internal.editors.ui.ListValueCellEditor;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiAttributeNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
@@ -32,6 +32,17 @@ import org.eclipse.swt.widgets.Composite;
 public class ListAttributeDescriptor extends TextAttributeDescriptor {
 
     private String[] mValues = null;
+
+    /**
+     * Used by {@link DescriptorsUtils} to create instances of this descriptor.
+     */
+    public static final ITextAttributeCreator CREATOR = new ITextAttributeCreator() {
+        public TextAttributeDescriptor create(String xmlLocalName,
+                String uiName, String nsUri, String tooltip,
+                IAttributeInfo attrInfo) {
+            return new ListAttributeDescriptor(xmlLocalName, uiName, nsUri, tooltip, attrInfo);
+        }
+    };
 
     /**
      * Creates a new {@link ListAttributeDescriptor}.

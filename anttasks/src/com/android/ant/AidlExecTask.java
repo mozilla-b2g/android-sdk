@@ -18,16 +18,11 @@ package com.android.ant;
 
 import org.apache.tools.ant.BuildException;
 import org.apache.tools.ant.Project;
-import org.apache.tools.ant.Task;
 import org.apache.tools.ant.taskdefs.ExecTask;
-import org.apache.tools.ant.types.FileSet;
 import org.apache.tools.ant.types.Path;
-import org.apache.tools.ant.types.PatternSet.NameEntry;
 
-import java.io.File;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Iterator;
+import java.util.List;
 
 /**
  * Task to execute aidl.
@@ -41,12 +36,71 @@ import java.util.Iterator;
  * It also expects one or more inner elements called "source" which are identical to {@link Path}
  * elements.
  */
-public class AidlExecTask extends Task {
+public class AidlExecTask extends MultiFilesTask {
 
     private String mExecutable;
     private String mFramework;
     private String mGenFolder;
     private final ArrayList<Path> mPaths = new ArrayList<Path>();
+
+    private class AidlProcessor implements SourceProcessor {
+
+        public String getSourceFileExtension() {
+            return "aidl";
+        }
+
+        public void process(String filePath, String sourceFolder,
+                List<String> sourceFolders, Project taskProject) {
+            ExecTask task = new ExecTask();
+            task.setProject(taskProject);
+            task.setOwningTarget(getOwningTarget());
+            task.setExecutable(mExecutable);
+            task.setTaskName("aidl");
+            task.setFailonerror(true);
+
+            task.createArg().setValue("-p" + mFramework);
+            task.createArg().setValue("-o" + mGenFolder);
+            // add all the source folders as import in case an aidl file in a source folder
+            // imports a parcelable from another source folder.
+            for (String importFolder : sourceFolders) {
+                task.createArg().setValue("-I" + importFolder);
+            }
+
+            // set auto dependency file creation
+            task.createArg().setValue("-a");
+
+            task.createArg().setValue(filePath);
+
+            // execute it.
+            task.execute();
+        }
+
+        public void displayMessage(DisplayType type, int count) {
+            switch (type) {
+                case FOUND:
+                    System.out.println(String.format("Found %1$d AIDL files.", count));
+                    break;
+                case COMPILING:
+                    if (count > 0) {
+                        System.out.println(String.format("Compiling %1$d AIDL files.",
+                                count));
+                    } else {
+                        System.out.println("No AIDL files to compile.");
+                    }
+                    break;
+                case REMOVE_OUTPUT:
+                    System.out.println(String.format("Found %1$d obsolete output files to remove.",
+                            count));
+                    break;
+                case REMOVE_DEP:
+                    System.out.println(
+                            String.format("Found %1$d obsolete dependency files to remove.",
+                                    count));
+                    break;
+            }
+        }
+
+    }
 
     /**
      * Sets the value of the "executable" attribute.
@@ -72,58 +126,17 @@ public class AidlExecTask extends Task {
 
     @Override
     public void execute() throws BuildException {
+        if (mExecutable == null) {
+            throw new BuildException("AidlExecTask's 'executable' is required.");
+        }
         if (mFramework == null) {
-            throw new BuildException("AidlExecTask's framework is required.");
+            throw new BuildException("AidlExecTask's 'framework' is required.");
         }
         if (mGenFolder == null) {
-            throw new BuildException("AidlExecTask's genFolder is required.");
+            throw new BuildException("AidlExecTask's 'genFolder' is required.");
         }
 
-        Project taskProject = getProject();
-
-        // build a list of all the source folders
-        ArrayList<String> sourceFolders = new ArrayList<String>();
-        for (Path p : mPaths) {
-            String[] values = p.list();
-            if (values != null) {
-                sourceFolders.addAll(Arrays.asList(values));
-            }
-        }
-
-        // now loop on all the source folders to find all the aidl to compile
-        // and compile them
-        for (String sourceFolder : sourceFolders) {
-            // create a fileset to find all the aidl files in the current source folder
-            FileSet fs = new FileSet();
-            fs.setProject(taskProject);
-            fs.setDir(new File(sourceFolder));
-            NameEntry include = fs.createInclude();
-            include.setName("**/*.aidl");
-
-            // loop through the results of the file set
-            Iterator<?> iter = fs.iterator();
-            while (iter.hasNext()) {
-                Object next = iter.next();
-
-                ExecTask task = new ExecTask();
-                task.setProject(taskProject);
-                task.setOwningTarget(getOwningTarget());
-                task.setExecutable(mExecutable);
-                task.setFailonerror(true);
-
-                task.createArg().setValue("-p" + mFramework);
-                task.createArg().setValue("-o" + mGenFolder);
-                // add all the source folders as import in case an aidl file in a source folder
-                // imports a parcelable from another source folder.
-                for (String importFolder : sourceFolders) {
-                    task.createArg().setValue("-I" + importFolder);
-                }
-
-                task.createArg().setValue(next.toString());
-
-                // execute it.
-                task.execute();
-            }
-        }
+        processFiles(new AidlProcessor(), mPaths, mGenFolder);
     }
+
 }

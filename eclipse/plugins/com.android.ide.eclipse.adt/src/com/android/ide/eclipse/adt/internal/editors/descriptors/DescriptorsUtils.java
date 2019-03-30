@@ -16,24 +16,42 @@
 
 package com.android.ide.eclipse.adt.internal.editors.descriptors;
 
-import com.android.ide.eclipse.adt.AndroidConstants;
-import com.android.ide.eclipse.adt.editors.layout.gscripts.IAttributeInfo.Format;
-import com.android.ide.eclipse.adt.internal.editors.layout.LayoutConstants;
+import static com.android.ide.common.layout.LayoutConstants.ANDROID_URI;
+import static com.android.ide.common.layout.LayoutConstants.ATTR_ID;
+import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_BELOW;
+import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_HEIGHT;
+import static com.android.ide.common.layout.LayoutConstants.ATTR_LAYOUT_WIDTH;
+import static com.android.ide.common.layout.LayoutConstants.ATTR_TEXT;
+import static com.android.ide.common.layout.LayoutConstants.EDIT_TEXT;
+import static com.android.ide.common.layout.LayoutConstants.EXPANDABLE_LIST_VIEW;
+import static com.android.ide.common.layout.LayoutConstants.FQCN_ADAPTER_VIEW;
+import static com.android.ide.common.layout.LayoutConstants.GALLERY;
+import static com.android.ide.common.layout.LayoutConstants.GRID_LAYOUT;
+import static com.android.ide.common.layout.LayoutConstants.GRID_VIEW;
+import static com.android.ide.common.layout.LayoutConstants.ID_PREFIX;
+import static com.android.ide.common.layout.LayoutConstants.LIST_VIEW;
+import static com.android.ide.common.layout.LayoutConstants.NEW_ID_PREFIX;
+import static com.android.ide.common.layout.LayoutConstants.RELATIVE_LAYOUT;
+import static com.android.ide.common.layout.LayoutConstants.SPACE;
+import static com.android.ide.common.layout.LayoutConstants.VALUE_FILL_PARENT;
+import static com.android.ide.common.layout.LayoutConstants.VALUE_WRAP_CONTENT;
+import static com.android.ide.eclipse.adt.internal.editors.layout.descriptors.LayoutDescriptors.REQUEST_FOCUS;
+
+import com.android.ide.common.api.IAttributeInfo.Format;
+import com.android.ide.common.resources.platform.AttributeInfo;
+import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiDocumentNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
-import com.android.ide.eclipse.adt.internal.resources.AttributeInfo;
-import com.android.ide.eclipse.adt.internal.resources.ResourceType;
+import com.android.resources.ResourceType;
 import com.android.sdklib.SdkConstants;
 
 import org.eclipse.swt.graphics.Image;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 import java.util.Map.Entry;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -51,7 +69,7 @@ public final class DescriptorsUtils {
      * The path in the online documentation for the manifest description.
      * <p/>
      * This is NOT a complete URL. To be used, it needs to be appended
-     * to {@link AndroidConstants#CODESITE_BASE_URL} or to the local SDK
+     * to {@link AdtConstants#CODESITE_BASE_URL} or to the local SDK
      * documentation.
      */
     public static final String MANIFEST_SDK_URL = "/reference/android/R.styleable.html#";  //$NON-NLS-1$
@@ -62,27 +80,6 @@ public final class DescriptorsUtils {
     private static final String LINK  = "$link";  //$NON-NLS-1$
     private static final String ELEM  = "$elem";  //$NON-NLS-1$
     private static final String BREAK = "$break"; //$NON-NLS-1$
-
-    /**
-     * The {@link ITextAttributeCreator} interface is used by the appendAttribute() method
-     * to provide a way for caller to override the kind of {@link TextAttributeDescriptor}
-     * created for a give XML attribute name.
-     */
-    public interface ITextAttributeCreator {
-        /**
-         * Creates a new {@link TextAttributeDescriptor} instance for the given XML name,
-         * UI name and tooltip.
-         *
-         * @param xmlName The XML attribute name.
-         * @param uiName The UI attribute name.
-         * @param nsUri The URI of the attribute. Can be null if attribute has no namespace.
-         *              See {@link SdkConstants#NS_RESOURCES} for a common value.
-         * @param tooltip An optional tooltip.
-         * @return A new {@link TextAttributeDescriptor} (or derived) instance.
-         */
-        public TextAttributeDescriptor create(String xmlName, String uiName, String nsUri,
-                String tooltip);
-    }
 
     /**
      * Add all {@link AttributeInfo} to the the array of {@link AttributeDescriptor}.
@@ -96,15 +93,13 @@ public final class DescriptorsUtils {
      * @param requiredAttributes An optional set of attributes to mark as "required" (i.e. append
      *        a "*" to their UI name as a hint for the user.) If not null, must contains
      *        entries in the form "elem-name/attr-name". Elem-name can be "*".
-     * @param overrides A map [attribute name => TextAttributeDescriptor creator]. A creator
-     *        can either by a Class<? extends TextAttributeDescriptor> or an instance of
-     *        {@link ITextAttributeCreator} that instantiates the right TextAttributeDescriptor.
+     * @param overrides A map [attribute name => ITextAttributeCreator creator].
      */
     public static void appendAttributes(ArrayList<AttributeDescriptor> attributes,
             String elementXmlName,
             String nsUri, AttributeInfo[] infos,
             Set<String> requiredAttributes,
-            Map<String, Object> overrides) {
+            Map<String, ITextAttributeCreator> overrides) {
         for (AttributeInfo info : infos) {
             boolean required = false;
             if (requiredAttributes != null) {
@@ -129,15 +124,13 @@ public final class DescriptorsUtils {
      *              See {@link SdkConstants#NS_RESOURCES} for a common value.
      * @param required True if the attribute is to be marked as "required" (i.e. append
      *        a "*" to its UI name as a hint for the user.)
-     * @param overrides A map [attribute name => TextAttributeDescriptor creator]. A creator
-     *        can either by a Class<? extends TextAttributeDescriptor> or an instance of
-     *        {@link ITextAttributeCreator} that instantiates the right TextAttributeDescriptor.
+     * @param overrides A map [attribute name => ITextAttributeCreator creator].
      */
     public static void appendAttribute(ArrayList<AttributeDescriptor> attributes,
             String elementXmlName,
             String nsUri,
             AttributeInfo info, boolean required,
-            Map<String, Object> overrides) {
+            Map<String, ITextAttributeCreator> overrides) {
         AttributeDescriptor attr = null;
 
         String xmlLocalName = info.getName();
@@ -195,8 +188,9 @@ public final class DescriptorsUtils {
             sb.append("]"); //$NON-NLS-1$
 
             if (required) {
-                sb.append(".@@* ");          //$NON-NLS-1$ @@ inserts a break.
-                sb.append("Required.");
+                // Note: this string is split in 2 to make it translatable.
+                sb.append(".@@");          //$NON-NLS-1$ @@ inserts a break and is not translatable
+                sb.append("* Required.");
             }
 
             // The extra space at the end makes the tooltip more readable on Windows.
@@ -207,7 +201,11 @@ public final class DescriptorsUtils {
 
             // Create a specialized attribute if we can
             if (overrides != null) {
-                for (Entry<String, Object> entry: overrides.entrySet()) {
+                for (Entry<String, ITextAttributeCreator> entry: overrides.entrySet()) {
+                    // The override key can have the following formats:
+                    //   */xmlLocalName
+                    //   element/xmlLocalName
+                    //   element1,element2,...,elementN/xmlLocalName
                     String key = entry.getKey();
                     String elements[] = key.split("/");          //$NON-NLS-1$
                     String overrideAttrLocalName = null;
@@ -241,35 +239,9 @@ public final class DescriptorsUtils {
                         continue;
                     }
 
-                    Object override = entry.getValue();
-                    if (override instanceof Class<?>) {
-                        try {
-                            // The override is instance of the class to create, which must
-                            // have a constructor compatible with TextAttributeDescriptor.
-                            @SuppressWarnings("unchecked") //$NON-NLS-1$
-                            Class<? extends TextAttributeDescriptor> clazz =
-                                (Class<? extends TextAttributeDescriptor>) override;
-                            Constructor<? extends TextAttributeDescriptor> cons;
-                                cons = clazz.getConstructor(new Class<?>[] {
-                                        String.class, String.class, String.class, String.class } );
-                            attr = cons.newInstance(
-                                    new Object[] { xmlLocalName, uiName, nsUri, tooltip });
-                        } catch (SecurityException e) {
-                            // ignore
-                        } catch (NoSuchMethodException e) {
-                            // ignore
-                        } catch (IllegalArgumentException e) {
-                            // ignore
-                        } catch (InstantiationException e) {
-                            // ignore
-                        } catch (IllegalAccessException e) {
-                            // ignore
-                        } catch (InvocationTargetException e) {
-                            // ignore
-                        }
-                    } else if (override instanceof ITextAttributeCreator) {
-                        attr = ((ITextAttributeCreator) override).create(
-                                xmlLocalName, uiName, nsUri, tooltip);
+                    ITextAttributeCreator override = entry.getValue();
+                    if (override != null) {
+                        attr = override.create(xmlLocalName, uiName, nsUri, tooltip, info);
                     }
                 }
             } // if overrides
@@ -383,24 +355,6 @@ public final class DescriptorsUtils {
     }
 
     /**
-     * Capitalizes the string, i.e. transforms the initial [a-z] into [A-Z].
-     * Returns the string unmodified if the first character is not [a-z].
-     *
-     * @param str The string to capitalize.
-     * @return The capitalized string
-     */
-    public static String capitalize(String str) {
-        if (str == null || str.length() < 1 || str.charAt(0) < 'a' || str.charAt(0) > 'z') {
-            return str;
-        }
-
-        StringBuilder sb = new StringBuilder();
-        sb.append((char)(str.charAt(0) + 'A' - 'a'));
-        sb.append(str.substring(1));
-        return sb.toString();
-    }
-
-    /**
      * Formats the javadoc tooltip to be usable in a tooltip.
      */
     public static String formatTooltip(String javadoc) {
@@ -456,7 +410,7 @@ public final class DescriptorsUtils {
                 needBreak = true;
             } else if (s != null) {
                 if (needBreak && s.trim().length() > 0) {
-                    sb.append('\r');
+                    sb.append('\n');
                 }
                 sb.append(s);
                 needBreak = false;
@@ -491,7 +445,7 @@ public final class DescriptorsUtils {
 
         StringBuilder sb = new StringBuilder();
 
-        Image icon = elementDescriptor.getIcon();
+        Image icon = elementDescriptor.getCustomizedIcon();
         if (icon != null) {
             sb.append("<form><li style=\"image\" value=\"" +        //$NON-NLS-1$
                     IMAGE_KEY + "\">");                             //$NON-NLS-1$
@@ -703,6 +657,23 @@ public final class DescriptorsUtils {
     }
 
     /**
+     * Returns the basename for the given fully qualified class name. It is okay to pass
+     * a basename to this method which will just be returned back.
+     *
+     * @param fqcn The fully qualified class name to convert
+     * @return the basename of the class name
+     */
+    public static String getBasename(String fqcn) {
+        String name = fqcn;
+        int lastDot = name.lastIndexOf('.');
+        if (lastDot != -1) {
+            name = name.substring(lastDot + 1);
+        }
+
+        return name;
+    }
+
+    /**
      * Sets the default layout attributes for the a new UiElementNode.
      * <p/>
      * Note that ideally the node should already be part of a hierarchy so that its
@@ -710,49 +681,68 @@ public final class DescriptorsUtils {
      * <p/>
      * This does not override attributes which are not empty.
      */
-    public static void setDefaultLayoutAttributes(UiElementNode ui_node, boolean updateLayout) {
+    public static void setDefaultLayoutAttributes(UiElementNode node, boolean updateLayout) {
         // if this ui_node is a layout and we're adding it to a document, use match_parent for
         // both W/H. Otherwise default to wrap_layout.
-        boolean fill = ui_node.getDescriptor().hasChildren() &&
-                       ui_node.getUiParent() instanceof UiDocumentNode;
-        ui_node.setAttributeValue(
-                LayoutConstants.ATTR_LAYOUT_WIDTH,
-                SdkConstants.NS_RESOURCES,
-                fill ? LayoutConstants.VALUE_FILL_PARENT : LayoutConstants.VALUE_WRAP_CONTENT,
-                false /* override */);
-        ui_node.setAttributeValue(
-                LayoutConstants.ATTR_LAYOUT_HEIGHT,
-                SdkConstants.NS_RESOURCES,
-                fill ? LayoutConstants.VALUE_FILL_PARENT : LayoutConstants.VALUE_WRAP_CONTENT,
-                false /* override */);
+        ElementDescriptor descriptor = node.getDescriptor();
 
-        String widget_id = getFreeWidgetId(ui_node);
-        if (widget_id != null) {
-            ui_node.setAttributeValue(
-                    LayoutConstants.ATTR_ID,
+        String name = descriptor.getXmlLocalName();
+        if (name.equals(REQUEST_FOCUS) || name.equals(SPACE)) {
+            // Don't add ids etc to <requestFocus>, or to grid spacers
+            return;
+        }
+
+        // Width and height are mandatory in all layouts except GridLayout
+        boolean setSize = !node.getUiParent().getDescriptor().getXmlName().equals(GRID_LAYOUT);
+        if (setSize) {
+            boolean fill = descriptor.hasChildren() &&
+                           node.getUiParent() instanceof UiDocumentNode;
+            node.setAttributeValue(
+                    ATTR_LAYOUT_WIDTH,
                     SdkConstants.NS_RESOURCES,
-                    widget_id,
+                    fill ? VALUE_FILL_PARENT : VALUE_WRAP_CONTENT,
+                    false /* override */);
+            node.setAttributeValue(
+                    ATTR_LAYOUT_HEIGHT,
+                    SdkConstants.NS_RESOURCES,
+                    fill ? VALUE_FILL_PARENT : VALUE_WRAP_CONTENT,
                     false /* override */);
         }
 
-        ui_node.setAttributeValue(
-                LayoutConstants.ATTR_TEXT,
+        String freeId = getFreeWidgetId(node);
+        if (freeId != null) {
+            node.setAttributeValue(
+                    ATTR_ID,
+                    SdkConstants.NS_RESOURCES,
+                    freeId,
+                    false /* override */);
+        }
+
+        // Set a text attribute on textual widgets -- but only on those that define a text
+        // attribute
+        if (descriptor.definesAttribute(ANDROID_URI, ATTR_TEXT)
+                // Don't set default text value into edit texts - they typically start out blank
+                && !descriptor.getXmlLocalName().equals(EDIT_TEXT)) {
+            String type = getBasename(descriptor.getUiName());
+            node.setAttributeValue(
+                ATTR_TEXT,
                 SdkConstants.NS_RESOURCES,
-                widget_id,
+                type,
                 false /*override*/);
+        }
 
         if (updateLayout) {
-            UiElementNode ui_parent = ui_node.getUiParent();
-            if (ui_parent != null &&
-                    ui_parent.getDescriptor().getXmlLocalName().equals(
-                            LayoutConstants.RELATIVE_LAYOUT)) {
-                UiElementNode ui_previous = ui_node.getUiPreviousSibling();
-                if (ui_previous != null) {
-                    String id = ui_previous.getAttributeValue(LayoutConstants.ATTR_ID);
+            UiElementNode parent = node.getUiParent();
+            if (parent != null &&
+                    parent.getDescriptor().getXmlLocalName().equals(
+                            RELATIVE_LAYOUT)) {
+                UiElementNode previous = node.getUiPreviousSibling();
+                if (previous != null) {
+                    String id = previous.getAttributeValue(ATTR_ID);
                     if (id != null && id.length() > 0) {
                         id = id.replace("@+", "@");                     //$NON-NLS-1$ //$NON-NLS-2$
-                        ui_node.setAttributeValue(
-                                LayoutConstants.ATTR_LAYOUT_BELOW,
+                        node.setAttributeValue(
+                                ATTR_LAYOUT_BELOW,
                                 SdkConstants.NS_RESOURCES,
                                 id,
                                 false /* override */);
@@ -763,8 +753,8 @@ public final class DescriptorsUtils {
     }
 
     /**
-     * Given a UI root node, returns the first available id that matches the
-     * pattern "prefix%02d".
+     * Given a UI node, returns the first available id that matches the
+     * pattern "prefix%d".
      * <p/>TabWidget is a special case and the method will always return "@android:id/tabs".
      *
      * @param uiNode The UI node that gives the prefix to match.
@@ -772,18 +762,32 @@ public final class DescriptorsUtils {
      * (e.g. "@+id/something")
      */
     public static String getFreeWidgetId(UiElementNode uiNode) {
-        String name = uiNode.getDescriptor().getXmlLocalName();
+        String name = getBasename(uiNode.getDescriptor().getXmlLocalName());
+        return getFreeWidgetId(uiNode.getUiRoot(), name);
+    }
+
+    /**
+     * Given a UI root node and a potential XML node name, returns the first available
+     * id that matches the pattern "prefix%d".
+     * <p/>TabWidget is a special case and the method will always return "@android:id/tabs".
+     *
+     * @param uiRoot The root UI node to search for name conflicts from
+     * @param name The XML node prefix name to look for
+     * @return A suitable generated id in the attribute form needed by the XML id tag
+     * (e.g. "@+id/something")
+     */
+    public static String getFreeWidgetId(UiElementNode uiRoot, String name) {
         if ("TabWidget".equals(name)) {                        //$NON-NLS-1$
             return "@android:id/tabs";                         //$NON-NLS-1$
         }
 
-        return "@+id/" + getFreeWidgetId(uiNode.getUiRoot(),   //$NON-NLS-1$
+        return NEW_ID_PREFIX + getFreeWidgetId(uiRoot,
                 new Object[] { name, null, null, null });
     }
 
     /**
      * Given a UI root node, returns the first available id that matches the
-     * pattern "prefix%02d".
+     * pattern "prefix%d".
      *
      * For recursion purposes, a "context" is given. Since Java doesn't have in-out parameters
      * in methods and we're not going to do a dedicated type, we just use an object array which
@@ -826,28 +830,31 @@ public final class DescriptorsUtils {
             prefix = prefix.replaceAll("[^a-zA-Z]", "");                //$NON-NLS-1$ $NON-NLS-2$
             if (prefix.length() == 0) {
                 prefix = DEFAULT_WIDGET_PREFIX;
+            } else {
+                // Lowercase initial character
+                prefix = Character.toLowerCase(prefix.charAt(0)) + prefix.substring(1);
             }
 
             do {
                 num++;
-                generated = String.format("%1$s%2$02d", prefix, num);   //$NON-NLS-1$
-            } while (map.contains(generated));
+                generated = String.format("%1$s%2$d", prefix, num);   //$NON-NLS-1$
+            } while (map.contains(generated.toLowerCase()));
 
             params[0] = prefix;
             params[1] = num;
             params[2] = generated;
         }
 
-        String id = uiRoot.getAttributeValue(LayoutConstants.ATTR_ID);
+        String id = uiRoot.getAttributeValue(ATTR_ID);
         if (id != null) {
-            id = id.replace("@+id/", "");                               //$NON-NLS-1$ $NON-NLS-2$
-            id = id.replace("@id/", "");                                //$NON-NLS-1$ $NON-NLS-2$
-            if (map.add(id) && map.contains(generated)) {
+            id = id.replace(NEW_ID_PREFIX, "");                            //$NON-NLS-1$
+            id = id.replace(ID_PREFIX, "");                                //$NON-NLS-1$
+            if (map.add(id.toLowerCase()) && map.contains(generated.toLowerCase())) {
 
                 do {
                     num++;
-                    generated = String.format("%1$s%2$02d", prefix, num);   //$NON-NLS-1$
-                } while (map.contains(generated));
+                    generated = String.format("%1$s%2$d", prefix, num);   //$NON-NLS-1$
+                } while (map.contains(generated.toLowerCase()));
 
                 params[1] = num;
                 params[2] = generated;
@@ -862,4 +869,48 @@ public final class DescriptorsUtils {
         return (String) params[2];
     }
 
+    /**
+     * Returns true if the given descriptor represents a view that not only can have
+     * children but which allows us to <b>insert</b> children. Some views, such as
+     * ListView (and in general all AdapterViews), disallow children to be inserted except
+     * through the dedicated AdapterView interface to do it.
+     *
+     * @param descriptor the descriptor for the view in question
+     * @param viewObject an actual instance of the view, or null if not available
+     * @return true if the descriptor describes a view which allows insertion of child
+     *         views
+     */
+    public static boolean canInsertChildren(ElementDescriptor descriptor, Object viewObject) {
+        if (descriptor.hasChildren()) {
+            if (viewObject != null) {
+                // We have a view object; see if it derives from an AdapterView
+                Class<?> clz = viewObject.getClass();
+                while (clz != null) {
+                    if (clz.getName().equals(FQCN_ADAPTER_VIEW)) {
+                        return false;
+                    }
+                    clz = clz.getSuperclass();
+                }
+            } else {
+                // No view object, so we can't easily look up the class and determine
+                // whether it's an AdapterView; instead, look at the fixed list of builtin
+                // concrete subclasses of AdapterView
+                String viewName = descriptor.getXmlLocalName();
+                if (viewName.equals(LIST_VIEW) || viewName.equals(EXPANDABLE_LIST_VIEW)
+                        || viewName.equals(GALLERY) || viewName.equals(GRID_VIEW)) {
+
+                    // We should really also enforce that
+                    // LayoutConstants.ANDROID_URI.equals(descriptor.getNameSpace())
+                    // here and if not, return true, but it turns out the getNameSpace()
+                    // for elements are often "".
+
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        return false;
+    }
 }

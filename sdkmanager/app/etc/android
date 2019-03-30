@@ -74,9 +74,10 @@ fi
 
 if [ "$OSTYPE" = "cygwin" ] ; then
     jarpath=`cygpath -w  "$frameworkdir/$jarfile"`
+    jarpath="$jarpath;"`cygpath -w  "$frameworkdir/swtmenubar.jar"`
     progdir=`cygpath -w  "$progdir"`
 else
-    jarpath="$frameworkdir/$jarfile"
+    jarpath="$frameworkdir/$jarfile:$frameworkdir/swtmenubar.jar"
 fi
 
 # Get the current content of java.ext.dirs so that we can add to it instead of replacing
@@ -99,18 +100,15 @@ else
     fi
 fi
 
-# Combine the swtpath and the framework dir path.
-if [ -d "$swtpath" ]; then
-    frameworkdir="${swtpath}:${frameworkdir}"
-else
+if [ ! -d "$swtpath" ]; then
     echo "SWT folder '${swtpath}' does not exist."
     echo "Please export ANDROID_SWT to point to the folder containing swt.jar for your platform."
     exit 1
 fi
 
-if [ -z "$1" ]; then
-    echo "Starting Android SDK and AVD Manager"
-fi
-
 # need to use "java.ext.dirs" because "-jar" causes classpath to be ignored
-exec "$java_cmd" -Xmx256M $os_opts $java_debug -Djava.ext.dirs="${javaExtDirs}:${frameworkdir}" -Dcom.android.sdkmanager.toolsdir="$progdir" -jar "$jarpath" "$@"
+exec "$java_cmd" \
+    -Xmx256M $os_opts $java_debug \
+    -Dcom.android.sdkmanager.toolsdir="$progdir" \
+    -classpath "$jarpath:$swtpath/swt.jar" \
+    com.android.sdkmanager.Main "$@"

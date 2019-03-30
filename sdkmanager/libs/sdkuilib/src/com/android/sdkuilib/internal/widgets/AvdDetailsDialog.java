@@ -18,90 +18,56 @@ package com.android.sdkuilib.internal.widgets;
 
 import com.android.sdklib.AndroidVersion;
 import com.android.sdklib.IAndroidTarget;
+import com.android.sdklib.internal.avd.AvdInfo;
 import com.android.sdklib.internal.avd.AvdManager;
-import com.android.sdklib.internal.avd.AvdManager.AvdInfo;
-import com.android.sdklib.internal.avd.AvdManager.AvdInfo.AvdStatus;
+import com.android.sdklib.internal.avd.AvdInfo.AvdStatus;
+import com.android.sdkuilib.ui.GridDataBuilder;
+import com.android.sdkuilib.ui.GridLayoutBuilder;
+import com.android.sdkuilib.ui.SwtBaseDialog;
 
 import org.eclipse.swt.SWT;
-import org.eclipse.swt.graphics.Point;
-import org.eclipse.swt.graphics.Rectangle;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
-import org.eclipse.swt.widgets.Dialog;
-import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Shell;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Dialog displaying the details of an AVD.
  */
-final class AvdDetailsDialog extends Dialog {
+final class AvdDetailsDialog extends SwtBaseDialog {
 
-    /** Last dialog size for this session. */
-    private static Point sLastSize;
-
-    private Shell mDialogShell;
     private final AvdInfo mAvdInfo;
 
-    private Composite mRootComposite;
-
     public AvdDetailsDialog(Shell shell, AvdInfo avdInfo) {
-        super(shell, SWT.APPLICATION_MODAL);
+        super(shell, SWT.APPLICATION_MODAL, "AVD details");
         mAvdInfo = avdInfo;
-
-        setText("AVD details");
-    }
-
-    /**
-     * Open the dialog and blocks till it gets closed
-     */
-    public void open() {
-        createContents();
-        positionShell();            //$hide$ (hide from SWT designer)
-        mDialogShell.open();
-        mDialogShell.layout();
-
-        Display display = getParent().getDisplay();
-        while (!mDialogShell.isDisposed()) {
-            if (!display.readAndDispatch()) {
-                display.sleep();
-            }
-        }
-
-        if (!mDialogShell.isDisposed()) {
-            sLastSize = mDialogShell.getSize();
-            mDialogShell.close();
-        }
     }
 
     /**
      * Create contents of the dialog.
      */
-    private void createContents() {
-        mDialogShell = new Shell(getParent(), SWT.DIALOG_TRIM | SWT.RESIZE);
-        mDialogShell.setLayout(new GridLayout(1, false));
-        mDialogShell.setSize(450, 300);
-        mDialogShell.setText(getText());
-
-        mRootComposite = new Composite(mDialogShell, SWT.NONE);
-        mRootComposite.setLayout(new GridLayout(2, false));
-        mRootComposite.setLayoutData(new GridData(GridData.FILL_BOTH));
+    @Override
+    protected void createContents() {
+        Shell shell = getShell();
+        GridLayoutBuilder.create(shell).columns(2);
+        GridDataBuilder.create(shell).fill();
 
         GridLayout gl;
 
-        Composite c = new Composite(mRootComposite, SWT.NONE);
+        Composite c = new Composite(shell, SWT.NONE);
         c.setLayout(gl = new GridLayout(2, false));
         gl.marginHeight = gl.marginWidth = 0;
         c.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
 
         if (mAvdInfo != null) {
             displayValue(c, "Name:", mAvdInfo.getName());
-            displayValue(c, "Path:", mAvdInfo.getPath());
+            displayValue(c, "CPU/ABI:", AvdInfo.getPrettyAbiType(mAvdInfo.getAbiType()));
+
+            displayValue(c, "Path:", mAvdInfo.getDataFolderPath());
 
             if (mAvdInfo.getStatus() != AvdStatus.OK) {
                 displayValue(c, "Error:", mAvdInfo.getErrorMessage());
@@ -127,9 +93,16 @@ final class AvdDetailsDialog extends Dialog {
                         displayValue(c, "SD Card:", sdcard);
                     }
 
+                    String snapshot = properties.get(AvdManager.AVD_INI_SNAPSHOT_PRESENT);
+                    if (snapshot != null) {
+                        displayValue(c, "Snapshot:", snapshot);
+                    }
+
                     // display other hardware
                     HashMap<String, String> copy = new HashMap<String, String>(properties);
                     // remove stuff we already displayed (or that we don't want to display)
+                    copy.remove(AvdManager.AVD_INI_ABI_TYPE);
+                    copy.remove(AvdManager.AVD_INI_CPU_ARCH);
                     copy.remove(AvdManager.AVD_INI_SKIN_NAME);
                     copy.remove(AvdManager.AVD_INI_SKIN_PATH);
                     copy.remove(AvdManager.AVD_INI_SDCARD_SIZE);
@@ -138,18 +111,17 @@ final class AvdDetailsDialog extends Dialog {
                     copy.remove(AvdManager.AVD_INI_IMAGES_2);
 
                     if (copy.size() > 0) {
-                        Label l = new Label(mRootComposite, SWT.SEPARATOR | SWT.HORIZONTAL);
+                        Label l = new Label(shell, SWT.SEPARATOR | SWT.HORIZONTAL);
                         l.setLayoutData(new GridData(
                                 GridData.FILL, GridData.CENTER, false, false, 2, 1));
 
-                        c = new Composite(mRootComposite, SWT.NONE);
+                        c = new Composite(shell, SWT.NONE);
                         c.setLayout(gl = new GridLayout(2, false));
                         gl.marginHeight = gl.marginWidth = 0;
                         c.setLayoutData(new GridData(GridData.FILL_BOTH));
 
-                        Set<String> keys = copy.keySet();
-                        for (String key : keys) {
-                            displayValue(c, key + ":", copy.get(key));
+                        for (Map.Entry<String, String> entry : copy.entrySet()) {
+                            displayValue(c, entry.getKey() + ":", entry.getValue());
                         }
                     }
                 }
@@ -160,6 +132,12 @@ final class AvdDetailsDialog extends Dialog {
     // -- Start of internal part ----------
     // Hide everything down-below from SWT designer
     //$hide>>$
+
+
+    @Override
+    protected void postCreate() {
+        // pass
+    }
 
     /**
      * Displays a value with a label.
@@ -177,33 +155,6 @@ final class AvdDetailsDialog extends Dialog {
         l = new Label(parent, SWT.NONE);
         l.setText(value);
         l.setLayoutData(new GridData(GridData.FILL, GridData.CENTER, true, false));
-    }
-
-    /**
-     * Centers the dialog in its parent shell.
-     */
-    private void positionShell() {
-        // Centers the dialog in its parent shell
-        Shell child = mDialogShell;
-        Shell parent = getParent();
-        if (child != null && parent != null) {
-
-            // get the parent client area with a location relative to the display
-            Rectangle parentArea = parent.getClientArea();
-            Point parentLoc = parent.getLocation();
-            int px = parentLoc.x;
-            int py = parentLoc.y;
-            int pw = parentArea.width;
-            int ph = parentArea.height;
-
-            // Reuse the last size if there's one, otherwise use the default
-            Point childSize = sLastSize != null ? sLastSize : child.getSize();
-            int cw = childSize.x;
-            int ch = childSize.y;
-
-            child.setLocation(px + (pw - cw) / 2, py + (ph - ch) / 2);
-            child.setSize(cw, ch);
-        }
     }
 
     // End of hiding from SWT Designer

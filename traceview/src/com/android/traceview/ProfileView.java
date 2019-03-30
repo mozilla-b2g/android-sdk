@@ -16,10 +16,6 @@
 
 package com.android.traceview;
 
-import java.util.ArrayList;
-import java.util.Observable;
-import java.util.Observer;
-
 import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jface.viewers.ISelectionChangedListener;
 import org.eclipse.jface.viewers.IStructuredSelection;
@@ -48,8 +44,12 @@ import org.eclipse.swt.widgets.Tree;
 import org.eclipse.swt.widgets.TreeColumn;
 import org.eclipse.swt.widgets.TreeItem;
 
+import java.util.ArrayList;
+import java.util.Observable;
+import java.util.Observer;
+
 public class ProfileView extends Composite implements Observer {
-    
+
     private TreeViewer mTreeViewer;
     private Text mSearchBox;
     private SelectionController mSelectionController;
@@ -57,6 +57,11 @@ public class ProfileView extends Composite implements Observer {
     private Color mColorNoMatch;
     private Color mColorMatch;
     private MethodData mCurrentHighlightedMethod;
+    private MethodHandler mMethodHandler;
+
+    public interface MethodHandler {
+        void handleMethod(MethodData method);
+    }
 
     public ProfileView(Composite parent, TraceReader reader,
             SelectionController selectController) {
@@ -199,7 +204,7 @@ public class ProfileView extends Composite implements Observer {
                         }
                     }
                 });
-        
+
         // Add a tree listener so that we can expand the parents and children
         // of a method when a method is expanded.
         mTreeViewer.addTreeListener(new ITreeViewerListener() {
@@ -224,8 +229,16 @@ public class ProfileView extends Composite implements Observer {
                 ArrayList<Selection> selections = new ArrayList<Selection>();
                 selections.add(Selection.highlight("MethodData", md));
                 mSelectionController.change(selections, "ProfileView");
+
+                if (mMethodHandler != null && (event.stateMask & SWT.MOD1) != 0) {
+                    mMethodHandler.handleMethod(md);
+                }
             }
         });
+    }
+
+    public void setMethodHandler(MethodHandler handler) {
+        mMethodHandler = handler;
     }
 
     private void findName(String query) {
@@ -266,7 +279,7 @@ public class ProfileView extends Composite implements Observer {
             }
             if (name == "Call") {
                 Call call = (Call) selection.getValue();
-                MethodData md = call.mMethodData;
+                MethodData md = call.getMethodData();
                 highlightMethod(md, true);
                 return;
             }
@@ -291,18 +304,22 @@ public class ProfileView extends Composite implements Observer {
         mTreeViewer.setSelection(sel, true);
         Tree tree = mTreeViewer.getTree();
         TreeItem[] items = tree.getSelection();
-        tree.setTopItem(items[0]);
-        // workaround a Mac bug by adding showItem().
-        tree.showItem(items[0]);
+        if (items.length != 0) {
+            tree.setTopItem(items[0]);
+            // workaround a Mac bug by adding showItem().
+            tree.showItem(items[0]);
+        }
     }
 
     private void expandNode(MethodData md) {
         ProfileNode[] nodes = md.getProfileNodes();
         mTreeViewer.setExpandedState(md, true);
         // Also expand the "Parents" and "Children" nodes.
-        for (ProfileNode node : nodes) {
-            if (node.isRecursive() == false)
-                mTreeViewer.setExpandedState(node, true);
+        if (nodes != null) {
+            for (ProfileNode node : nodes) {
+                if (node.isRecursive() == false)
+                    mTreeViewer.setExpandedState(node, true);
+            }
         }
     }
 }

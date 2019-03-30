@@ -16,7 +16,6 @@
 
 package com.android.ddmlib;
 
-import com.android.ddmlib.SyncService.SyncResult;
 import com.android.ddmlib.log.LogReceiver;
 
 import java.io.File;
@@ -64,6 +63,11 @@ final class Device implements IDevice {
      */
     private SocketChannel mSocketChannel;
 
+    private boolean mArePropertiesSet = false;
+
+    private Integer mLastBatteryLevel = null;
+    private long mLastBatteryCheckTime = 0;
+
     /**
      * Output receiver for "pm install package.apk" command line.
      */
@@ -99,6 +103,56 @@ final class Device implements IDevice {
 
         public String getErrorMessage() {
             return mErrorMessage;
+        }
+    }
+
+    /**
+     * Output receiver for "dumpsys battery" command line.
+     */
+    private static final class BatteryReceiver extends MultiLineReceiver {
+        private static final Pattern BATTERY_LEVEL = Pattern.compile("\\s*level: (\\d+)");
+        private static final Pattern SCALE = Pattern.compile("\\s*scale: (\\d+)");
+
+        private Integer mBatteryLevel = null;
+        private Integer mBatteryScale = null;
+
+        /**
+         * Get the parsed percent battery level.
+         * @return
+         */
+        public Integer getBatteryLevel() {
+            if (mBatteryLevel != null && mBatteryScale != null) {
+                return (mBatteryLevel * 100) / mBatteryScale;
+            }
+            return null;
+        }
+
+        @Override
+        public void processNewLines(String[] lines) {
+            for (String line : lines) {
+                Matcher batteryMatch = BATTERY_LEVEL.matcher(line);
+                if (batteryMatch.matches()) {
+                    try {
+                        mBatteryLevel = Integer.parseInt(batteryMatch.group(1));
+                    } catch (NumberFormatException e) {
+                        Log.w(LOG_TAG, String.format("Failed to parse %s as an integer",
+                                batteryMatch.group(1)));
+                    }
+                }
+                Matcher scaleMatch = SCALE.matcher(line);
+                if (scaleMatch.matches()) {
+                    try {
+                        mBatteryScale = Integer.parseInt(scaleMatch.group(1));
+                    } catch (NumberFormatException e) {
+                        Log.w(LOG_TAG, String.format("Failed to parse %s as an integer",
+                                batteryMatch.group(1)));
+                    }
+                }
+            }
+        }
+
+        public boolean isCancelled() {
+            return false;
         }
     }
 
@@ -165,6 +219,39 @@ final class Device implements IDevice {
      */
     public String getProperty(String name) {
         return mProperties.get(name);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public boolean arePropertiesSet() {
+        return mArePropertiesSet;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public String getPropertyCacheOrSync(String name) throws TimeoutException,
+            AdbCommandRejectedException, ShellCommandUnresponsiveException, IOException {
+        if (mArePropertiesSet) {
+            return getProperty(name);
+        } else {
+            return getPropertySync(name);
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public String getPropertySync(String name) throws TimeoutException,
+            AdbCommandRejectedException, ShellCommandUnresponsiveException, IOException {
+        CollectingOutputReceiver receiver = new CollectingOutputReceiver();
+        executeShellCommand(String.format("getprop '%s'", name), receiver);
+        String value = receiver.getOutput().trim();
+        if (value.isEmpty()) {
+            return null;
+        }
+        return value;
     }
 
     public String getMountPoint(String name) {
@@ -392,6 +479,9 @@ final class Device implements IDevice {
     }
 
     void update(int changeMask) {
+        if ((changeMask & CHANGE_BUILD_INFO) != 0) {
+            mArePropertiesSet = true;
+        }
         mMonitor.getServer().deviceChanged(this, changeMask);
     }
 
@@ -407,17 +497,101 @@ final class Device implements IDevice {
         mMountPoints.put(name, value);
     }
 
-    public String installPackage(String packageFilePath, boolean reinstall)
-           throws TimeoutException, AdbCommandRejectedException, ShellCommandUnresponsiveException,
-           IOException {
-       String remoteFilePath = syncPackageToDevice(packageFilePath);
-       String result = installRemotePackage(remoteFilePath, reinstall);
-       removeRemotePackage(remoteFilePath);
-       return result;
+    public void pushFile(String local, String remote)
+            throws IOException, AdbCommandRejectedException, TimeoutException, SyncException {
+        SyncService sync = null;
+        try {
+            String targetFileName = getFileName(local);
+
+            Log.d(targetFileName, String.format("Uploading %1$s onto device '%2$s'",
+                    targetFileName, getSerialNumber()));
+
+            sync = getSyncService();
+            if (sync != null) {
+                String message = String.format("Uploading file onto device '%1$s'",
+                        getSerialNumber());
+                Log.d(LOG_TAG, message);
+                sync.pushFile(local, remote, SyncService.getNullProgressMonitor());
+            } else {
+                throw new IOException("Unable to open sync connection!");
+            }
+        } catch (TimeoutException e) {
+            Log.e(LOG_TAG, "Error during Sync: timeout.");
+            throw e;
+
+        } catch (SyncException e) {
+            Log.e(LOG_TAG, String.format("Error during Sync: %1$s", e.getMessage()));
+            throw e;
+
+        } catch (IOException e) {
+            Log.e(LOG_TAG, String.format("Error during Sync: %1$s", e.getMessage()));
+            throw e;
+
+        } finally {
+            if (sync != null) {
+                sync.close();
+            }
+        }
+    }
+
+    public void pullFile(String remote, String local)
+            throws IOException, AdbCommandRejectedException, TimeoutException, SyncException {
+        SyncService sync = null;
+        try {
+            String targetFileName = getFileName(remote);
+
+            Log.d(targetFileName, String.format("Downloading %1$s from device '%2$s'",
+                    targetFileName, getSerialNumber()));
+
+            sync = getSyncService();
+            if (sync != null) {
+                String message = String.format("Downloding file from device '%1$s'",
+                        getSerialNumber());
+                Log.d(LOG_TAG, message);
+                sync.pullFile(remote, local, SyncService.getNullProgressMonitor());
+            } else {
+                throw new IOException("Unable to open sync connection!");
+            }
+        } catch (TimeoutException e) {
+            Log.e(LOG_TAG, "Error during Sync: timeout.");
+            throw e;
+
+        } catch (SyncException e) {
+            Log.e(LOG_TAG, String.format("Error during Sync: %1$s", e.getMessage()));
+            throw e;
+
+        } catch (IOException e) {
+            Log.e(LOG_TAG, String.format("Error during Sync: %1$s", e.getMessage()));
+            throw e;
+
+        } finally {
+            if (sync != null) {
+                sync.close();
+            }
+        }
+    }
+
+    public String installPackage(String packageFilePath, boolean reinstall, String... extraArgs)
+            throws InstallException {
+        try {
+            String remoteFilePath = syncPackageToDevice(packageFilePath);
+            String result = installRemotePackage(remoteFilePath, reinstall, extraArgs);
+            removeRemotePackage(remoteFilePath);
+            return result;
+        } catch (IOException e) {
+            throw new InstallException(e);
+        } catch (AdbCommandRejectedException e) {
+            throw new InstallException(e);
+        } catch (TimeoutException e) {
+            throw new InstallException(e);
+        } catch (SyncException e) {
+            throw new InstallException(e);
+        }
     }
 
     public String syncPackageToDevice(String localFilePath)
-            throws IOException, AdbCommandRejectedException, TimeoutException {
+            throws IOException, AdbCommandRejectedException, TimeoutException, SyncException {
+        SyncService sync = null;
         try {
             String packageFileName = getFileName(localFilePath);
             String remoteFilePath = String.format("/data/local/tmp/%1$s", packageFileName); //$NON-NLS-1$
@@ -425,29 +599,32 @@ final class Device implements IDevice {
             Log.d(packageFileName, String.format("Uploading %1$s onto device '%2$s'",
                     packageFileName, getSerialNumber()));
 
-            SyncService sync = getSyncService();
+            sync = getSyncService();
             if (sync != null) {
                 String message = String.format("Uploading file onto device '%1$s'",
                         getSerialNumber());
                 Log.d(LOG_TAG, message);
-                SyncResult result = sync.pushFile(localFilePath, remoteFilePath,
-                        SyncService.getNullProgressMonitor());
-
-                if (result.getCode() != SyncService.RESULT_OK) {
-                    throw new IOException(String.format("Unable to upload file: %1$s",
-                            result.getMessage()));
-                }
+                sync.pushFile(localFilePath, remoteFilePath, SyncService.getNullProgressMonitor());
             } else {
                 throw new IOException("Unable to open sync connection!");
             }
             return remoteFilePath;
         } catch (TimeoutException e) {
-            Log.e(LOG_TAG, "Unable to open sync connection! Timeout.");
+            Log.e(LOG_TAG, "Error during Sync: timeout.");
             throw e;
+
+        } catch (SyncException e) {
+            Log.e(LOG_TAG, String.format("Error during Sync: %1$s", e.getMessage()));
+            throw e;
+
         } catch (IOException e) {
-            Log.e(LOG_TAG, String.format("Unable to open sync connection! reason: %1$s",
-                    e.getMessage()));
+            Log.e(LOG_TAG, String.format("Error during Sync: %1$s", e.getMessage()));
             throw e;
+
+        } finally {
+            if (sync != null) {
+                sync.close();
+            }
         }
     }
 
@@ -460,41 +637,61 @@ final class Device implements IDevice {
         return new File(filePath).getName();
     }
 
-    public String installRemotePackage(String remoteFilePath, boolean reinstall)
-            throws TimeoutException, AdbCommandRejectedException, ShellCommandUnresponsiveException,
-            IOException {
-        InstallReceiver receiver = new InstallReceiver();
-        String cmd = String.format(reinstall ? "pm install -r \"%1$s\"" : "pm install \"%1$s\"",
-                            remoteFilePath);
-        executeShellCommand(cmd, receiver, INSTALL_TIMEOUT);
-        return receiver.getErrorMessage();
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    public void removeRemotePackage(String remoteFilePath)
-            throws TimeoutException, AdbCommandRejectedException, ShellCommandUnresponsiveException,
-            IOException {
-        // now we delete the app we sync'ed
+    public String installRemotePackage(String remoteFilePath, boolean reinstall,
+            String... extraArgs) throws InstallException {
         try {
-            executeShellCommand("rm " + remoteFilePath, new NullOutputReceiver(), INSTALL_TIMEOUT);
+            InstallReceiver receiver = new InstallReceiver();
+            StringBuilder optionString = new StringBuilder();
+            if (reinstall) {
+                optionString.append("-r ");
+            }
+            for (String arg : extraArgs) {
+                optionString.append(arg);
+                optionString.append(' ');
+            }
+            String cmd = String.format("pm install %1$s \"%2$s\"", optionString.toString(),
+                    remoteFilePath);
+            executeShellCommand(cmd, receiver, INSTALL_TIMEOUT);
+            return receiver.getErrorMessage();
+        } catch (TimeoutException e) {
+            throw new InstallException(e);
+        } catch (AdbCommandRejectedException e) {
+            throw new InstallException(e);
+        } catch (ShellCommandUnresponsiveException e) {
+            throw new InstallException(e);
         } catch (IOException e) {
-            Log.e(LOG_TAG, String.format("Failed to delete temporary package: %1$s",
-                    e.getMessage()));
-            throw e;
+            throw new InstallException(e);
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    public String uninstallPackage(String packageName)
-            throws TimeoutException, AdbCommandRejectedException, ShellCommandUnresponsiveException,
-            IOException {
-        InstallReceiver receiver = new InstallReceiver();
-        executeShellCommand("pm uninstall " + packageName, receiver, INSTALL_TIMEOUT);
-        return receiver.getErrorMessage();
+    public void removeRemotePackage(String remoteFilePath) throws InstallException {
+        try {
+            executeShellCommand("rm " + remoteFilePath, new NullOutputReceiver(), INSTALL_TIMEOUT);
+        } catch (IOException e) {
+            throw new InstallException(e);
+        } catch (TimeoutException e) {
+            throw new InstallException(e);
+        } catch (AdbCommandRejectedException e) {
+            throw new InstallException(e);
+        } catch (ShellCommandUnresponsiveException e) {
+            throw new InstallException(e);
+        }
+    }
+
+    public String uninstallPackage(String packageName) throws InstallException {
+        try {
+            InstallReceiver receiver = new InstallReceiver();
+            executeShellCommand("pm uninstall " + packageName, receiver, INSTALL_TIMEOUT);
+            return receiver.getErrorMessage();
+        } catch (TimeoutException e) {
+            throw new InstallException(e);
+        } catch (AdbCommandRejectedException e) {
+            throw new InstallException(e);
+        } catch (ShellCommandUnresponsiveException e) {
+            throw new InstallException(e);
+        } catch (IOException e) {
+            throw new InstallException(e);
+        }
     }
 
     /*
@@ -504,5 +701,24 @@ final class Device implements IDevice {
     public void reboot(String into)
             throws TimeoutException, AdbCommandRejectedException, IOException {
         AdbHelper.reboot(into, AndroidDebugBridge.getSocketAddress(), this);
+    }
+
+    public Integer getBatteryLevel() throws TimeoutException, AdbCommandRejectedException,
+            IOException, ShellCommandUnresponsiveException {
+        // use default of 5 minutes
+        return getBatteryLevel(5 * 60 * 1000);
+    }
+
+    public Integer getBatteryLevel(long freshnessMs) throws TimeoutException,
+            AdbCommandRejectedException, IOException, ShellCommandUnresponsiveException {
+        if (mLastBatteryLevel != null
+                && mLastBatteryCheckTime > (System.currentTimeMillis() - freshnessMs)) {
+            return mLastBatteryLevel;
+        }
+        BatteryReceiver receiver = new BatteryReceiver();
+        executeShellCommand("dumpsys battery", receiver);
+        mLastBatteryLevel = receiver.getBatteryLevel();
+        mLastBatteryCheckTime = System.currentTimeMillis();
+        return mLastBatteryLevel;
     }
 }

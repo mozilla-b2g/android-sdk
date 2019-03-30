@@ -16,8 +16,9 @@
 
 package com.android.ide.eclipse.adt.internal.project;
 
+import com.android.ide.eclipse.adt.AdtConstants;
 import com.android.ide.eclipse.adt.AdtPlugin;
-import com.android.ide.eclipse.adt.AndroidConstants;
+import com.android.sdklib.SdkConstants;
 
 import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IMarker;
@@ -53,6 +54,7 @@ import org.eclipse.ui.texteditor.IDocumentProvider;
 import org.eclipse.ui.texteditor.ITextEditor;
 
 import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Utility methods to manipulate projects.
@@ -73,7 +75,7 @@ public final class BaseProjectHelper {
      * @param javaProject
      * @return a list of path relative to the workspace root.
      */
-    public static ArrayList<IPath> getSourceClasspaths(IJavaProject javaProject) {
+    public static List<IPath> getSourceClasspaths(IJavaProject javaProject) {
         ArrayList<IPath> sourceList = new ArrayList<IPath>();
         IClasspathEntry[] classpaths = javaProject.readRawClasspath();
         if (classpaths != null) {
@@ -91,7 +93,7 @@ public final class BaseProjectHelper {
      * @param project
      * @return a list of path relative to the workspace root.
      */
-    public static ArrayList<IPath> getSourceClasspaths(IProject project) {
+    public static List<IPath> getSourceClasspaths(IProject project) {
         IJavaProject javaProject = JavaCore.create(project);
         return getSourceClasspaths(javaProject);
     }
@@ -109,6 +111,26 @@ public final class BaseProjectHelper {
      */
     public final static IMarker markResource(IResource resource, String markerId,
             String message, int lineNumber, int severity) {
+        return markResource(resource, markerId, message, lineNumber, -1, -1, severity);
+    }
+
+    /**
+     * Adds a marker to a file on a specific line, for a specific range of text. This
+     * methods catches thrown {@link CoreException}, and returns null instead.
+     *
+     * @param resource the resource to be marked
+     * @param markerId The id of the marker to add.
+     * @param message the message associated with the mark
+     * @param lineNumber the line number where to put the mark. If line is < 1, it puts
+     *            the marker on line 1,
+     * @param startOffset the beginning offset of the marker (relative to the beginning of
+     *            the document, not the line), or -1 for no range
+     * @param endOffset the ending offset of the marker
+     * @param severity the severity of the marker.
+     * @return the IMarker that was added or null if it failed to add one.
+     */
+    public final static IMarker markResource(IResource resource, String markerId,
+                String message, int lineNumber, int startOffset, int endOffset, int severity) {
         try {
             IMarker marker = resource.createMarker(markerId);
             marker.setAttribute(IMarker.MESSAGE, message);
@@ -122,6 +144,11 @@ public final class BaseProjectHelper {
 
             if (lineNumber >= 1) {
                 marker.setAttribute(IMarker.LINE_NUMBER, lineNumber);
+            }
+
+            if (startOffset != -1) {
+                marker.setAttribute(IMarker.CHAR_START, startOffset);
+                marker.setAttribute(IMarker.CHAR_END, endOffset);
             }
 
             // on Windows, when adding a marker to a project, it takes a refresh for the marker
@@ -305,10 +332,17 @@ public final class BaseProjectHelper {
      * @param project
      * @param className
      * @param line
+     * @return true if the source was revealed
      */
-    public static void revealSource(IProject project, String className, int line) {
-        // in case the type is enclosed, we need to replace the $ with .
-        className = className.replaceAll("\\$", "\\."); //$NON-NLS-1$ //$NON-NLS2$
+    public static boolean revealSource(IProject project, String className, int line) {
+        // Inner classes are pointless: All we need is the enclosing type to find the file, and the
+        // line number.
+        // Since the anonymous ones will cause IJavaProject#findType to fail, we remove
+        // all of them.
+        int pos = className.indexOf('$');
+        if (pos != -1) {
+            className = className.substring(0, pos);
+        }
 
         // get the java project
         IJavaProject javaProject = JavaCore.create(project);
@@ -342,11 +376,15 @@ public final class BaseProjectHelper {
                     // select and reveal the line.
                     textEditor.selectAndReveal(lineInfo.getOffset(), lineInfo.getLength());
                 }
+
+                return true;
             }
         } catch (JavaModelException e) {
         } catch (PartInitException e) {
         } catch (BadLocationException e) {
         }
+
+        return false;
     }
 
     /**
@@ -389,16 +427,10 @@ public final class BaseProjectHelper {
             IProject project = javaProject.getProject();
 
             // check if it's an android project based on its nature
-            try {
-                if (project.hasNature(AndroidConstants.NATURE_DEFAULT)) {
-                    if (filter == null || filter.accept(project)) {
-                        androidProjectList.add(javaProject);
-                    }
+            if (isAndroidProject(project)) {
+                if (filter == null || filter.accept(project)) {
+                    androidProjectList.add(javaProject);
                 }
-            } catch (CoreException e) {
-                // this exception, thrown by IProject.hasNature(), means the project either doesn't
-                // exist or isn't opened. So, in any case we just skip it (the exception will
-                // bypass the ArrayList.add()
             }
         }
 
@@ -407,24 +439,42 @@ public final class BaseProjectHelper {
     }
 
     /**
-     * Returns the {@link IFolder} representing the output for the project.
+     * Returns true if the given project is an Android project (e.g. is a Java project
+     * that also has the Android nature)
+     *
+     * @param project the project to test
+     * @return true if the given project is an Android project
+     */
+    public static boolean isAndroidProject(IProject project) {
+        // check if it's an android project based on its nature
+        try {
+            return project.hasNature(AdtConstants.NATURE_DEFAULT);
+        } catch (CoreException e) {
+            // this exception, thrown by IProject.hasNature(), means the project either doesn't
+            // exist or isn't opened. So, in any case we just skip it (the exception will
+            // bypass the ArrayList.add()
+        }
+
+        return false;
+    }
+
+    /**
+     * Returns the {@link IFolder} representing the output for the project for Android specific
+     * files.
      * <p>
      * The project must be a java project and be opened, or the method will return null.
      * @param project the {@link IProject}
      * @return an IFolder item or null.
      */
-    public final static IFolder getOutputFolder(IProject project) {
+    public final static IFolder getJavaOutputFolder(IProject project) {
         try {
             if (project.isOpen() && project.hasNature(JavaCore.NATURE_ID)) {
                 // get a java project from the normal project object
                 IJavaProject javaProject = JavaCore.create(project);
 
                 IPath path = javaProject.getOutputLocation();
-                IWorkspaceRoot wsRoot = ResourcesPlugin.getWorkspace().getRoot();
-                IResource outputResource = wsRoot.findMember(path);
-                if (outputResource != null && outputResource.getType() == IResource.FOLDER) {
-                    return (IFolder)outputResource;
-                }
+                path = path.removeFirstSegments(1);
+                return project.getFolder(path);
             }
         } catch (JavaModelException e) {
             // Let's do nothing and return null
@@ -433,4 +483,26 @@ public final class BaseProjectHelper {
         }
         return null;
     }
+
+    /**
+     * Returns the {@link IFolder} representing the output for the project for compiled Java
+     * files.
+     * <p>
+     * The project must be a java project and be opened, or the method will return null.
+     * @param project the {@link IProject}
+     * @return an IFolder item or null.
+     */
+    public final static IFolder getAndroidOutputFolder(IProject project) {
+        try {
+            if (project.isOpen() && project.hasNature(JavaCore.NATURE_ID)) {
+                return project.getFolder(SdkConstants.FD_OUTPUT);
+            }
+        } catch (JavaModelException e) {
+            // Let's do nothing and return null
+        } catch (CoreException e) {
+            // Let's do nothing and return null
+        }
+        return null;
+    }
+
 }

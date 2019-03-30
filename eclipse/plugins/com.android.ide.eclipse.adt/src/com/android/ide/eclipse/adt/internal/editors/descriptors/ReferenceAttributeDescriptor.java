@@ -16,12 +16,14 @@
 
 package com.android.ide.eclipse.adt.internal.editors.descriptors;
 
-import com.android.ide.eclipse.adt.editors.layout.gscripts.IAttributeInfo;
+import com.android.ide.common.api.IAttributeInfo;
+import com.android.ide.common.api.IAttributeInfo.Format;
+import com.android.ide.common.resources.platform.AttributeInfo;
 import com.android.ide.eclipse.adt.internal.editors.ui.ResourceValueCellEditor;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiAttributeNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiElementNode;
 import com.android.ide.eclipse.adt.internal.editors.uimodel.UiResourceAttributeNode;
-import com.android.ide.eclipse.adt.internal.resources.ResourceType;
+import com.android.resources.ResourceType;
 import com.android.sdklib.SdkConstants;
 
 import org.eclipse.jface.viewers.CellEditor;
@@ -33,9 +35,25 @@ import org.eclipse.swt.widgets.Composite;
  */
 public final class ReferenceAttributeDescriptor extends TextAttributeDescriptor {
 
-    /** The {@link ResourceType} that this reference attribute can accept. It can be null,
-     * in which case any reference type can be used. */
+    /**
+     * The {@link ResourceType} that this reference attribute can accept. It can be null,
+     * in which case any reference type can be used.
+     */
     private ResourceType mResourceType;
+
+    /**
+     * Used by {@link DescriptorsUtils} to create instances of this descriptor.
+     */
+    public static final ITextAttributeCreator CREATOR = new ITextAttributeCreator() {
+        public TextAttributeDescriptor create(String xmlLocalName,
+                String uiName, String nsUri, String tooltip,
+                IAttributeInfo attrInfo) {
+            return new ReferenceAttributeDescriptor(
+                    ResourceType.DRAWABLE,
+                    xmlLocalName, uiName, nsUri, tooltip,
+                    new AttributeInfo(xmlLocalName, new Format[] { Format.REFERENCE }));
+        }
+    };
 
     /**
      * Creates a reference attributes that can contain any type of resources.

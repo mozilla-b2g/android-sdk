@@ -17,9 +17,9 @@
 package com.android.ide.eclipse.adt.internal.launch;
 
 import com.android.ddmlib.AndroidDebugBridge;
+import com.android.ddmlib.AndroidDebugBridge.IDeviceChangeListener;
 import com.android.ddmlib.Client;
 import com.android.ddmlib.IDevice;
-import com.android.ddmlib.AndroidDebugBridge.IDeviceChangeListener;
 import com.android.ddmlib.IDevice.DeviceState;
 import com.android.ddmuilib.ImageLoader;
 import com.android.ddmuilib.TableHelper;
@@ -29,7 +29,7 @@ import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.ide.eclipse.ddms.DdmsPlugin;
 import com.android.sdklib.AndroidVersion;
 import com.android.sdklib.IAndroidTarget;
-import com.android.sdklib.internal.avd.AvdManager.AvdInfo;
+import com.android.sdklib.internal.avd.AvdInfo;
 import com.android.sdkuilib.internal.widgets.AvdSelector;
 import com.android.sdkuilib.internal.widgets.AvdSelector.DisplayMode;
 import com.android.sdkuilib.internal.widgets.AvdSelector.IAvdFilter;
@@ -83,6 +83,8 @@ public class DeviceChooserDialog extends Dialog implements IDeviceChangeListener
     private final Sdk mSdk;
 
     private Button mDeviceRadioButton;
+    private Button mUseDeviceForFutureLaunchesCheckbox;
+    private static boolean sUseDeviceForFutureLaunchesValue = false;
 
     private boolean mDisableAvdSelectionChange = false;
 
@@ -90,7 +92,7 @@ public class DeviceChooserDialog extends Dialog implements IDeviceChangeListener
      * Basic Content Provider for a table full of {@link IDevice} objects. The input is
      * a {@link AndroidDebugBridge}.
      */
-    private class ContentProvider implements IStructuredContentProvider {
+    private static class ContentProvider implements IStructuredContentProvider {
         public Object[] getElements(Object inputElement) {
             if (inputElement instanceof AndroidDebugBridge) {
                 return ((AndroidDebugBridge)inputElement).getDevices();
@@ -218,6 +220,7 @@ public class DeviceChooserDialog extends Dialog implements IDeviceChangeListener
     public static class DeviceChooserResponse {
         private AvdInfo mAvdToLaunch;
         private IDevice mDeviceToUse;
+        private boolean mUseDeviceForFutureLaunches;
 
         public void setDeviceToUse(IDevice d) {
             mDeviceToUse = d;
@@ -235,6 +238,14 @@ public class DeviceChooserDialog extends Dialog implements IDeviceChangeListener
 
         public AvdInfo getAvdToLaunch() {
             return mAvdToLaunch;
+        }
+
+        public void setUseDeviceForFutureLaunches(boolean en) {
+            mUseDeviceForFutureLaunches = en;
+        }
+
+        public boolean useDeviceForFutureLaunches() {
+            return mUseDeviceForFutureLaunches;
         }
     }
 
@@ -278,6 +289,38 @@ public class DeviceChooserDialog extends Dialog implements IDeviceChangeListener
         return content;
     }
 
+    /**
+     * Create the button bar: We override the Dialog implementation of this method
+     * so that we can create the checkbox at the same level as the 'Cancel' and 'OK' buttons.
+     */
+    @Override
+    protected Control createButtonBar(Composite parent) {
+        Composite composite = new Composite(parent, SWT.NONE);
+
+        GridLayout layout = new GridLayout(1, false);
+        layout.marginHeight = convertVerticalDLUsToPixels(IDialogConstants.VERTICAL_MARGIN);
+        composite.setLayout(layout);
+        composite.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
+
+        mUseDeviceForFutureLaunchesCheckbox = new Button(composite, SWT.CHECK);
+        mUseDeviceForFutureLaunchesCheckbox.setSelection(sUseDeviceForFutureLaunchesValue);
+        mResponse.setUseDeviceForFutureLaunches(sUseDeviceForFutureLaunchesValue);
+        mUseDeviceForFutureLaunchesCheckbox.setText("Use same device for future launches");
+        mUseDeviceForFutureLaunchesCheckbox.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                sUseDeviceForFutureLaunchesValue =
+                        mUseDeviceForFutureLaunchesCheckbox.getSelection();
+                mResponse.setUseDeviceForFutureLaunches(sUseDeviceForFutureLaunchesValue);
+            }
+        });
+        mUseDeviceForFutureLaunchesCheckbox.setLayoutData(new GridData(GridData.FILL_HORIZONTAL));
+
+        createButton(composite, IDialogConstants.OK_ID, IDialogConstants.OK_LABEL, true);
+        createButton(composite, IDialogConstants.CANCEL_ID, IDialogConstants.CANCEL_LABEL, false);
+
+        return composite;
+    }
 
     @Override
     protected Control createDialogArea(Composite parent) {
@@ -428,7 +471,6 @@ public class DeviceChooserDialog extends Dialog implements IDeviceChangeListener
             }
         });
 
-
         return top;
     }
 
@@ -462,7 +504,7 @@ public class DeviceChooserDialog extends Dialog implements IDeviceChangeListener
         }
 
         if (mWarningImage == null) {
-            mNoMatchImage = factory.getIcon("warning", //$NON-NLS-1$
+            mWarningImage = factory.getIcon("warning", //$NON-NLS-1$
                     SWT.COLOR_YELLOW,
                     IconFactory.SHAPE_DEFAULT);
         }

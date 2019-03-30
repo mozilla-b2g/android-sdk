@@ -40,6 +40,8 @@ public class MainFrame extends JFrame {
     private JMenuItem saveMenuItem;
     private ImageEditorPanel imageEditor;
 
+    private static final String TITLE_FORMAT = "Draw 9-patch: %s";
+
     public MainFrame(String path) throws HeadlessException {
         super("Draw 9-patch");
 
@@ -54,6 +56,8 @@ public class MainFrame extends JFrame {
                 File file = new File(path);
                 BufferedImage img = GraphicsUtilities.loadCompatibleImage(file.toURI().toURL());
                 showImageEditor(img, file.getAbsolutePath());
+
+                setTitle(String.format(TITLE_FORMAT, path));
             } catch (Exception ex) {
                 showOpenFilePanel();
             }
@@ -164,6 +168,7 @@ public class MainFrame extends JFrame {
         protected void done() {
             try {
                 showImageEditor(get(), file.getAbsolutePath());
+                setTitle(String.format(TITLE_FORMAT, file.getAbsolutePath()));
             } catch (InterruptedException e) {
                 e.printStackTrace();
             } catch (ExecutionException e) {

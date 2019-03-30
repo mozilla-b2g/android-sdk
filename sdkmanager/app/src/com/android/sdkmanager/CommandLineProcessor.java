@@ -17,6 +17,7 @@
 package com.android.sdkmanager;
 
 import com.android.sdklib.ISdkLog;
+import com.android.sdklib.util.LineUtil;
 
 import java.util.HashMap;
 import java.util.Map.Entry;
@@ -47,10 +48,10 @@ class CommandLineProcessor {
      */
 
     /** Internal verb name for internally hidden flags. */
-    public final static String GLOBAL_FLAG_VERB = "@@internal@@";
+    public final static String GLOBAL_FLAG_VERB = "@@internal@@";   //$NON-NLS-1$
 
     /** String to use when the verb doesn't need any object. */
-    public final static String NO_VERB_OBJECT = "";
+    public final static String NO_VERB_OBJECT = "";                 //$NON-NLS-1$
 
     /** The global help flag. */
     public static final String KEY_HELP = "help";
@@ -108,15 +109,20 @@ class CommandLineProcessor {
         mLog = logger;
         mActions = actions;
 
+        /*
+         * usage should fit in 80 columns, including the space to print the options:
+         * "  -v --verbose  7890123456789012345678901234567890123456789012345678901234567890"
+         */
+
         define(Mode.BOOLEAN, false, GLOBAL_FLAG_VERB, NO_VERB_OBJECT, "v", KEY_VERBOSE,
-                "Verbose mode: errors, warnings and informational messages are printed.",
-                false);
+                           "Verbose mode, shows errors, warnings and all messages.",
+                           false);
         define(Mode.BOOLEAN, false, GLOBAL_FLAG_VERB, NO_VERB_OBJECT, "s", KEY_SILENT,
-                "Silent mode: only errors are printed out.",
-                false);
+                           "Silent mode, shows errors only.",
+                           false);
         define(Mode.BOOLEAN, false, GLOBAL_FLAG_VERB, NO_VERB_OBJECT, "h", KEY_HELP,
-                "Help on a specific command.",
-                false);
+                           "Help on a specific command.",
+                           false);
     }
 
     /**
@@ -183,7 +189,7 @@ class CommandLineProcessor {
     public Object getValue(String verb, String directObject, String longFlagName) {
 
         if (verb != null && directObject != null) {
-            String key = verb + "/" + directObject + "/" + longFlagName;
+            String key = verb + '/' + directObject + '/' + longFlagName;
             Arg arg = mArguments.get(key);
             return arg.getCurrentValue();
         }
@@ -216,7 +222,7 @@ class CommandLineProcessor {
      *              argument mode.
      */
     protected void setValue(String verb, String directObject, String longFlagName, Object value) {
-        String key = verb + "/" + directObject + "/" + longFlagName;
+        String key = verb + '/' + directObject + '/' + longFlagName;
         Arg arg = mArguments.get(key);
         arg.setCurrentValue(value);
     }
@@ -238,16 +244,16 @@ class CommandLineProcessor {
             for (int i = 0; i < n; i++) {
                 Arg arg = null;
                 String a = args[i];
-                if (a.startsWith("--")) {
+                if (a.startsWith("--")) {                                       //$NON-NLS-1$
                     arg = findLongArg(verb, directObject, a.substring(2));
-                } else if (a.startsWith("-")) {
+                } else if (a.startsWith("-")) {                                 //$NON-NLS-1$
                     arg = findShortArg(verb, directObject, a.substring(1));
                 }
 
                 // No matching argument name found
                 if (arg == null) {
                     // Does it looks like a dashed parameter?
-                    if (a.startsWith("-")) {
+                    if (a.startsWith("-")) {                                    //$NON-NLS-1$
                         if (verb == null || directObject == null) {
                             // It looks like a dashed parameter and we don't have a a verb/object
                             // set yet, the parameter was just given too early.
@@ -330,9 +336,9 @@ class CommandLineProcessor {
                         String b = args[i];
 
                         Arg dummyArg = null;
-                        if (b.startsWith("--")) {
+                        if (b.startsWith("--")) {                                   //$NON-NLS-1$
                             dummyArg = findLongArg(verb, directObject, b.substring(2));
-                        } else if (b.startsWith("-")) {
+                        } else if (b.startsWith("-")) {                             //$NON-NLS-1$
                             dummyArg = findShortArg(verb, directObject, b.substring(1));
                         }
                         if (dummyArg != null) {
@@ -352,7 +358,7 @@ class CommandLineProcessor {
                             // used to print specific help.
                             // Setting a non-null error message triggers printing the help, however
                             // there is no specific error to print.
-                            errorMsg = "";
+                            errorMsg = "";                                          //$NON-NLS-1$
                         }
                     }
 
@@ -392,9 +398,9 @@ class CommandLineProcessor {
                                 arg.getDirectObject().equals(directObject)) {
                             if (arg.isMandatory() && arg.getCurrentValue() == null) {
                                 if (missing == null) {
-                                    missing = "--" + arg.getLongArg();
+                                    missing = "--" + arg.getLongArg();              //$NON-NLS-1$
                                 } else {
-                                    missing += ", --" + arg.getLongArg();
+                                    missing += ", --" + arg.getLongArg();           //$NON-NLS-1$
                                     plural = true;
                                 }
                             }
@@ -432,7 +438,7 @@ class CommandLineProcessor {
         if (directObject == null) {
             directObject = NO_VERB_OBJECT;
         }
-        String key = verb + "/" + directObject + "/" + longName;
+        String key = verb + '/' + directObject + '/' + longName;                    //$NON-NLS-1$
         return mArguments.get(key);
     }
 
@@ -497,14 +503,14 @@ class CommandLineProcessor {
             "\n" +
             "Global options:",
             verb == null ? "action" :
-                verb + (directObject == null ? "" : " " + directObject));
+                verb + (directObject == null ? "" : " " + directObject));           //$NON-NLS-1$
         listOptions(GLOBAL_FLAG_VERB, NO_VERB_OBJECT);
 
         if (verb == null || directObject == null) {
             stdout("\nValid actions are composed of a verb and an optional direct object:");
             for (String[] action : mActions) {
                 if (verb == null || verb.equals(action[ACTION_VERB_INDEX])) {
-                    stdout("- %1$6s %2$-14s: %3$s",
+                    stdout("- %1$6s %2$-13s: %3$s",
                             action[ACTION_VERB_INDEX],
                             action[ACTION_OBJECT_INDEX],
                             action[ACTION_DESC_INDEX]);
@@ -536,12 +542,24 @@ class CommandLineProcessor {
      */
     protected void listOptions(String verb, String directObject) {
         int numOptions = 0;
+        int longArgLen = 8;
+
+        for (Entry<String, Arg> entry : mArguments.entrySet()) {
+            Arg arg = entry.getValue();
+            if (arg.getVerb().equals(verb) && arg.getDirectObject().equals(directObject)) {
+                int n = arg.getLongArg().length();
+                if (n > longArgLen) {
+                    longArgLen = n;
+                }
+            }
+        }
+
         for (Entry<String, Arg> entry : mArguments.entrySet()) {
             Arg arg = entry.getValue();
             if (arg.getVerb().equals(verb) && arg.getDirectObject().equals(directObject)) {
 
-                String value = "";
-                String required = "";
+                String value = "";                                              //$NON-NLS-1$
+                String required = "";                                           //$NON-NLS-1$
                 if (arg.isMandatory()) {
                     required = " [required]";
 
@@ -564,12 +582,24 @@ class CommandLineProcessor {
                     }
                 }
 
-                stdout("  -%1$s %2$-10s %3$s%4$s%5$s",
-                        arg.getShortArg(),
-                        "--" + arg.getLongArg(),
+                // Java doesn't support * for printf variable width, so we'll insert the long arg
+                // width "manually" in the printf format string.
+                String longArgWidth = Integer.toString(longArgLen + 2);
+
+                // Print a line in the form " -1_letter_arg --long_arg description"
+                // where either the 1-letter arg or the long arg are optional.
+                String output = String.format(
+                        "  %1$-2s %2$-" + longArgWidth + "s: %3$s%4$s%5$s", //$NON-NLS-1$ //$NON-NLS-2$
+                        arg.getShortArg().length() > 0 ?
+                                "-" + arg.getShortArg() :                              //$NON-NLS-1$
+                                "",                                                    //$NON-NLS-1$
+                        arg.getLongArg().length() > 0 ?
+                                "--" + arg.getLongArg() :                              //$NON-NLS-1$
+                                "",                                                    //$NON-NLS-1$
                         arg.getDescription(),
                         value,
                         required);
+                stdout(output);
                 numOptions++;
             }
         }
@@ -580,6 +610,7 @@ class CommandLineProcessor {
     }
 
     //----
+
 
     /**
      * The mode of an argument specifies the type of variable it represents,
@@ -612,8 +643,8 @@ class CommandLineProcessor {
                     arg.setCurrentValue(Integer.parseInt(extra));
                     return null;
                 } catch (NumberFormatException e) {
-                    return String.format("Failed to parse '%1$s' as an integer: %2%s",
-                            extra, e.getMessage());
+                    return String.format("Failed to parse '%1$s' as an integer: %2$s", extra,
+                            e.getMessage());
                 }
             }
         },
@@ -707,8 +738,8 @@ class CommandLineProcessor {
          * @param mode The {@link Mode} for the argument.
          * @param mandatory True if this argument is mandatory for this action.
          * @param directObject The action name. Can be #NO_VERB_OBJECT or #INTERNAL_FLAG.
-         * @param shortName The one-letter short argument name. Cannot be empty nor null.
-         * @param longName The long argument name. Cannot be empty nor null.
+         * @param shortName The one-letter short argument name. Can be empty but not null.
+         * @param longName The long argument name. Can be empty but not null.
          * @param description The description. Cannot be null.
          * @param defaultValue The default value (or values), which depends on the selected {@link Mode}.
          */
@@ -801,10 +832,11 @@ class CommandLineProcessor {
      * Internal helper to define a new argument for a give action.
      *
      * @param mode The {@link Mode} for the argument.
+     * @param mandatory The argument is required (never if {@link Mode#BOOLEAN})
      * @param verb The verb name. Can be #INTERNAL_VERB.
      * @param directObject The action name. Can be #NO_VERB_OBJECT or #INTERNAL_FLAG.
-     * @param shortName The one-letter short argument name. Cannot be empty nor null.
-     * @param longName The long argument name. Cannot be empty nor null.
+     * @param shortName The one-letter short argument name. Can be empty but not null.
+     * @param longName The long argument name. Can be empty but not null.
      * @param description The description. Cannot be null.
      * @param defaultValue The default value (or values), which depends on the selected {@link Mode}.
      */
@@ -816,11 +848,16 @@ class CommandLineProcessor {
             String description, Object defaultValue) {
         assert(!(mandatory && mode == Mode.BOOLEAN)); // a boolean mode cannot be mandatory
 
+        // We should always have at least a short or long name, ideally both but never none.
+        assert shortName != null;
+        assert longName != null;
+        assert shortName.length() > 0 || longName.length()  > 0;
+
         if (directObject == null) {
             directObject = NO_VERB_OBJECT;
         }
 
-        String key = verb + "/" + directObject + "/" + longName;
+        String key = verb + '/' + directObject + '/' + longName;
         mArguments.put(key, new Arg(mode, mandatory,
                 verb, directObject, shortName, longName, description, defaultValue));
     }
@@ -841,7 +878,9 @@ class CommandLineProcessor {
      * @param args Format arguments.
      */
     protected void stdout(String format, Object...args) {
-        mLog.printf(format + "\n", args);
+        String output = String.format(format, args);
+        output = LineUtil.reflowLine(output);
+        mLog.printf("%s\n", output);    //$NON-NLS-1$
     }
 
     /**

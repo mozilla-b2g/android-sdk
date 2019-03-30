@@ -14,30 +14,37 @@
  * limitations under the License.
  */
 
-
 package com.android.ide.eclipse.ddms.views;
 
 import com.android.ddmlib.AndroidDebugBridge;
 import com.android.ddmlib.Client;
 import com.android.ddmlib.ClientData;
+import com.android.ddmlib.DdmPreferences;
 import com.android.ddmlib.IDevice;
+import com.android.ddmlib.SyncException;
 import com.android.ddmlib.SyncService;
+import com.android.ddmlib.TimeoutException;
 import com.android.ddmlib.AndroidDebugBridge.IClientChangeListener;
 import com.android.ddmlib.ClientData.IHprofDumpHandler;
 import com.android.ddmlib.ClientData.MethodProfilingStatus;
-import com.android.ddmlib.SyncService.SyncResult;
-import com.android.ddmuilib.handler.BaseFileHandler;
-import com.android.ddmuilib.handler.MethodProfilingHandler;
+import com.android.ddmlib.SyncService.ISyncProgressMonitor;
 import com.android.ddmuilib.DevicePanel;
 import com.android.ddmuilib.ImageLoader;
 import com.android.ddmuilib.ScreenShotDialog;
+import com.android.ddmuilib.SyncProgressHelper;
 import com.android.ddmuilib.DevicePanel.IUiSelectionListener;
+import com.android.ddmuilib.SyncProgressHelper.SyncRunnable;
+import com.android.ddmuilib.handler.BaseFileHandler;
+import com.android.ddmuilib.handler.MethodProfilingHandler;
 import com.android.ide.eclipse.ddms.DdmsPlugin;
-import com.android.ide.eclipse.ddms.DdmsPlugin.IDebugLauncher;
+import com.android.ide.eclipse.ddms.IDebuggerConnector;
+import com.android.ide.eclipse.ddms.i18n.Messages;
 import com.android.ide.eclipse.ddms.preferences.PreferenceInitializer;
 
 import org.eclipse.core.filesystem.EFS;
 import org.eclipse.core.filesystem.IFileStore;
+import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.IAdaptable;
 import org.eclipse.core.runtime.Path;
 import org.eclipse.jface.action.Action;
 import org.eclipse.jface.action.IAction;
@@ -52,8 +59,12 @@ import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Shell;
 import org.eclipse.ui.IActionBars;
 import org.eclipse.ui.ISharedImages;
+import org.eclipse.ui.IWorkbench;
+import org.eclipse.ui.IWorkbenchPage;
+import org.eclipse.ui.IWorkbenchWindow;
 import org.eclipse.ui.PartInitException;
 import org.eclipse.ui.PlatformUI;
+import org.eclipse.ui.WorkbenchException;
 import org.eclipse.ui.ide.IDE;
 import org.eclipse.ui.part.ViewPart;
 
@@ -64,8 +75,7 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
 
     private final static boolean USE_SELECTED_DEBUG_PORT = true;
 
-    public static final String ID =
-        "com.android.ide.eclipse.ddms.views.DeviceView"; //$NON-NLS-1$
+    public static final String ID = "com.android.ide.eclipse.ddms.views.DeviceView"; //$NON-NLS-1$
 
     private static DeviceView sThis;
 
@@ -81,13 +91,12 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
     private Action mDebugAction;
     private Action mHprofAction;
     private Action mTracingAction;
-    private IDebugLauncher mDebugLauncher;
 
     private ImageDescriptor mTracingStartImage;
     private ImageDescriptor mTracingStopImage;
 
     public class HProfHandler extends BaseFileHandler implements IHprofDumpHandler {
-        public final static String ACTION_SAVE ="hprof.save"; //$NON-NLS-1$
+        public final static String ACTION_SAVE = "hprof.save"; //$NON-NLS-1$
         public final static String ACTION_OPEN = "hprof.open"; //$NON-NLS-1$
 
         public final static String DOT_HPROF = ".hprof"; //$NON-NLS-1$
@@ -98,22 +107,22 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
 
         @Override
         protected String getDialogTitle() {
-            return "HPROF Error";
+            return Messages.DeviceView_HPROF_Error;
         }
-
 
         public void onEndFailure(final Client client, final String message) {
             mParentShell.getDisplay().asyncExec(new Runnable() {
                 public void run() {
                     try {
                         displayErrorFromUiThread(
-                                "Unable to create HPROF file for application '%1$s'.\n\n%2$s" +
-                                "Check logcat for more information.",
+                                Messages.DeviceView_Unable_Create_HPROF_For_Application,
                                 client.getClientData().getClientDescription(),
-                                message != null ? message + "\n\n" : "");
+                                message != null ? message + "\n\n" : ""); //$NON-NLS-1$ //$NON-NLS-2$
                     } finally {
-                        // this will make sure the dump hprof button is re-enabled for the
-                        // current selection. as the client is finished dumping an hprof file
+                        // this will make sure the dump hprof button is
+                        // re-enabled for the
+                        // current selection. as the client is finished dumping
+                        // an hprof file
                         doSelectionChanged(mDeviceList.getSelectedClient());
                     }
                 }
@@ -132,38 +141,54 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
                             IPreferenceStore store = DdmsPlugin.getDefault().getPreferenceStore();
                             String value = store.getString(PreferenceInitializer.ATTR_HPROF_ACTION);
 
-                            SyncResult result = null;
                             if (ACTION_OPEN.equals(value)) {
                                 File temp = File.createTempFile("android", DOT_HPROF); //$NON-NLS-1$
-                                String tempPath = temp.getAbsolutePath();
-                                result = pull(sync, tempPath, remoteFilePath);
-                                if (result != null && result.getCode() == SyncService.RESULT_OK) {
-                                    open(tempPath);
-                                }
+                                final String tempPath = temp.getAbsolutePath();
+                                SyncProgressHelper.run(new SyncRunnable() {
+
+                                    public void run(ISyncProgressMonitor monitor)
+                                                throws SyncException, IOException,
+                                                TimeoutException {
+                                        sync.pullFile(remoteFilePath, tempPath, monitor);
+                                    }
+
+                                    public void close() {
+                                        sync.close();
+                                    }
+                                },
+                                        String.format(Messages.DeviceView_Pulling_From_Device,
+                                                remoteFilePath),
+                                        mParentShell);
+
+                                open(tempPath);
                             } else {
                                 // default action is ACTION_SAVE
-                                result = promptAndPull(sync,
+                                promptAndPull(sync,
                                         client.getClientData().getClientDescription() + DOT_HPROF,
-                                        remoteFilePath, "Save HPROF file");
+                                        remoteFilePath, Messages.DeviceView_Save_HPROF_File);
 
-                            }
-
-                            if (result != null && result.getCode() != SyncService.RESULT_OK) {
-                                displayErrorFromUiThread(
-                                        "Unable to download HPROF file from device '%1$s'.\n\n%2$s",
-                                        device.getSerialNumber(), result.getMessage());
                             }
                         } else {
-                            displayErrorFromUiThread("Unable to download HPROF file from device '%1$s'.",
+                            displayErrorFromUiThread(
+                                    Messages.DeviceView_Unable_Download_HPROF_From_Device_One_Param_First_Message,
                                     device.getSerialNumber());
                         }
+                    } catch (SyncException e) {
+                        if (e.wasCanceled() == false) {
+                            displayErrorFromUiThread(
+                                    Messages.DeviceView_Unable_Download_HPROF_From_Device_Two_Param,
+                                    device.getSerialNumber(), e.getMessage());
+                        }
                     } catch (Exception e) {
-                        displayErrorFromUiThread("Unable to download HPROF file from device '%1$s'.",
+                        displayErrorFromUiThread(
+                                Messages.DeviceView_Unable_Download_HPROF_From_Device_One_Param_Second_Message,
                                 device.getSerialNumber());
 
                     } finally {
-                        // this will make sure the dump hprof button is re-enabled for the
-                        // current selection. as the client is finished dumping an hprof file
+                        // this will make sure the dump hprof button is
+                        // re-enabled for the
+                        // current selection. as the client is finished dumping
+                        // an hprof file
                         doSelectionChanged(mDeviceList.getSelectedClient());
                     }
                 }
@@ -179,18 +204,21 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
 
                     if (ACTION_OPEN.equals(value)) {
                         try {
-                            File tempFile = saveTempFile(data);
+                            // no need to give an extension since we're going to
+                            // convert the
+                            // file anyway after.
+                            File tempFile = saveTempFile(data, null /* extension */);
                             open(tempFile.getAbsolutePath());
                         } catch (Exception e) {
                             String errorMsg = e.getMessage();
                             displayErrorFromUiThread(
-                                    "Failed to save hprof data into temp file%1$s",
-                                    errorMsg != null ? ":\n" + errorMsg : ".");
+                                    Messages.DeviceView_Failed_To_Save_HPROF_Data,
+                                    errorMsg != null ? ":\n" + errorMsg : "."); //$NON-NLS-1$ //$NON-NLS-2$
                         }
                     } else {
                         // default action is ACTION_SAVE
                         promptAndSave(client.getClientData().getClientDescription() + DOT_HPROF,
-                                data, "Save HPROF file");
+                                data, Messages.DeviceView_Save_HPROF_File);
                     }
                 }
             });
@@ -199,7 +227,7 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
         private void open(String path) throws IOException, InterruptedException, PartInitException {
             // make a temp file to convert the hprof into something
             // readable by normal tools
-            File temp = File.createTempFile("android", DOT_HPROF);
+            File temp = File.createTempFile("android", DOT_HPROF); //$NON-NLS-1$
             String tempPath = temp.getAbsolutePath();
 
             String[] command = new String[3];
@@ -210,15 +238,32 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
             Process p = Runtime.getRuntime().exec(command);
             p.waitFor();
 
-            IFileStore fileStore =  EFS.getLocalFileSystem().getStore(new Path(tempPath));
+            IFileStore fileStore = EFS.getLocalFileSystem().getStore(new Path(tempPath));
             if (!fileStore.fetchInfo().isDirectory() && fileStore.fetchInfo().exists()) {
-                IDE.openEditorOnFileStore(
-                        getSite().getWorkbenchWindow().getActivePage(),
-                        fileStore);
+                // before we open the file in an editor window, we make sure the
+                // current
+                // workbench page has an editor area (typically the ddms
+                // perspective doesn't).
+                IWorkbench workbench = PlatformUI.getWorkbench();
+                IWorkbenchWindow window = workbench.getActiveWorkbenchWindow();
+                IWorkbenchPage page = window.getActivePage();
+                if (page.isEditorAreaVisible() == false) {
+                    IAdaptable input;
+                    if (page != null)
+                        input = page.getInput();
+                    else
+                        input = ResourcesPlugin.getWorkspace().getRoot();
+                    try {
+                        workbench.showPerspective("org.eclipse.debug.ui.DebugPerspective", //$NON-NLS-1$
+                                window, input);
+                    } catch (WorkbenchException e) {
+                    }
+                }
+
+                IDE.openEditorOnFileStore(page, fileStore);
             }
         }
     }
-
 
     public DeviceView() {
         // the view is declared with allowMultiple="false" so we
@@ -228,20 +273,6 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
 
     public static DeviceView getInstance() {
         return sThis;
-    }
-
-    /**
-     * Sets the {@link IDebugLauncher}.
-     * @param debugLauncher
-     */
-    public void setDebugLauncher(DdmsPlugin.IDebugLauncher debugLauncher) {
-        mDebugLauncher = debugLauncher;
-        if (mDebugAction != null && mDeviceList != null) {
-            Client currentClient = mDeviceList.getSelectedClient();
-            if (currentClient != null) {
-                mDebugAction.setEnabled(true);
-            }
-        }
     }
 
     @Override
@@ -258,7 +289,7 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
         mDeviceList.addSelectionListener(plugin);
         plugin.setListeningState(true);
 
-        mCaptureAction = new Action("Screen Capture") {
+        mCaptureAction = new Action(Messages.DeviceView_Screen_Capture) {
             @Override
             public void run() {
                 ScreenShotDialog dlg = new ScreenShotDialog(
@@ -266,10 +297,10 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
                 dlg.open(mDeviceList.getSelectedDevice());
             }
         };
-        mCaptureAction.setToolTipText("Screen Capture");
+        mCaptureAction.setToolTipText(Messages.DeviceView_Screen_Capture_Tooltip);
         mCaptureAction.setImageDescriptor(loader.loadDescriptor("capture.png")); //$NON-NLS-1$
 
-        mResetAdbAction = new Action("Reset adb") {
+        mResetAdbAction = new Action(Messages.DeviceView_Reset_ADB) {
             @Override
             public void run() {
                 AndroidDebugBridge bridge = AndroidDebugBridge.getBridge();
@@ -282,15 +313,15 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
                         display.asyncExec(new Runnable() {
                             public void run() {
                                 Shell shell = display.getActiveShell();
-                                MessageDialog.openError(shell, "Adb Error",
-                                        "Adb failed to restart!\n\nMake sure the plugin is properly configured.");
+                                MessageDialog.openError(shell, Messages.DeviceView_ADB_Error,
+                                        Messages.DeviceView_ADB_Failed_Restart);
                             }
                         });
                     }
                 }
             }
         };
-        mResetAdbAction.setToolTipText("Reset the adb host daemon");
+        mResetAdbAction.setToolTipText(Messages.DeviceView_Reset_ADB_Host_Deamon);
         mResetAdbAction.setImageDescriptor(PlatformUI.getWorkbench()
                 .getSharedImages().getImageDescriptor(
                         ISharedImages.IMG_OBJS_WARN_TSK));
@@ -302,8 +333,8 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
             }
         };
 
-        mKillAppAction.setText("Stop Process");
-        mKillAppAction.setToolTipText("Stop Process");
+        mKillAppAction.setText(Messages.DeviceView_Stop_Process);
+        mKillAppAction.setToolTipText(Messages.DeviceView_Stop_Process_Tooltip);
         mKillAppAction.setImageDescriptor(loader.loadDescriptor(DevicePanel.ICON_HALT));
 
         mGcAction = new Action() {
@@ -313,8 +344,8 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
             }
         };
 
-        mGcAction.setText("Cause GC");
-        mGcAction.setToolTipText("Cause GC");
+        mGcAction.setText(Messages.DeviceView_Cause_GC);
+        mGcAction.setToolTipText(Messages.DeviceView_Cause_GC_Tooltip);
         mGcAction.setImageDescriptor(loader.loadDescriptor(DevicePanel.ICON_GC));
 
         mHprofAction = new Action() {
@@ -324,28 +355,28 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
                 doSelectionChanged(mDeviceList.getSelectedClient());
             }
         };
-        mHprofAction.setText("Dump HPROF file");
-        mHprofAction.setToolTipText("Dump HPROF file");
+        mHprofAction.setText(Messages.DeviceView_Dump_HPROF_File);
+        mHprofAction.setToolTipText(Messages.DeviceView_Dump_HPROF_File_Tooltip);
         mHprofAction.setImageDescriptor(loader.loadDescriptor(DevicePanel.ICON_HPROF));
 
-        mUpdateHeapAction = new Action("Update Heap", IAction.AS_CHECK_BOX) {
+        mUpdateHeapAction = new Action(Messages.DeviceView_Update_Heap, IAction.AS_CHECK_BOX) {
             @Override
             public void run() {
                 boolean enable = mUpdateHeapAction.isChecked();
                 mDeviceList.setEnabledHeapOnSelectedClient(enable);
             }
         };
-        mUpdateHeapAction.setToolTipText("Update Heap");
+        mUpdateHeapAction.setToolTipText(Messages.DeviceView_Update_Heap_Tooltip);
         mUpdateHeapAction.setImageDescriptor(loader.loadDescriptor(DevicePanel.ICON_HEAP));
 
-        mUpdateThreadAction = new Action("Update Threads", IAction.AS_CHECK_BOX) {
+        mUpdateThreadAction = new Action(Messages.DeviceView_Threads, IAction.AS_CHECK_BOX) {
             @Override
             public void run() {
                 boolean enable = mUpdateThreadAction.isChecked();
                 mDeviceList.setEnabledThreadOnSelectedClient(enable);
             }
         };
-        mUpdateThreadAction.setToolTipText("Update Threads");
+        mUpdateThreadAction.setToolTipText(Messages.DeviceView_Threads_Tooltip);
         mUpdateThreadAction.setImageDescriptor(loader.loadDescriptor(DevicePanel.ICON_THREAD));
 
         mTracingAction = new Action() {
@@ -354,19 +385,16 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
                 mDeviceList.toggleMethodProfiling();
             }
         };
-        mTracingAction.setText("Start Method Profiling");
-        mTracingAction.setToolTipText("Start Method Profiling");
+        mTracingAction.setText(Messages.DeviceView_Start_Method_Profiling);
+        mTracingAction.setToolTipText(Messages.DeviceView_Start_Method_Profiling_Tooltip);
         mTracingStartImage = loader.loadDescriptor(DevicePanel.ICON_TRACING_START);
         mTracingStopImage = loader.loadDescriptor(DevicePanel.ICON_TRACING_STOP);
         mTracingAction.setImageDescriptor(mTracingStartImage);
 
-        // check if there's already a debug launcher set up in the plugin class
-        mDebugLauncher = DdmsPlugin.getRunningAppDebugLauncher();
-
-        mDebugAction = new Action("Debug Process") {
+        mDebugAction = new Action(Messages.DeviceView_Debug_Process) {
             @Override
             public void run() {
-                if (mDebugLauncher != null) {
+                if (DdmsPlugin.getDefault().hasDebuggerConnectors()) {
                     Client currentClient = mDeviceList.getSelectedClient();
                     if (currentClient != null) {
                         ClientData clientData = currentClient.getClientData();
@@ -376,15 +404,17 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
                             case ERROR: {
                                 Display display = DdmsPlugin.getDisplay();
                                 Shell shell = display.getActiveShell();
-                                MessageDialog.openError(shell, "Process Debug",
-                                        "The process debug port is already in use!");
+                                MessageDialog.openError(shell,
+                                        Messages.DeviceView_Debug_Process_Title,
+                                        Messages.DeviceView_Process_Debug_Already_In_Use);
                                 return;
                             }
                             case ATTACHED: {
                                 Display display = DdmsPlugin.getDisplay();
                                 Shell shell = display.getActiveShell();
-                                MessageDialog.openError(shell, "Process Debug",
-                                        "The process is already being debugged!");
+                                MessageDialog.openError(shell,
+                                        Messages.DeviceView_Debug_Process_Title,
+                                        Messages.DeviceView_Process_Already_Being_Debugged);
                                 return;
                             }
                         }
@@ -392,34 +422,56 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
                         // get the name of the client
                         String packageName = clientData.getClientDescription();
                         if (packageName != null) {
-                            if (mDebugLauncher.debug(packageName,
-                                    currentClient.getDebuggerListenPort()) == false) {
 
-                                // if we get to this point, then we failed to find a project
-                                // that matched the application to debug
-                                Display display = DdmsPlugin.getDisplay();
-                                Shell shell = display.getActiveShell();
-                                MessageDialog.openError(shell, "Process Debug",
-                                        String.format(
-                                                "No opened project found for %1$s. Debug session failed!",
-                                                packageName));
+                            // try all connectors till one returns true.
+                            IDebuggerConnector[] connectors =
+                                    DdmsPlugin.getDefault().getDebuggerConnectors();
+
+                            if (connectors != null) {
+                                for (IDebuggerConnector connector : connectors) {
+                                    try {
+                                        if (connector.connectDebugger(packageName,
+                                                currentClient.getDebuggerListenPort(),
+                                                DdmPreferences.getSelectedDebugPort())) {
+                                            return;
+                                        }
+                                    } catch (Throwable t) {
+                                        // ignore, we'll just not use this
+                                        // implementation
+                                    }
+                                }
                             }
+
+                            // if we get to this point, then we failed to find a
+                            // project
+                            // that matched the application to debug
+                            Display display = DdmsPlugin.getDisplay();
+                            Shell shell = display.getActiveShell();
+                            MessageDialog.openError(shell, Messages.DeviceView_Debug_Process_Title,
+                                    String.format(
+                                            Messages.DeviceView_Debug_Session_Failed,
+                                            packageName));
                         }
                     }
                 }
             }
         };
-        mDebugAction.setToolTipText("Debug the selected process, provided its source project is present and opened in the workspace.");
+        mDebugAction.setToolTipText(Messages.DeviceView_Debug_Process_Tooltip);
         mDebugAction.setImageDescriptor(loader.loadDescriptor("debug-attach.png")); //$NON-NLS-1$
-        if (mDebugLauncher == null) {
-            mDebugAction.setEnabled(false);
-        }
+        mDebugAction.setEnabled(DdmsPlugin.getDefault().hasDebuggerConnectors());
 
         placeActions();
 
         ClientData.setHprofDumpHandler(new HProfHandler(mParentShell));
         AndroidDebugBridge.addClientChangeListener(this);
-        ClientData.setMethodProfilingHandler(new MethodProfilingHandler(mParentShell));
+        ClientData.setMethodProfilingHandler(new MethodProfilingHandler(mParentShell) {
+            @Override
+            protected void open(String tempPath) {
+                if (DdmsPlugin.getDefault().launchTraceview(tempPath) == false) {
+                    super.open(tempPath);
+                }
+            }
+        });
     }
 
     @Override
@@ -429,8 +481,11 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
 
     /**
      * Sent when a new {@link IDevice} and {@link Client} are selected.
-     * @param selectedDevice the selected device. If null, no devices are selected.
-     * @param selectedClient The selected client. If null, no clients are selected.
+     * 
+     * @param selectedDevice the selected device. If null, no devices are
+     *            selected.
+     * @param selectedClient The selected client. If null, no clients are
+     *            selected.
      */
     public void selectionChanged(IDevice selectedDevice, Client selectedClient) {
         // update the buttons
@@ -446,7 +501,7 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
                 selectedClient.setAsSelectedClient();
             }
 
-            mDebugAction.setEnabled(mDebugLauncher != null);
+            mDebugAction.setEnabled(DdmsPlugin.getDefault().hasDebuggerConnectors());
             mKillAppAction.setEnabled(true);
             mGcAction.setEnabled(true);
 
@@ -460,28 +515,32 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
 
             if (data.hasFeature(ClientData.FEATURE_HPROF)) {
                 mHprofAction.setEnabled(data.hasPendingHprofDump() == false);
-                mHprofAction.setToolTipText("Dump HPROF file");
+                mHprofAction.setToolTipText(Messages.DeviceView_Dump_HPROF_File);
             } else {
                 mHprofAction.setEnabled(false);
-                mHprofAction.setToolTipText("Dump HPROF file (not supported by this VM)");
+                mHprofAction
+                        .setToolTipText(Messages.DeviceView_Dump_HPROF_File_Not_Supported_By_VM);
             }
 
             if (data.hasFeature(ClientData.FEATURE_PROFILING)) {
                 mTracingAction.setEnabled(true);
                 if (data.getMethodProfilingStatus() == MethodProfilingStatus.ON) {
-                    mTracingAction.setToolTipText("Stop Method Profiling");
-                    mTracingAction.setText("Stop Method Profiling");
+                    mTracingAction
+                            .setToolTipText(Messages.DeviceView_Stop_Method_Profiling_Tooltip);
+                    mTracingAction.setText(Messages.DeviceView_Stop_Method_Profiling);
                     mTracingAction.setImageDescriptor(mTracingStopImage);
                 } else {
-                    mTracingAction.setToolTipText("Start Method Profiling");
+                    mTracingAction
+                            .setToolTipText(Messages.DeviceView_Start_Method_Profiling_Tooltip);
                     mTracingAction.setImageDescriptor(mTracingStartImage);
-                    mTracingAction.setText("Start Method Profiling");
+                    mTracingAction.setText(Messages.DeviceView_Start_Method_Profiling);
                 }
             } else {
                 mTracingAction.setEnabled(false);
                 mTracingAction.setImageDescriptor(mTracingStartImage);
-                mTracingAction.setToolTipText("Start Method Profiling (not supported by this VM)");
-                mTracingAction.setText("Start Method Profiling");
+                mTracingAction
+                        .setToolTipText(Messages.DeviceView_Start_Method_Profiling_Not_Suported_By_Vm);
+                mTracingAction.setText(Messages.DeviceView_Start_Method_Profiling);
             }
         } else {
             if (USE_SELECTED_DEBUG_PORT) {
@@ -502,12 +561,12 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
             mHprofAction.setEnabled(false);
 
             mHprofAction.setEnabled(false);
-            mHprofAction.setToolTipText("Dump HPROF file");
+            mHprofAction.setToolTipText(Messages.DeviceView_Dump_HPROF_File);
 
             mTracingAction.setEnabled(false);
             mTracingAction.setImageDescriptor(mTracingStartImage);
-            mTracingAction.setToolTipText("Start Method Profiling");
-            mTracingAction.setText("Start Method Profiling");
+            mTracingAction.setToolTipText(Messages.DeviceView_Start_Method_Profiling_Tooltip);
+            mTracingAction.setText(Messages.DeviceView_Start_Method_Profiling);
         }
     }
 
@@ -557,8 +616,7 @@ public class DeviceView extends ViewPart implements IUiSelectionListener, IClien
     }
 
     public void clientChanged(final Client client, int changeMask) {
-        if ((changeMask & Client.CHANGE_METHOD_PROFILING_STATUS) ==
-                Client.CHANGE_METHOD_PROFILING_STATUS) {
+        if ((changeMask & Client.CHANGE_METHOD_PROFILING_STATUS) == Client.CHANGE_METHOD_PROFILING_STATUS) {
             if (mDeviceList.getSelectedClient() == client) {
                 mParentShell.getDisplay().asyncExec(new Runnable() {
                     public void run() {

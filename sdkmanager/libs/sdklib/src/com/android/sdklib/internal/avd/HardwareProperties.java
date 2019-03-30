@@ -24,8 +24,8 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -47,7 +47,8 @@ public class HardwareProperties {
     public enum ValueType {
         INTEGER("integer"),
         BOOLEAN("boolean"),
-        DISKSIZE("diskSize");
+        DISKSIZE("diskSize"),
+        STRING("string");
 
         private String mValue;
 
@@ -78,6 +79,15 @@ public class HardwareProperties {
         private String mAbstract;
         private String mDescription;
 
+        public HardwareProperty() {
+            // initialize strings to sane defaults, as not all properties will be set from
+            // the ini file
+            mName = "";
+            mDefault = "";
+            mAbstract = "";
+            mDescription = "";
+        }
+
         public String getName() {
             return mName;
         }
@@ -97,6 +107,11 @@ public class HardwareProperties {
         public String getDescription() {
             return mDescription;
         }
+
+        public boolean isValidForUi() {
+            // don't show display string type for now.
+            return mType != ValueType.STRING;
+        }
     }
 
     /**
@@ -110,7 +125,7 @@ public class HardwareProperties {
             FileInputStream fis = new FileInputStream(file);
             BufferedReader reader = new BufferedReader(new InputStreamReader(fis));
 
-            Map<String, HardwareProperty> map = new HashMap<String, HardwareProperty>();
+            Map<String, HardwareProperty> map = new TreeMap<String, HardwareProperty>();
 
             String line = null;
             HardwareProperty prop = null;

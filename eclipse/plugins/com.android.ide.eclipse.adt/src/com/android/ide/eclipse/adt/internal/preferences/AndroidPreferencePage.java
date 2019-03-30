@@ -20,6 +20,8 @@ import com.android.ide.eclipse.adt.AdtPlugin;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk;
 import com.android.ide.eclipse.adt.internal.sdk.Sdk.ITargetChangeListener;
 import com.android.sdklib.IAndroidTarget;
+import com.android.sdkstats.DdmsPreferenceStore;
+import com.android.sdkstats.SdkStatsService;
 import com.android.sdkuilib.internal.widgets.SdkTargetSelector;
 
 import org.eclipse.core.resources.IProject;
@@ -30,6 +32,7 @@ import org.eclipse.swt.SWT;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Label;
+import org.eclipse.swt.widgets.Shell;
 import org.eclipse.swt.widgets.Text;
 import org.eclipse.ui.IWorkbench;
 import org.eclipse.ui.IWorkbenchPreferencePage;
@@ -152,6 +155,19 @@ public class AndroidPreferencePage extends FieldEditorPreferencePage implements
         }
 
         @Override
+        protected void doStore() {
+            super.doStore();
+
+            // Also sync the value to the ~/.android preference settings such that we can
+            // share it with future new workspaces
+            String path = AdtPrefs.getPrefs().getOsSdkFolder();
+            if (path != null && path.length() > 0 && new File(path).exists()) {
+                DdmsPreferenceStore ddmsStore = new DdmsPreferenceStore();
+                ddmsStore.setLastSdkPath(path);
+            }
+        }
+
+        @Override
         public Text getTextControl(Composite parent) {
             setValidateStrategy(VALIDATE_ON_KEY_STROKE);
             return super.getTextControl(parent);
@@ -222,5 +238,16 @@ public class AndroidPreferencePage extends FieldEditorPreferencePage implements
                 // do nothing.
             }
         }
+    }
+
+    @Override
+    public void setVisible(boolean visible) {
+        super.setVisible(visible);
+
+        /* When the ADT preferences page is made visible, display the dialog to obtain
+         * permissions for the ping service. */
+        SdkStatsService stats = new SdkStatsService();
+        Shell parent = getShell();
+        stats.checkUserPermissionForPing(parent);
     }
 }

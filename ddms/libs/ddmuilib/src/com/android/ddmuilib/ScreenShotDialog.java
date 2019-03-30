@@ -16,9 +16,11 @@
 
 package com.android.ddmuilib;
 
+import com.android.ddmlib.AdbCommandRejectedException;
 import com.android.ddmlib.IDevice;
 import com.android.ddmlib.Log;
 import com.android.ddmlib.RawImage;
+import com.android.ddmlib.TimeoutException;
 
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.SWTException;
@@ -39,7 +41,9 @@ import org.eclipse.swt.widgets.FileDialog;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Shell;
 
+import java.io.File;
 import java.io.IOException;
+import java.util.Calendar;
 
 
 /**
@@ -54,6 +58,8 @@ public class ScreenShotDialog extends Dialog {
     private RawImage mRawImage;
     private Clipboard mClipboard;
 
+    /** Number of 90 degree rotations applied to the current image */
+    private int mRotateCount = 0;
 
     /**
      * Create with default style.
@@ -115,6 +121,14 @@ public class ScreenShotDialog extends Dialog {
             @Override
             public void widgetSelected(SelectionEvent e) {
                 updateDeviceImage(shell);
+                // RawImage only allows us to rotate the image 90 degrees at the time,
+                // so to preserve the current rotation we must call getRotated()
+                // the same number of times the user has done it manually.
+                // TODO: improve the RawImage class.
+                for (int i=0; i < mRotateCount; i++) {
+                    mRawImage = mRawImage.getRotated();
+                }
+                updateImageDisplay(shell);
             }
         });
 
@@ -128,6 +142,7 @@ public class ScreenShotDialog extends Dialog {
             @Override
             public void widgetSelected(SelectionEvent e) {
                 if (mRawImage != null) {
+                    mRotateCount = (mRotateCount + 1) % 4;
                     mRawImage = mRawImage.getRotated();
                     updateImageDisplay(shell);
                 }
@@ -265,6 +280,12 @@ public class ScreenShotDialog extends Dialog {
         catch (IOException ioe) {
             Log.w("ddms", "Unable to get frame buffer: " + ioe.getMessage());
             return null;
+        } catch (TimeoutException e) {
+            Log.w("ddms", "Unable to get frame buffer: timeout ");
+            return null;
+        } catch (AdbCommandRejectedException e) {
+            Log.w("ddms", "Unable to get frame buffer: " + e.getMessage());
+            return null;
         }
     }
 
@@ -273,11 +294,19 @@ public class ScreenShotDialog extends Dialog {
      */
     private void saveImage(Shell shell) {
         FileDialog dlg = new FileDialog(shell, SWT.SAVE);
-        String fileName;
+
+        Calendar now = Calendar.getInstance();
+        String fileName = String.format("device-%tF-%tH%tM%tS.png",
+                now, now, now, now);
 
         dlg.setText("Save image...");
-        dlg.setFileName("device.png");
-        dlg.setFilterPath(DdmUiPreferences.getStore().getString("lastImageSaveDir"));
+        dlg.setFileName(fileName);
+
+        String lastDir = DdmUiPreferences.getStore().getString("lastImageSaveDir");
+        if (lastDir.length() == 0) {
+            lastDir = DdmUiPreferences.getStore().getString("imageSaveDir");
+        }
+        dlg.setFilterPath(lastDir);
         dlg.setFilterNames(new String[] {
             "PNG Files (*.png)"
         });
@@ -287,7 +316,15 @@ public class ScreenShotDialog extends Dialog {
 
         fileName = dlg.open();
         if (fileName != null) {
-            DdmUiPreferences.getStore().setValue("lastImageSaveDir", dlg.getFilterPath());
+            // FileDialog.getFilterPath() does NOT always return the current
+            // directory of the FileDialog; on the Mac it sometimes just returns
+            // the value the dialog was initialized with. It does however return
+            // the full path as its return value, so just pick the path from
+            // there.
+            String saveDir = new File(fileName).getParent();
+            if (saveDir != null) {
+                DdmUiPreferences.getStore().setValue("lastImageSaveDir", saveDir);
+            }
 
             Log.d("ddms", "Saving image to " + fileName);
             ImageData imageData = mImageLabel.getImage().getImageData();

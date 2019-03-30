@@ -16,25 +16,34 @@
 
 package com.android.ide.eclipse.ddms.preferences;
 
-import com.android.ide.eclipse.ddms.DdmsPlugin;
-import com.android.ide.eclipse.ddms.views.LogCatView;
-
-import org.eclipse.core.runtime.Preferences;
-import org.eclipse.core.runtime.Preferences.IPropertyChangeListener;
-import org.eclipse.core.runtime.Preferences.PropertyChangeEvent;
+import org.eclipse.jface.preference.BooleanFieldEditor;
+import org.eclipse.jface.preference.ComboFieldEditor;
 import org.eclipse.jface.preference.FieldEditorPreferencePage;
 import org.eclipse.jface.preference.FontFieldEditor;
-import org.eclipse.swt.SWTError;
-import org.eclipse.swt.graphics.Font;
-import org.eclipse.swt.graphics.FontData;
+import org.eclipse.jface.preference.IntegerFieldEditor;
+import org.eclipse.jface.util.PropertyChangeEvent;
+import org.eclipse.ui.IPerspectiveDescriptor;
 import org.eclipse.ui.IWorkbench;
 import org.eclipse.ui.IWorkbenchPreferencePage;
+import org.eclipse.ui.PlatformUI;
+
+import com.android.ddmuilib.logcat.LogCatMessageList;
+import com.android.ddmuilib.logcat.LogCatPanel;
+import com.android.ide.eclipse.ddms.DdmsPlugin;
+import com.android.ide.eclipse.ddms.LogCatMonitor;
+import com.android.ide.eclipse.ddms.i18n.Messages;
+import com.android.ide.eclipse.ddms.views.LogCatView;
 
 /**
  * Preference Pane for LogCat.
  */
 public class LogCatPreferencePage extends FieldEditorPreferencePage implements
         IWorkbenchPreferencePage {
+
+    private BooleanFieldEditor mSwitchPerspective;
+    private ComboFieldEditor mWhichPerspective;
+    private IntegerFieldEditor mMaxMessages;
+    private BooleanFieldEditor mAutoMonitorLogcat;
 
     public LogCatPreferencePage() {
         super(GRID);
@@ -43,32 +52,72 @@ public class LogCatPreferencePage extends FieldEditorPreferencePage implements
 
     @Override
     protected void createFieldEditors() {
-        FontFieldEditor ffe = new FontFieldEditor(PreferenceInitializer.ATTR_LOGCAT_FONT,
-                "Display Font:", getFieldEditorParent());
+        FontFieldEditor ffe = new FontFieldEditor(LogCatPanel.LOGCAT_VIEW_FONT_PREFKEY,
+                Messages.LogCatPreferencePage_Display_Font, getFieldEditorParent());
         addField(ffe);
 
-        Preferences prefs = DdmsPlugin.getDefault().getPluginPreferences();
-        prefs.addPropertyChangeListener(new IPropertyChangeListener() {
-            public void propertyChange(PropertyChangeEvent event) {
-                // get the name of the property that changed.
-                String property = event.getProperty();
+        mMaxMessages = new IntegerFieldEditor(
+                LogCatMessageList.MAX_MESSAGES_PREFKEY,
+                Messages.LogCatPreferencePage_MaxMessages, getFieldEditorParent());
+        addField(mMaxMessages);
 
-                if (PreferenceInitializer.ATTR_LOGCAT_FONT.equals(property)) {
-                    try {
-                        FontData fdat = new FontData((String)event.getNewValue());
-                        LogCatView.setFont(new Font(getFieldEditorParent().getDisplay(), fdat));
-                    } catch (IllegalArgumentException e) {
-                        // Looks like the data from the store is not valid.
-                        // We do nothing (default font will be used).
-                    } catch (SWTError e2) {
-                        // Looks like the Font() constructor failed.
-                        // We do nothing in this case, the logcat view will use the default font.
-                    }
-                }
+        ComboFieldEditor cfe = new ComboFieldEditor(PreferenceInitializer.ATTR_LOGCAT_GOTO_PROBLEM,
+                Messages.LogCatPreferencePage_Double_Click_Action, new String[][] {
+                        {
+                                Messages.LogCatPreferencePage_Go_To_Problem_Declararion,
+                                LogCatView.CHOICE_METHOD_DECLARATION
+                        },
+                        {
+                                Messages.LogCatPreferencePage_Go_To_Problem_Error_Line,
+                                LogCatView.CHOICE_ERROR_LINE
+                        },
+                }, getFieldEditorParent());
+        addField(cfe);
+        mSwitchPerspective = new BooleanFieldEditor(PreferenceInitializer.ATTR_SWITCH_PERSPECTIVE,
+                Messages.LogCatPreferencePage_Switch_Perspective, getFieldEditorParent());
+        addField(mSwitchPerspective);
+        IPerspectiveDescriptor[] perspectiveDescriptors =
+                PlatformUI.getWorkbench().getPerspectiveRegistry().getPerspectives();
+        String[][] perspectives;
+        if (perspectiveDescriptors.length > 0) {
+            perspectives = new String[perspectiveDescriptors.length][2];
+            for (int i = 0; i < perspectiveDescriptors.length; i++) {
+                IPerspectiveDescriptor perspective = perspectiveDescriptors[i];
+                perspectives[i][0] = perspective.getLabel();
+                perspectives[i][1] = perspective.getId();
             }
-        });
+        } else {
+            perspectives = new String[0][0];
+        }
+        mWhichPerspective = new ComboFieldEditor(PreferenceInitializer.ATTR_PERSPECTIVE_ID,
+                Messages.LogCatPreferencePage_Switch_To, perspectives, getFieldEditorParent());
+        mWhichPerspective.setEnabled(getPreferenceStore()
+                .getBoolean(PreferenceInitializer.ATTR_SWITCH_PERSPECTIVE), getFieldEditorParent());
+        addField(mWhichPerspective);
+
+        mAutoMonitorLogcat = new BooleanFieldEditor(LogCatMonitor.AUTO_MONITOR_PREFKEY,
+                Messages.LogCatPreferencePage_AutoMonitorLogcat,
+                getFieldEditorParent());
+        addField(mAutoMonitorLogcat);
     }
 
     public void init(IWorkbench workbench) {
+    }
+
+    @Override
+    public void propertyChange(PropertyChangeEvent event) {
+        if (event.getSource().equals(mSwitchPerspective)) {
+            mWhichPerspective.setEnabled(mSwitchPerspective.getBooleanValue()
+                    , getFieldEditorParent());
+        }
+    }
+
+    @Override
+    protected void performDefaults() {
+        super.performDefaults();
+        mWhichPerspective.setEnabled(mSwitchPerspective.getBooleanValue(), getFieldEditorParent());
+
+        mMaxMessages.setStringValue(
+                Integer.toString(LogCatMessageList.MAX_MESSAGES_DEFAULT));
     }
 }

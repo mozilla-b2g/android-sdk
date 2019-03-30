@@ -16,27 +16,26 @@
 
 package com.android.ide.eclipse.adt.internal.sdk;
 
-import com.android.ide.eclipse.adt.internal.resources.configurations.CountryCodeQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.FolderConfiguration;
-import com.android.ide.eclipse.adt.internal.resources.configurations.KeyboardStateQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.NavigationMethodQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.NavigationStateQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.NetworkCodeQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.PixelDensityQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.ScreenDimensionQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.ScreenOrientationQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.ScreenRatioQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.ScreenSizeQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.TextInputMethodQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.TouchScreenQualifier;
+import com.android.ide.common.resources.configuration.CountryCodeQualifier;
+import com.android.ide.common.resources.configuration.DensityQualifier;
+import com.android.ide.common.resources.configuration.FolderConfiguration;
+import com.android.ide.common.resources.configuration.KeyboardStateQualifier;
+import com.android.ide.common.resources.configuration.NavigationMethodQualifier;
+import com.android.ide.common.resources.configuration.NavigationStateQualifier;
+import com.android.ide.common.resources.configuration.NetworkCodeQualifier;
+import com.android.ide.common.resources.configuration.ScreenDimensionQualifier;
+import com.android.ide.common.resources.configuration.ScreenOrientationQualifier;
+import com.android.ide.common.resources.configuration.ScreenRatioQualifier;
+import com.android.ide.common.resources.configuration.ScreenSizeQualifier;
+import com.android.ide.common.resources.configuration.TextInputMethodQualifier;
+import com.android.ide.common.resources.configuration.TouchScreenQualifier;
 
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 
+import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Map.Entry;
+import java.util.List;
 
 /**
  * Class representing a layout device.
@@ -58,10 +57,35 @@ public class LayoutDevice {
 
     private final String mName;
 
-    /** editable map of the config */
-    private Map<String, FolderConfiguration> mEditMap = new HashMap<String, FolderConfiguration>();
-    /** unmodifiable map returned by {@link #getConfigs()}. */
-    private Map<String, FolderConfiguration> mMap;
+    /**
+     * Wrapper around a {@link FolderConfiguration}.
+     * <p/>This adds a name, accessible through {@link #getName()}.
+     * <p/>The folder config can be accessed through {@link #getConfig()}.
+     *
+     */
+    public final static class DeviceConfig {
+        private final String mName;
+        private final FolderConfiguration mConfig;
+
+        DeviceConfig(String name, FolderConfiguration config) {
+            mName = name;
+            mConfig = config;
+        }
+
+        public String getName() {
+            return mName;
+        }
+
+        public FolderConfiguration getConfig() {
+            return mConfig;
+        }
+    }
+
+    /** editable list of the config */
+    private final ArrayList<DeviceConfig> mConfigs = new ArrayList<DeviceConfig>();
+    /** Read-only list */
+    private List<DeviceConfig> mROList;
+
     private float mXDpi = Float.NaN;
     private float mYDpi = Float.NaN;
 
@@ -93,8 +117,10 @@ public class LayoutDevice {
         }
 
         // then save all the configs.
-        for (Entry<String, FolderConfiguration> entry : mEditMap.entrySet()) {
-            saveConfigTo(doc, deviceNode, entry.getKey(), entry.getValue());
+        synchronized (mConfigs) {
+            for (DeviceConfig config : mConfigs) {
+                saveConfigTo(doc, deviceNode, config.getName(), config.getConfig());
+            }
         }
     }
 
@@ -141,10 +167,10 @@ public class LayoutDevice {
             node.setTextContent(Integer.toString(ncq.getCode()));
         }
 
-        ScreenSizeQualifier ssq = config.getScreenSizeQualifier();
-        if (ssq != null) {
+        ScreenSizeQualifier slsq = config.getScreenSizeQualifier();
+        if (slsq != null) {
             Element node = createNode(doc, configNode, LayoutDevicesXsd.NODE_SCREEN_SIZE);
-            node.setTextContent(ssq.getFolderSegment());
+            node.setTextContent(slsq.getFolderSegment());
         }
 
         ScreenRatioQualifier srq = config.getScreenRatioQualifier();
@@ -159,10 +185,10 @@ public class LayoutDevice {
             node.setTextContent(soq.getFolderSegment());
         }
 
-        PixelDensityQualifier pdq = config.getPixelDensityQualifier();
-        if (pdq != null) {
+        DensityQualifier dq = config.getDensityQualifier();
+        if (dq != null) {
             Element node = createNode(doc, configNode, LayoutDevicesXsd.NODE_PIXEL_DENSITY);
-            node.setTextContent(pdq.getFolderSegment());
+            node.setTextContent(dq.getFolderSegment());
         }
 
         TouchScreenQualifier ttq = config.getTouchTypeQualifier();
@@ -207,33 +233,91 @@ public class LayoutDevice {
         }
     }
 
+    /**
+     * Adds config to the LayoutDevice.
+     * <p/>This ensures that no two configurations have the same. If a config already exists
+     * with the same name, the new config replaces it.
+     *
+     * @param name the name of the config.
+     * @param config the config.
+     */
     void addConfig(String name, FolderConfiguration config) {
-        mEditMap.put(name, config);
-        _seal();
-    }
-
-    void addConfigs(Map<String, FolderConfiguration> configs) {
-        mEditMap.putAll(configs);
-        _seal();
-    }
-
-    void removeConfig(String name) {
-        mEditMap.remove(name);
-        _seal();
+        synchronized (mConfigs) {
+            doAddConfig(name, config);
+            seal();
+        }
     }
 
     /**
-     * Adds config to the LayoutDevice. This is to be used to add plenty of configurations.
-     * It must be followed by {@link #_seal()}.
+     * Adds a list of config to the LayoutDevice
+     * <p/>This ensures that no two configurations have the same. If a config already exists
+     * with the same name, the new config replaces it.
+
+     * @param configs the configs to add.
+     */
+    void addConfigs(List<DeviceConfig> configs) {
+        synchronized (mConfigs) {
+            // add the configs manually one by one, to check for no duplicate.
+            for (DeviceConfig config : configs) {
+                String name = config.getName();
+
+                for (DeviceConfig c : mConfigs) {
+                    if (c.getName().equals(name)) {
+                        mConfigs.remove(c);
+                        break;
+                    }
+                }
+
+                mConfigs.add(config);
+            }
+
+            seal();
+        }
+    }
+
+    /**
+     * Removes a config by its name.
+     * @param name the name of the config to remove.
+     */
+    void removeConfig(String name) {
+        synchronized (mConfigs) {
+            for (DeviceConfig config : mConfigs) {
+                if (config.getName().equals(name)) {
+                    mConfigs.remove(config);
+                    seal();
+                    return;
+                }
+            }
+        }
+    }
+
+    /**
+     * Adds config to the LayoutDevice. This is to be used to add plenty of
+     * configurations. It must be followed by {@link #_seal()}.
+     * <p/>This ensures that no two configurations have the same. If a config already exists
+     * with the same name, the new config replaces it.
+     * <p/><strong>This must be called inside a <code>synchronized(mConfigs)</code> block.</strong>
+     *
      * @param name the name of the config
      * @param config the config.
      */
-    void _addConfig(String name, FolderConfiguration config) {
-        mEditMap.put(name, config);
+    private void doAddConfig(String name, FolderConfiguration config) {
+        // remove config that would have the same name to ensure no duplicate
+        for (DeviceConfig c : mConfigs) {
+            if (c.getName().equals(name)) {
+                mConfigs.remove(c);
+                break;
+            }
+        }
+        mConfigs.add(new DeviceConfig(name, config));
     }
 
-    void _seal() {
-        mMap = Collections.unmodifiableMap(mEditMap);
+    /**
+     * Seals the layout device by setting up {@link #mROList}.
+     * <p/><strong>This must be called inside a <code>synchronized(mConfigs)</code> block.</strong>
+     */
+    private void seal() {
+        mROList = Collections.unmodifiableList(mConfigs);
     }
 
     void setXDpi(float xdpi) {
@@ -248,8 +332,43 @@ public class LayoutDevice {
         return mName;
     }
 
-    public Map<String, FolderConfiguration> getConfigs() {
-        return mMap;
+    /**
+     * Returns an unmodifiable list of all the {@link DeviceConfig}.
+     */
+    public List<DeviceConfig> getConfigs() {
+        synchronized (mConfigs) {
+            return mROList;
+        }
+    }
+
+    /**
+     * Returns a {@link DeviceConfig} by its name.
+     */
+    public DeviceConfig getDeviceConfigByName(String name) {
+        synchronized (mConfigs) {
+            for (DeviceConfig config : mConfigs) {
+                if (config.getName().equals(name)) {
+                    return config;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Returns a {@link FolderConfiguration} by its name.
+     */
+    public FolderConfiguration getFolderConfigByName(String name) {
+        synchronized (mConfigs) {
+            for (DeviceConfig config : mConfigs) {
+                if (config.getName().equals(name)) {
+                    return config.getConfig();
+                }
+            }
+        }
+
+        return null;
     }
 
     /**

@@ -16,6 +16,8 @@
 
 package com.android.ide.eclipse.adt.internal.launch.junit.runtime;
 
+import com.android.ddmlib.AdbCommandRejectedException;
+import com.android.ddmlib.ShellCommandUnresponsiveException;
 import com.android.ddmlib.TimeoutException;
 import com.android.ddmlib.testrunner.ITestRunListener;
 import com.android.ddmlib.testrunner.RemoteAndroidTestRunner;
@@ -29,6 +31,7 @@ import org.eclipse.jdt.internal.junit.runner.TestExecution;
 import org.eclipse.jdt.internal.junit.runner.TestReferenceFailure;
 
 import java.io.IOException;
+import java.util.Map;
 
 /**
  * Supports Eclipse JUnit execution of Android tests.
@@ -39,6 +42,10 @@ import java.io.IOException;
  */
 @SuppressWarnings("restriction")
 public class RemoteAdtTestRunner extends RemoteTestRunner {
+
+    private static final String DELAY_MSEC_KEY = "delay_msec";
+    /** the delay between each test execution when in collecting test info */
+    private static final String COLLECT_TEST_DELAY_MS = "15";
 
     private AndroidJUnitLaunchInfo mLaunchInfo;
     private TestExecution mExecution;
@@ -101,6 +108,9 @@ public class RemoteAdtTestRunner extends RemoteTestRunner {
         // set log only to first collect test case info, so Eclipse has correct test case count/
         // tree info
         runner.setLogOnly(true);
+        // add a small delay between each test. Otherwise for large test suites framework may
+        // report Binder transaction failures
+        runner.addInstrumentationArg(DELAY_MSEC_KEY, COLLECT_TEST_DELAY_MS);
         TestCollector collector = new TestCollector();
         try {
             AdtPlugin.printToConsole(mLaunchInfo.getProject(), "Collecting test information");
@@ -121,6 +131,7 @@ public class RemoteAdtTestRunner extends RemoteTestRunner {
 
             // now do real execution
             runner.setLogOnly(false);
+            runner.removeInstrumentationArg(DELAY_MSEC_KEY);
             if (mLaunchInfo.isDebugMode()) {
                 runner.setDebug(true);
             }
@@ -131,6 +142,12 @@ public class RemoteAdtTestRunner extends RemoteTestRunner {
         } catch (IOException e) {
             reportError(String.format(LaunchMessages.RemoteAdtTestRunner_RunIOException_s,
                     e.getMessage()));
+        } catch (AdbCommandRejectedException e) {
+            reportError(String.format(
+                    LaunchMessages.RemoteAdtTestRunner_RunAdbCommandRejectedException_s,
+                    e.getMessage()));
+        } catch (ShellCommandUnresponsiveException e) {
+            reportError(LaunchMessages.RemoteAdtTestRunner_RunTimeoutException);
         }
     }
 
@@ -181,10 +198,7 @@ public class RemoteAdtTestRunner extends RemoteTestRunner {
      */
     private class TestRunListener implements ITestRunListener {
 
-        /* (non-Javadoc)
-         * @see com.android.ddmlib.testrunner.ITestRunListener#testEnded(com.android.ddmlib.testrunner.TestIdentifier)
-         */
-        public void testEnded(TestIdentifier test) {
+        public void testEnded(TestIdentifier test, Map<String, String> ignoredTestMetrics) {
             mExecution.getListener().notifyTestEnded(new TestCaseReference(test));
         }
 
@@ -205,9 +219,9 @@ public class RemoteAdtTestRunner extends RemoteTestRunner {
         }
 
         /* (non-Javadoc)
-         * @see com.android.ddmlib.testrunner.ITestRunListener#testRunEnded(long)
+         * @see com.android.ddmlib.testrunner.ITestRunListener#testRunEnded(long, Map<String, String>)
          */
-        public void testRunEnded(long elapsedTime) {
+        public void testRunEnded(long elapsedTime, Map<String, String> runMetrics) {
             notifyTestRunEnded(elapsedTime);
             AdtPlugin.printToConsole(mLaunchInfo.getProject(),
                     LaunchMessages.RemoteAdtTestRunner_RunCompleteMsg);
@@ -223,7 +237,7 @@ public class RemoteAdtTestRunner extends RemoteTestRunner {
         /* (non-Javadoc)
          * @see com.android.ddmlib.testrunner.ITestRunListener#testRunStarted(int)
          */
-        public void testRunStarted(int testCount) {
+        public void testRunStarted(String runName, int testCount) {
             // ignore
         }
 

@@ -19,6 +19,9 @@ package com.android.ide.eclipse.adt.internal.editors.layout.gle2;
 import com.android.ide.eclipse.adt.internal.editors.layout.LayoutEditor;
 import com.android.ide.eclipse.adt.internal.editors.layout.gre.RulesEngine;
 
+import org.eclipse.core.runtime.ListenerList;
+import org.eclipse.jface.util.SafeRunnable;
+import org.eclipse.jface.viewers.IPostSelectionProvider;
 import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jface.viewers.ISelectionChangedListener;
 import org.eclipse.jface.viewers.ISelectionProvider;
@@ -40,7 +43,7 @@ import org.eclipse.swt.widgets.Control;
  * canvas' selection changes are broadcasted to anyone listening, which includes
  * the part itself as well as the associated outline and property sheet pages.
  */
-class LayoutCanvasViewer extends Viewer {
+class LayoutCanvasViewer extends Viewer implements IPostSelectionProvider {
 
     private LayoutCanvas mCanvas;
     private final LayoutEditor mLayoutEditor;
@@ -52,12 +55,15 @@ class LayoutCanvasViewer extends Viewer {
         mLayoutEditor = layoutEditor;
         mCanvas = new LayoutCanvas(layoutEditor, rulesEngine, parent, style);
 
-        mCanvas.addSelectionChangedListener(new ISelectionChangedListener() {
-            public void selectionChanged(SelectionChangedEvent event) {
-                fireSelectionChanged(event);
-            }
-        });
+        mCanvas.getSelectionManager().addSelectionChangedListener(mSelectionListener);
     }
+
+    private ISelectionChangedListener mSelectionListener = new ISelectionChangedListener() {
+        public void selectionChanged(SelectionChangedEvent event) {
+            fireSelectionChanged(event);
+            firePostSelectionChanged(event);
+        }
+    };
 
     @Override
     public Control getControl() {
@@ -70,6 +76,7 @@ class LayoutCanvasViewer extends Viewer {
      * have it already casted in the right type.
      * <p/>
      * This can never be null.
+     * @return The underlying {@link LayoutCanvas}.
      */
     public LayoutCanvas getCanvas() {
         return mCanvas;
@@ -96,7 +103,7 @@ class LayoutCanvasViewer extends Viewer {
      */
     @Override
     public ISelection getSelection() {
-        return mCanvas.getSelection();
+        return mCanvas.getSelectionManager().getSelection();
     }
 
     /**
@@ -106,12 +113,46 @@ class LayoutCanvasViewer extends Viewer {
      */
     @Override
     public void setSelection(ISelection selection, boolean reveal) {
-        mCanvas.setSelection(selection);
+        mCanvas.getSelectionManager().setSelection(selection);
     }
 
     /** Unused. Refreshing is done solely by the owning {@link LayoutEditor}. */
     @Override
     public void refresh() {
         // ignore
+    }
+
+    public void dispose() {
+        if (mSelectionListener != null) {
+            mCanvas.getSelectionManager().removeSelectionChangedListener(mSelectionListener);
+        }
+        if (mCanvas != null) {
+            mCanvas.dispose();
+            mCanvas = null;
+        }
+    }
+
+    // ---- Implements IPostSelectionProvider ----
+
+    private ListenerList mPostChangedListeners = new ListenerList();
+
+    public void addPostSelectionChangedListener(ISelectionChangedListener listener) {
+        mPostChangedListeners.add(listener);
+    }
+
+    public void removePostSelectionChangedListener(ISelectionChangedListener listener) {
+        mPostChangedListeners.remove(listener);
+    }
+
+    protected void firePostSelectionChanged(final SelectionChangedEvent event) {
+        Object[] listeners = mPostChangedListeners.getListeners();
+        for (int i = 0; i < listeners.length; i++) {
+            final ISelectionChangedListener l = (ISelectionChangedListener) listeners[i];
+            SafeRunnable.run(new SafeRunnable() {
+                public void run() {
+                    l.selectionChanged(event);
+                }
+            });
+        }
     }
 }

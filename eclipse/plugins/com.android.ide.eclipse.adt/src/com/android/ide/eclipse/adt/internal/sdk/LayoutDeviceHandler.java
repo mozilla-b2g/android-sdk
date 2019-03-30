@@ -16,28 +16,28 @@
 
 package com.android.ide.eclipse.adt.internal.sdk;
 
-import com.android.ide.eclipse.adt.internal.resources.configurations.CountryCodeQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.FolderConfiguration;
-import com.android.ide.eclipse.adt.internal.resources.configurations.KeyboardStateQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.NavigationMethodQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.NavigationStateQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.NetworkCodeQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.PixelDensityQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.ScreenDimensionQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.ScreenOrientationQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.ScreenRatioQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.ScreenSizeQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.TextInputMethodQualifier;
-import com.android.ide.eclipse.adt.internal.resources.configurations.TouchScreenQualifier;
-import com.android.sdklib.resources.Density;
-import com.android.sdklib.resources.Keyboard;
-import com.android.sdklib.resources.KeyboardState;
-import com.android.sdklib.resources.Navigation;
-import com.android.sdklib.resources.NavigationState;
-import com.android.sdklib.resources.ScreenOrientation;
-import com.android.sdklib.resources.ScreenRatio;
-import com.android.sdklib.resources.ScreenSize;
-import com.android.sdklib.resources.TouchScreen;
+import com.android.ide.common.resources.configuration.CountryCodeQualifier;
+import com.android.ide.common.resources.configuration.DensityQualifier;
+import com.android.ide.common.resources.configuration.FolderConfiguration;
+import com.android.ide.common.resources.configuration.KeyboardStateQualifier;
+import com.android.ide.common.resources.configuration.NavigationMethodQualifier;
+import com.android.ide.common.resources.configuration.NavigationStateQualifier;
+import com.android.ide.common.resources.configuration.NetworkCodeQualifier;
+import com.android.ide.common.resources.configuration.ScreenDimensionQualifier;
+import com.android.ide.common.resources.configuration.ScreenOrientationQualifier;
+import com.android.ide.common.resources.configuration.ScreenRatioQualifier;
+import com.android.ide.common.resources.configuration.ScreenSizeQualifier;
+import com.android.ide.common.resources.configuration.TextInputMethodQualifier;
+import com.android.ide.common.resources.configuration.TouchScreenQualifier;
+import com.android.resources.Density;
+import com.android.resources.Keyboard;
+import com.android.resources.KeyboardState;
+import com.android.resources.Navigation;
+import com.android.resources.NavigationState;
+import com.android.resources.ScreenOrientation;
+import com.android.resources.ScreenRatio;
+import com.android.resources.ScreenSize;
+import com.android.resources.TouchScreen;
 
 import org.xml.sax.Attributes;
 import org.xml.sax.SAXException;
@@ -120,6 +120,7 @@ class LayoutDeviceHandler extends DefaultHandler {
             mCurrentDevice = null;
             mDefaultConfig = null;
         } else if (LayoutDevicesXsd.NODE_CONFIG.equals(localName)) {
+            mCurrentConfig.updateScreenWidthAndHeight();
             mCurrentConfig = null;
         } else if (LayoutDevicesXsd.NODE_COUNTRY_CODE.equals(localName)) {
             CountryCodeQualifier ccq = new CountryCodeQualifier(
@@ -142,9 +143,9 @@ class LayoutDeviceHandler extends DefaultHandler {
                     ScreenOrientation.getEnum(mStringAccumulator.toString()));
             mCurrentConfig.setScreenOrientationQualifier(soq);
         } else if (LayoutDevicesXsd.NODE_PIXEL_DENSITY.equals(localName)) {
-            PixelDensityQualifier pdq = new PixelDensityQualifier(
+            DensityQualifier dq = new DensityQualifier(
                     Density.getEnum(mStringAccumulator.toString()));
-            mCurrentConfig.setPixelDensityQualifier(pdq);
+            mCurrentConfig.setDensityQualifier(dq);
         } else if (LayoutDevicesXsd.NODE_TOUCH_TYPE.equals(localName)) {
             TouchScreenQualifier tsq = new TouchScreenQualifier(
                     TouchScreen.getEnum(mStringAccumulator.toString()));

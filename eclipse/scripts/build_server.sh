@@ -52,17 +52,11 @@ function check_params() {
   cd "$D/../../../" && echo "Switched to directory $PWD"
 
   # The current Eclipse build has some Linux dependency in its config files
-  [ `uname` == "Linux" ] || die "This must run from a Linux box."
+  [ `uname` == "Linux" -o `uname` == "Darwin" ] || die "This must run from a Linux or Mac OSX box."
 
   # Check dest dir exists
   [ -n "$DEST_DIR" ] || die "Usage: $0 <destination-directory> [build-number]"
   [ -d "$DEST_DIR" ] || die "Destination directory $DEST_DIR must exist."
-}
-
-function build_libs() {
-  MAKE_OPT="-j8"
-  echo "*** Building: make $MAKE_OPT dx ping ddms androidprefs groovy-all-1.7.0 layoutlib layoutlib_api layoutlib_utils ninepatch sdklib sdkuilib"
-  make $MAKE_OPT dx ping ddms androidprefs groovy-all-1.7.0 layoutlib layoutlib_api layoutlib_utils ninepatch sdklib sdkuilib
 }
 
 function build_plugin {
@@ -76,11 +70,11 @@ function build_plugin {
 
   # Compute the final directory name and remove any leftovers from previous
   # runs if any.
-  BUILD_PREFIX="android-eclipse"  
+  BUILD_PREFIX="android-eclipse"
   if [ "$INTERNAL_BUILD" ]; then
     # append 'eng' signifier to end of archive name to denote internal build
     BUILD_PREFIX="${BUILD_PREFIX}-eng"
-  fi  
+  fi
 
   # exclude date from build-zip name so it can be auto-calculated by continuous
   # test process unless there's no build number, in which case the date is
@@ -114,5 +108,4 @@ function build_plugin {
 
 get_params "$@"
 check_params
-build_libs
 build_plugin
